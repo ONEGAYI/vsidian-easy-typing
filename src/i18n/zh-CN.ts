@@ -2,6 +2,11 @@
 // 编译期类型 + parity 测试双保险对齐。文案对照上游 src/lang/locale/zh-CN.ts，
 // excludeFiles 与枚举项按平台形态改写（数组语义 / 枚举值在 desc 说明）。
 const zhMessages = {
+  commands: {
+    // 工单 #12 纯文本粘贴命令标题（区别于平台「粘贴纯文本」：本命令同时
+    // 置跳过自动格式化标记，#26 格式化管线消费）
+    pastePlainTitle: '纯文本粘贴（跳过自动格式化）',
+  },
   settings: {
     tabout: {
       name: 'Tab 跳出配对符号',

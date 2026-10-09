@@ -1,5 +1,5 @@
-// 编辑器页入口（工单 #22 脚手架 + 工单 #7 Tabout + 工单 #14 规则装载）：
-// 经 SDK 构建桥打成 chrome114 IIFE。消费形态参照 vsidian
+// 编辑器页入口（工单 #22 脚手架 + #7/#8/#11/#12/#14 功能接入）：经 SDK
+// 构建桥打成 chrome114 IIFE。消费形态参照 vsidian
 // test/examples/input-behavior/src/page-editor.ts。
 import { defineAddonPage } from 'vsidian-addon-sdk'
 import type { VsidianAddonPageSdk } from '../types/vendor/shared/addonPage'
@@ -15,6 +15,17 @@ import {
 } from './modaIntercept'
 import { RuleEngine } from './rules/rule-engine'
 import { PageRulesClient } from './rules/rules-page'
+import { createSmartPastePasteHandler } from './smartPasteIntercept'
+import { createPasteMarker } from './pasteMarker'
+import {
+  buildPlainPasteClipboardReader,
+  buildPlainPasteCommandDefinition,
+  createEditorViewRegistry,
+  createPlainPasteCommandHandler,
+  createViewTrackerExtension,
+  defaultWebReadText,
+  dispatchPlainPasteEvent,
+} from './plainPasteCommand'
 
 /** 本组件声明的扩展 ID（装载器按此核对入口身份） */
 const ADDON_ID = 'ONEGAYI.vsidian-easy-typing'
@@ -116,5 +127,52 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       // 普通 API 拒绝不算故障：经 debugLog 留痕便于诊断（logging.ts 约定）
       debugLog('select-block command register rejected:', registered.reason)
     }
+  }
+
+  // SmartPaste 粘贴续接 + 纯文本粘贴（工单 #12 独立增量块）：粘贴拦截走
+  // **实验 cm6 domEventHandlers({ paste })**——扩展槽在平台扩展数组末位，
+  // domEventHandlers 按扩展序执行且**后于平台富文本/图片粘贴处理器、先于
+  // CM6 内建 paste**：平台命中场景（图片项、富文本转换）已在前面接管，
+  // 其余纯文本粘贴落穿到本层；命中列表/引用续接才 preventDefault 接管，
+  // 恒等续接与未命中一律 return false 透传原生链（多光标行分配等平台语
+  // 义保持）。选型理由与让位面核对见 docs/specs/smart-paste.md。设置门控
+  //（上游 settings.SmartPaste）随设置接线，当前恒开。
+  const pasteMarker = createPasteMarker()
+  sdk.registerExtension(
+    cm6.view.EditorView.domEventHandlers({
+      paste: createSmartPastePasteHandler({
+        marker: pasteMarker,
+        editableFacet: cm6.view.EditorView.editable,
+      }),
+    }),
+  )
+
+  // 视图捕获（命令回调无 view 入参）：ViewPlugin 登记主正文与嵌入实例的
+  // 在场编辑器，命令按聚焦者优先取目标
+  const viewRegistry = createEditorViewRegistry()
+  sdk.registerExtension(createViewTrackerExtension(cm6.view.ViewPlugin, viewRegistry))
+
+  // 纯文本粘贴命令（工单 #12，**平台稳定 API**——统一快捷键管理 + 命令面
+  // 板）：Mod+Shift+V（规范键序，避开 vsidian#417 形态）置纯文本标记后合
+  // 成纯文本 paste 事件交既有粘贴链（SmartPaste 续接与 CM6 多光标语义全
+  // 保留）；#26 格式化管线经 pasteMarker 消费跳过格式化。剪贴板读取
+  // navigator 优先、宿主通道回退（extension.ts enable scope 注册 topic）。
+  // （commands 复用 #11 块的声明——同为 sdk.commands，合并时去重。）
+  if (commands !== undefined) {
+    const messages = pickMessages(navigator.language)
+    const registration = commands.register(
+      buildPlainPasteCommandDefinition(messages.commands.pastePlainTitle),
+      createPlainPasteCommandHandler({
+        marker: pasteMarker,
+        views: viewRegistry,
+        readClipboardText: buildPlainPasteClipboardReader({
+          webReadText: defaultWebReadText(),
+          channelRequest: (topic) => sdk.channel.request(topic, null),
+        }),
+        dispatchPlainPaste: dispatchPlainPasteEvent,
+      }),
+    )
+    // 页面释放时注销命令（平台随代次回收，此处显式闭环）
+    sdk.onDispose(() => registration.dispose())
   }
 })
