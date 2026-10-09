@@ -20,7 +20,7 @@
 - [backspace.md](backspace.md)——BetterBackspace 空列表/引用清除与重编号（工单 #8）：前缀解析与清除/重编号算法、Backspace 按键拦截（实验 cm6 keymap 抢先层）与平台退格冲突核对。
 - [enhance-moda.md](enhance-moda.md)——EnhanceModA 渐进选择与「选择当前块」（工单 #11）：无外部状态的层级推进状态机、Mod+A 抢先层（Prec.high）接管边界、块边界正则降级（#5 升级点）与命令注册契约。
 - [smart-paste.md](smart-paste.md)——SmartPaste 智能粘贴续接与纯文本粘贴标记（工单 #12）：列表/引用前缀续接算法、粘贴拦截（实验 cm6 domEventHandlers 让位序）、纯文本粘贴命令（平台稳定 API + #417 规范键序）与平台粘贴冲突核对。
-- [new-line-below.md](new-line-below.md)——NewLineBelow 当前行下方新建行（工单 #13）：Mod+Enter 行尾插入 + 列表/引用前缀延续算法（列位置语义核对结论）、抢先层接管平台 defaultKeymap `insertBlankLine` 的仲裁核对、`newLineBelow` 设置门；严格换行（同票决策项）裁剪至 [ADR-0002](../adr/0002-strict-line-break-mapping.md) 待用户决策。
+- [new-line-below.md](new-line-below.md)——NewLineBelow 当前行下方新建行（工单 #13）：Mod+Enter 行尾插入 + 列表/引用前缀延续算法（列位置语义核对结论）、抢先层接管平台 defaultKeymap `insertBlankLine` 的仲裁核对、`newLineBelow` 设置门；严格换行（同票决策项）裁剪至 [ADR-0002](../adr/0002-strict-line-break-mapping.md)——已决策 C 先行（平台 vsidian#423 + 插件 #30 等待接线）。
 - [fold-enter.md](fold-enter.md)——折叠标题处 Enter 新建同级标题（工单 #18）：折叠态判定消费 experimental.headingFold.folds()、Enter 抢先层（Prec.high）仲裁、折叠保持验证与平台 headingFold 首消费反馈。
 - [protected-zones.md](protected-zones.md)——自定义正则保护区（工单 #27）：多行正则解析（`|++`/`|--` 旗标语义）与默认模板、格式化管线注入缝消费、「用户规则尊重保护区」双开开关与规则管线接入、wikilink/mdlink 正则降级（#5 升级点）。
 - [auto-format.md](auto-format.md)——自动格式化（工单 #26）：语言对间距/前缀词典/自动大写/软空格符号的行级算法（上游差异化验证矩阵）、onInput 管线（格式化当前行口径、#27 保护区注入缝、作用域文本降级）与 06-autoformat 行为族（input-rules 独占组链序、#12 粘贴联动）。

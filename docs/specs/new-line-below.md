@@ -22,7 +22,7 @@
 | --- | --- | --- |
 | 下方新建行决策 | `src/keyboard_handlers.ts:682-777`（goNewLineAfterCurLine） | `src/newLineBelow.ts`（newLineBelowPrefix + planNewLineBelow） |
 | 默认键位 | `src/main.ts:159` 附近（Mod+Enter 热键，恒注册命令、无设置门） | `src/page-editor.ts` #13 增量块（keymap Mod-Enter，设置门控） |
-| 严格换行分支 | `src/keyboard_handlers.ts:728-762`（StrictModeEnter × strictLineBreaks） | **不移植**（ADR-0002 待决策） |
+| 严格换行分支 | `src/keyboard_handlers.ts:728-762`（StrictModeEnter × strictLineBreaks） | **不移植进本票**——已决策 C 先行（ADR-0002 §四：平台 vsidian#423 → 插件 #30 等待接线） |
 
 ### 语义要点（与上游逐一对齐）
 
@@ -114,8 +114,10 @@
 
 - **严格换行三模式**（StrictModeEnter/StrictLineMode 在本函数内的分支及
   独立的 `enterStrictLineBreak` Enter 拦截）：依赖 Obsidian
-  `strictLineBreaks` 渲染配置语义，需先做产品决策——三方案对比与推荐见
-  [ADR-0002](../adr/0002-strict-line-break-mapping.md)（**待用户决策**，
-  通过后另开增量票实施；届时 Enter 键将与 #18 折叠拦截及平台列表续行
-  竞争，仲裁在 ADR「实施前置」节落档）。
+  `strictLineBreaks` 渲染配置语义——2026-10-09 已决策 C 先行路线：平台
+  渲染设置（vsidian#423）先行，编辑侧三模式补偿转
+  [#30](https://github.com/ONEGAYI/vsidian-easy-typing/issues/30)
+  （wait-for-upstreaming）等待平台落地后实施；届时 Enter 键将与 #18
+  折叠拦截及平台列表续行竞争，仲裁在 ADR「实施前置」节落档
+  （[ADR-0002](../adr/0002-strict-line-break-mapping.md) §四决策记录）。
 - 浏览器真实键盘端到端与设置页观感（#21 人工验证清单）。

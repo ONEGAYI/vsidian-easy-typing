@@ -59,7 +59,7 @@
 - 23 项设置经 Vsidian「附加组件」设置页展示与修改，默认值与上游对齐；
 - 界面文案中英双语，跟随 VSCode 显示语言（`vscode.env.language`）；
 - 内置规则逐条开关与行为链排序经平台「行为冲突管理」统一管理；
-- 代码块编辑增强（上游 BetterCodeEdit）暂未实施（[#10](https://github.com/ONEGAYI/vsidian-easy-typing/issues/10)，平台能力依赖）；严格换行回车模式待产品决策（[ADR-0002](docs/adr/0002-strict-line-break-mapping.md)）。
+- 代码块编辑增强（上游 BetterCodeEdit）暂未实施（[#10](https://github.com/ONEGAYI/vsidian-easy-typing/issues/10)，平台能力依赖）；严格换行回车模式已决策 C 先行路线——平台渲染设置（vsidian#423）先行，编辑侧补偿 [#30](https://github.com/ONEGAYI/vsidian-easy-typing/issues/30) 等待接线（[ADR-0002](docs/adr/0002-strict-line-break-mapping.md) §四）。
 
 不移植项：MS-IME 修复、macOS 右键菜单修复（Obsidian/Electron 平台特定修补）。
 

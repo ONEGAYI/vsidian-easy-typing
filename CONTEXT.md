@@ -67,9 +67,9 @@ vsidian behaviors 模型：同一次输入事务按**有效序**被多个已注�
 
 Mod+Enter 在**当前行行尾**插入新行并延续结构前缀（上游 `goNewLineAfterCurLine`）：列表续标记（有序递增、任务项重置 `[ ]`）、引用续 `>` 串；**不保持原光标列**——光标固定落新行前缀末尾。接管面为平台 defaultKeymap `Mod-Enter → insertBlankLine` 的净增量（前缀延续）；关闭设置或多选区时透传回平台内建行为。实施口径见[规格](docs/specs/new-line-below.md)。
 
-### 严格换行（StrictModeEnter，待决策）
+### 严格换行（StrictModeEnter，已决策：C 先行）
 
-上游对 Obsidian `strictLineBreaks: true`（严格渲染，单换行阅读视图不可见）的**编辑侧补偿**：Enter 时按三模式（`enter_twice` 双回车分段 / `two_space` 行尾两空格硬换行 / `mix_mode` 混合）改写插入文本使换行在严格渲染下可见。Vsidian 阅读管线 markdown-it `breaks: false` 恒为严格语义——补偿前提原生恒成立；是否移植属产品决策（文本改写取舍），三方案对比见 [ADR-0002](docs/adr/0002-strict-line-break-mapping.md)。
+上游对 Obsidian `strictLineBreaks: true`（严格渲染，单换行阅读视图不可见）的**编辑侧补偿**：Enter 时按三模式（`enter_twice` 双回车分段 / `two_space` 行尾两空格硬换行 / `mix_mode` 混合）改写插入文本使换行在严格渲染下可见。Vsidian 阅读管线 markdown-it `breaks: false` 恒为严格语义——补偿前提原生恒成立；2026-10-09 决策走 C 先行路线——平台渲染设置（vsidian#423）先行，编辑侧三模式补偿转 [#30](https://github.com/ONEGAYI/vsidian-easy-typing/issues/30) 等待平台落地后含渲染态门控实施，决策记录见 [ADR-0002](docs/adr/0002-strict-line-break-mapping.md) §四。
 
 ## 移植口径备忘
 

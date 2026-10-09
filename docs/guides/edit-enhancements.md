@@ -87,7 +87,7 @@ Vsidian Easy Typing 提供多种智能编辑功能，在输入时自动生效。
 - 普通文本行仅插入空行；
 - 关闭「Ctrl/Cmd+Enter 在下方新建行」设置后回退编辑器内建行为（仅插入空行，光标不动）。
 
-> 上游的**严格换行（strict line breaks）回车增强**暂未实施——该功能依赖 Obsidian 特有的严格换行渲染语义，在 Vsidian 平台的对应形态待产品决策（决策记录 [ADR-0002](../adr/0002-strict-line-break-mapping.md)）。
+> 上游的**严格换行（strict line breaks）回车增强**暂未实施——该功能依赖 Obsidian 特有的严格换行渲染语义，平台侧方案已决策：渲染设置先行（vsidian#423），编辑侧三模式补偿转 [#30](https://github.com/ONEGAYI/vsidian-easy-typing/issues/30) 等待平台落地后实施（决策记录 [ADR-0002](../adr/0002-strict-line-break-mapping.md) §四）。
 
 ---
 
@@ -115,7 +115,7 @@ Vsidian Easy Typing 提供多种智能编辑功能，在输入时自动生效。
 | 功能 | 状态 |
 |------|------|
 | 增强代码块编辑（BetterCodeEdit：代码块内 Mod+A 选中、Tab 缩进、增强删除与粘贴） | [#10](https://github.com/ONEGAYI/vsidian-easy-typing/issues/10) 挂起（平台能力依赖） |
-| 严格换行回车增强（两回车 / 两空格 / 混合三模式） | [ADR-0002](../adr/0002-strict-line-break-mapping.md) 待产品决策 |
+| 严格换行回车增强（两回车 / 两空格 / 混合三模式） | 已决策 C 先行：vsidian#423（平台渲染设置）→ [#30](https://github.com/ONEGAYI/vsidian-easy-typing/issues/30) 等待接线（[ADR-0002](../adr/0002-strict-line-break-mapping.md) §四） |
 
 ---
 

@@ -463,7 +463,7 @@
 
 预期：24 项全部可改、生效、回显；枚举三档语义见各 description。
 
-边界提示（设置在场但生效面受限，验证时勿误判缺陷）：`tabout` / `smartPaste` / `betterBackspace` / `betterCodeEdit` 键当前仅进 schema 展示，运行时门控接线以对应功能规格为准；`strictModeEnter` / `strictLineMode` 待 ADR-0002 用户决策后实施；`autoFormatPaste` 主动侧与 `excludeFiles` 生效逻辑归 #28 命令族票（并行中，见第十六节）。
+边界提示（设置在场但生效面受限，验证时勿误判缺陷）：`tabout` / `smartPaste` / `betterBackspace` / `betterCodeEdit` 键当前仅进 schema 展示，运行时门控接线以对应功能规格为准；`strictModeEnter` / `strictLineMode` 已决策走 C 先行路线（ADR-0002 §四：平台渲染设置 vsidian#423 先行，编辑侧补偿转 [#30](https://github.com/ONEGAYI/vsidian-easy-typing/issues/30) wait-for-upstreaming），设置键保持注册未接线；`autoFormatPaste` 主动侧与 `excludeFiles` 生效逻辑归 #28 命令族票（并行中，见第十六节）。
 
 ### A56. onChanged 即时刷新
 
