@@ -16,6 +16,7 @@ import {
 } from './modaIntercept'
 import { RuleEngine } from './rules/rule-engine'
 import { PageRulesClient } from './rules/rules-page'
+import { createTabstopNavigation } from './tabstopNav'
 import { createSmartPastePasteHandler } from './smartPasteIntercept'
 import { createPasteMarker } from './pasteMarker'
 import {
@@ -69,6 +70,40 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   sdk.registerExtension(
     cm6.state.Prec.high(cm6.view.keymap.of([{ key: 'Backspace', run: betterBackspaceCommand }])),
   )
+
+  // ============================================================
+  // 工单 #15 增量块：Tabstop 占位符导航态（规则替换体 $0/$1/... 的
+  // Tab 跳转 + 当前占位符高亮）。独立成块（不动上方既有装配），降低与
+  // 并行工单的合并冲突。
+  // ============================================================
+
+  // 导航模块（StateField + 高亮主题 + commands）：同一实例的 extension 与
+  // activateTabstops 绑定同一 StateField 身份，多编辑器实例（主正文与嵌入
+  // 视图）各自挂 extension 即可（field 按视图状态隔离）。
+  const tabstopNav = createTabstopNavigation(cm6)
+  sdk.registerExtension(tabstopNav.extension)
+
+  // Tab/Shift-Tab keymap：**抢先层**（Prec.high，#402 四层按键契约第 2 层）
+  // ——上游 handleTabDown 首位语义（tabstop 存在时优先于一切 Tab 分支），
+  // 先于平台 Tab 情境链（围栏越界 → 表格导航 → 正文缩进）与 #7 Tabout
+  // 落穿层；导航态未激活一律 return false 落穿，平台与 #7 行为零改动。
+  // 跳转顺序 $0 → $1 → $2（上游口径），跳至最后一组即收尾。仲裁结论与
+  // 层级设计见 docs/specs/tabstop.md「Tab 仲裁」节。
+  sdk.registerExtension(
+    cm6.state.Prec.high(
+      cm6.view.keymap.of([
+        { key: 'Tab', run: tabstopNav.tabCommand },
+        { key: 'Shift-Tab', run: tabstopNav.shiftTabCommand },
+      ]),
+    ),
+  )
+
+  // #25 行为链接线点：规则计划（changes + selection）应用后，若
+  // ApplyResult.tabstops 非空，调用 tabstopNav.activateTabstops(view,
+  // result.tabstops) 建立导航态——引擎 cursor 已落首组起点，激活事务把
+  // 选区重设为「首组逐 range 全选」（多光标）。本票不接 onInput 管线
+  //（#25 并行中），全链路由单元测试直接驱动该接口承载
+  //（test/tabstopNav.test.ts）。
 
   // ============================================================
   // 工单 #11 增量块：EnhanceModA 渐进选择 + 「选择当前块」命令。
