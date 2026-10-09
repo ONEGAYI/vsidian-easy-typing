@@ -316,14 +316,14 @@ describe('内置规则停用/恢复/重置（deletedBuiltinRuleIds 语义）', (
   })
 })
 
-// ===== 函数替换体只读边界（#17 收口前） =====
+// ===== 函数替换体：预注册函数引用选择（#17 解锁） =====
 
-describe('函数替换体只读展示', () => {
-  it('F 旗标规则：函数体只读高亮块 + 提示，保存保留原值', async () => {
+describe('函数替换体引用选择', () => {
+  it('既有引用规则：编辑表单展示 ref 下拉 + 源码只读块 + 提示；改触发式保存引用原样', async () => {
     const fnRule = {
       id: 'user-fn-1',
-      trigger: 'x',
-      replacement: 'return "X" + leftMatches[0];',
+      trigger: '（',
+      replacement: { kind: 'function', ref: 'autopairInput' },
       options: 'F',
     }
     const { mock, request } = assemble({ 'user-rules.json': JSON.stringify([fnRule]) })
@@ -335,27 +335,78 @@ describe('函数替换体只读展示', () => {
     q<HTMLButtonElement>(items[0]!, `${act('edit')}`).click()
     await flush()
     const modal = q<HTMLElement>(root, MODAL)
-    // 函数块可见、字符串 textarea 隐藏
+    // 函数面可见：ref 下拉 + 源码块；字符串 textarea 隐藏
     const fnBlock = q(modal, '[data-vet-field="fnEditor"]')
     expect(fnBlock.classList.contains('vsidian-easy-typing-hidden')).toBe(false)
+    const fnRefRow = q(modal, '[data-vet-field="functionRefRow"]')
+    expect(fnRefRow.classList.contains('vsidian-easy-typing-hidden')).toBe(false)
     expect(
       q(modal, '[data-vet-field="replacementTextarea"]').classList.contains('vsidian-easy-typing-hidden'),
     ).toBe(true)
-    // 高亮 token 在场（关键字与字符串着色 span）
+    // 下拉选中当前 ref；选项仅含 text 签名函数（Input 类规则）
+    const select = q<HTMLSelectElement>(modal, '[data-vet-input="functionRef"]')
+    expect(select.value).toBe('autopairInput')
+    const optionValues = [...select.options].map((o) => o.value)
+    expect(optionValues).not.toContain('selWrapQuotes')
+    expect(optionValues).toContain('convFormula')
+    // 源码只读块展示选中函数本体（关键字着色在场）
     expect(q(fnBlock, '[data-vet-field="fnCode"]').innerHTML).toContain('vsidian-easy-typing-hl-keyword')
-    expect(q(fnBlock, '[data-vet-field="fnCode"]').innerHTML).toContain('vsidian-easy-typing-hl-string')
-    // 只读提示文案在场
-    expect(q(fnBlock, '[data-vet-field="fnHint"]').textContent).toContain(
-      zhMessages.rulesPage.form.functionReadonlyHint,
-    )
-    // 改触发式保存：函数体原样保留
+    // 提示在场：签名参数 + 组件化 fork 引导
+    const hintText = q(fnBlock, '[data-vet-field="fnHint"]').textContent ?? ''
+    expect(hintText).toContain(zhMessages.rulesPage.form.functionHintInputDelete)
+    expect(hintText).toContain(zhMessages.rulesPage.form.functionReadonlyHint)
+
+    // 改触发式保存：引用原样、ref 不变
     typeInto(q<HTMLInputElement>(modal, '[data-vet-input="trigger"]'), 'y')
     q<HTMLButtonElement>(modal, `${act('save')}`).click()
     await flush()
     const persisted = JSON.parse(mock.files.get(USER_RULES_FILE)!)
     expect(persisted[0].trigger).toBe('y')
-    expect(persisted[0].replacement).toBe(fnRule.replacement)
+    expect(persisted[0].replacement).toEqual({ kind: 'function', ref: 'autopairInput' })
     expect(persisted[0].options).toBe('F')
+  })
+
+  it('新建流程：函数开关打开 → 预选 text 首项；切换 ref 落盘引用对象', async () => {
+    const { mock, request } = assemble({})
+    const { root } = await mountView(request)
+    q<HTMLButtonElement>(root, `${act('add-rule')}`).click()
+    await flush()
+    const modal = q<HTMLElement>(root, MODAL)
+
+    // 打开函数式替换开关
+    const fnChip = q<HTMLButtonElement>(modal, '[data-vet-field="isFunctionChip"]')
+    expect(fnChip.classList.contains('vsidian-easy-typing-chip-active')).toBe(false)
+    fnChip.click()
+    expect(fnChip.classList.contains('vsidian-easy-typing-chip-active')).toBe(true)
+    // 自动预选当前类型（Input）首个 text 函数（函数表注册序：autopairInput）
+    const select = q<HTMLSelectElement>(modal, '[data-vet-input="functionRef"]')
+    expect(select.value).toBe('autopairInput')
+    // 切换 ref → 保存
+    select.value = 'convFormula'
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+    typeInto(q<HTMLInputElement>(modal, '[data-vet-input="trigger"]'), '￥￥')
+    q<HTMLButtonElement>(modal, `${act('save')}`).click()
+    await flush()
+    const persisted = JSON.parse(mock.files.get(USER_RULES_FILE)!)
+    expect(persisted).toHaveLength(1)
+    expect(persisted[0].replacement).toEqual({ kind: 'function', ref: 'convFormula' })
+    expect(persisted[0].options).toContain('F')
+  })
+
+  it('类型切换到选中替换类：签名失配 ref 自动改选 selectKey 首项', async () => {
+    const { request } = assemble({})
+    const { root } = await mountView(request)
+    q<HTMLButtonElement>(root, `${act('add-rule')}`).click()
+    await flush()
+    const modal = q<HTMLElement>(root, MODAL)
+    q<HTMLButtonElement>(modal, '[data-vet-field="isFunctionChip"]').click()
+    // 切到 SelectKey 类型 → 选项换组、ref 改选 selectKey 函数
+    q<HTMLButtonElement>(modal, '[data-pill-group="ruleType"][data-pill-value="selectKey"]').click()
+    const select = q<HTMLSelectElement>(modal, '[data-vet-input="functionRef"]')
+    const optionValues = [...select.options].map((o) => o.value)
+    expect(optionValues).toContain('selWrapSymbols')
+    expect(optionValues).not.toContain('convFormula')
+    expect(optionValues).toContain(select.value)
   })
 })
 

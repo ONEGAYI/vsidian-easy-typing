@@ -152,7 +152,7 @@ describe('parseRulesFileContent / sanitizeSimpleRule（校验管线）', () => {
     expect(parseRulesFileContent('{"a":1}')).toEqual({ error: 'not-array' })
   })
 
-  it('sanitizeSimpleRule：已知字段浅拷贝、未知字段丢弃；函数体字符串宽松放行（#17 收口）', () => {
+  it('sanitizeSimpleRule：已知字段浅拷贝、未知字段丢弃；遗留字符串函数体原样保留（装载侧拒绝）', () => {
     expect(sanitizeSimpleRule({
       id: 'u1',
       trigger: 'x',
@@ -180,6 +180,41 @@ describe('parseRulesFileContent / sanitizeSimpleRule（校验管线）', () => {
     expect(sanitizeSimpleRule({ trigger: 'x', replacement: 1 })).toBeNull()
     expect(sanitizeSimpleRule(null)).toBeNull()
     expect(sanitizeSimpleRule('x')).toBeNull()
+  })
+
+  it('sanitizeSimpleRule：函数引用对象形态放行（kind/ref 浅拷贝、附加键丢弃）', () => {
+    // 引用不查函数表——存储层只管声明性形状，ref 校验归引擎装载（fork 可扩展表）
+    expect(sanitizeSimpleRule({
+      trigger: 'x',
+      replacement: { kind: 'function', ref: 'notInTable', extra: 'drop' },
+      options: 'rF',
+    })).toEqual({ trigger: 'x', replacement: { kind: 'function', ref: 'notInTable' }, options: 'rF' })
+  })
+
+  it('sanitizeSimpleRule：畸形引用对象拒绝（kind 不符 / ref 非字符串 / ref 空 / 数组）', () => {
+    expect(sanitizeSimpleRule({ trigger: 'x', replacement: { kind: 'template', ref: 'a' } })).toBeNull()
+    expect(sanitizeSimpleRule({ trigger: 'x', replacement: { kind: 'function', ref: 1 } })).toBeNull()
+    expect(sanitizeSimpleRule({ trigger: 'x', replacement: { kind: 'function', ref: '' } })).toBeNull()
+    expect(sanitizeSimpleRule({ trigger: 'x', replacement: { kind: 'function' } })).toBeNull()
+    expect(sanitizeSimpleRule({ trigger: 'x', replacement: ['function', 'a'] })).toBeNull()
+  })
+
+  it('规则文件 JSON 往返：引用形态在序列化链路不丢失（出厂种子 → 落盘 → 解析回读）', async () => {
+    const { files, io } = memoryIo()
+    const store = newStore(io)
+    await store.init()
+    const persisted = JSON.parse(files.get(BUILTIN_RULES_FILE)!)
+    const fnRules = persisted.filter((r: { options?: string }) => (r.options ?? '').includes('F'))
+    expect(fnRules).toHaveLength(10)
+    for (const rule of fnRules) {
+      expect(rule.replacement).toMatchObject({ kind: 'function' })
+      expect(typeof rule.replacement.ref).toBe('string')
+    }
+    // 回读等价：出厂引用规则逐条原样
+    const reparsed = parseRulesFileContent(files.get(BUILTIN_RULES_FILE)!)
+    if ('error' in reparsed) throw new Error('出厂规则 JSON 不应解析失败')
+    const refRules = reparsed.rules.filter((r) => typeof r.replacement !== 'string')
+    expect(refRules).toHaveLength(10)
   })
 })
 

@@ -10,12 +10,21 @@
 // scopeHint / scopeLanguage 由调用方注入——#25 行为链接入时传正则降级版
 // 判定，#5 语法树版就绪后换传即可，内核零改动。
 //
-// 【与上游的两处刻意偏差】（其余逐行对照）：
-// 1. Notice 剥离：上游三处 `new Notice(...)`（函数体编译失败 / 非法正则 /
+// 【与上游的刻意偏差】（其余逐行对照）：
+// 1. Notice 剥离：上游三处 `new Notice(...)`（替换函数解析失败 / 非法正则 /
 //    运行时异常节流上报）改为可注入的 reportError 回调（构造选项），
 //    #25 宿主接入时映射到 i18n 通知通道；
 // 2. TabstopSpec 就地定义：上游从 tabstop.ts 导入（该文件含 CM6 依赖），
-//    本模块只保留纯数据形状。
+//    本模块只保留纯数据形状；
+// 3. 函数替换体预注册化（#17，vsidian#405 平台定案）：上游把 F 旗标规则
+//    的函数体字符串经 `new Function` 动态编译；本内核删除该路径——附加
+//    组件页面 CSP 不放行 unsafe-eval，动态构造必被拦截。等价能力改为
+//    预注册函数表：SimpleRule.replacement 携带 `{kind:'function', ref}`
+//    引用对象，装载时查表注入真函数（src/rules/function-table.ts）。未知
+//    ref / 签名与规则类型不符 / 遗留字符串函数体一律拒绝装载并经
+//    reportError 上报（死替换体兜底，规则不再命中）——取代 #25 时代的
+//    CSP 静默降级（6 条 Input 函数体规则装载期整链失效的场景由此根治）。
+//    用户自定义函数体由「规则组件化 fork」承接（ADR-0003）。
 //
 // 【#14 已接入】Tabstop 语法解析（$n / ${n:default} → TabstopSpec，含默认值
 // 内嵌套 ${SEL}/${KEY} 展开与 number 升序排序）恢复上游 parseTabstops——
@@ -26,6 +35,11 @@
 // docText ↔ snapshot.text（LF 坐标）、selection ↔ 光标区间、changeType ↔
 // userEvent、scopeHint/scopeLanguage ↔ 注入的行类型判定；ApplyResult 的
 // matchRange/newText/cursor/tabstops 对齐行为链计划（changes + selection）。
+
+import { FUNCTION_TABLE_BY_REF, signatureKindForRuleType, type FunctionTableEntry, type SelectKeyTransformFn, type TextTransformFn } from './function-table'
+
+/** 引擎可消费的函数表形态（ref → 条目） */
+export type FunctionTableLike = ReadonlyMap<string, FunctionTableEntry>
 
 // ===== 枚举 =====
 
@@ -56,7 +70,24 @@ export interface TabstopSpec {
   to: number;
 }
 
-/** 规则的完整执行形态（由 SimpleRule 归一而来） */
+/**
+ * 函数引用形态（#17）：F 旗标规则的 replacement 载体。票面
+ * `{"replace":{"kind":"function","ref":"..."}}` 示例的字段化形态——
+ * 规则 JSON 只存声明性数据与函数引用，函数本体在预注册函数表。
+ */
+export interface FunctionReplacementRef {
+  kind: 'function';
+  ref: string;
+}
+
+/** unknown → FunctionReplacementRef 形状校验（ref 非空字符串） */
+export function isFunctionReplacementRef(value: unknown): value is FunctionReplacementRef {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const raw = value as Record<string, unknown>;
+  return raw['kind'] === 'function' && typeof raw['ref'] === 'string' && raw['ref'].length > 0;
+}
+
+/** 规则的完整执行形态（由 SimpleRule 归一而来；函数替换体已解析为真函数） */
 export interface ConvertRule {
   id: string;
   description: string;
@@ -73,20 +104,19 @@ export interface ConvertRule {
     right: string;
     isRegex: boolean;
   };
-  replacement: string |
-  ((leftMatches: string[], rightMatches: string[]) => string | void) |
-  ((selectionText: string, key: string) => string | void);
+  replacement: string | TextTransformFn | SelectKeyTransformFn;
 }
 
-/** 规则的存储/序列化形态（内置数据与 #14 用户规则 JSON 的载体） */
+/**
+ * 规则的存储/序列化形态（内置数据与 #14 用户规则 JSON 的载体）。
+ * replacement 为字符串字面量或函数引用对象（F 旗标 + 引用对象成对出现）。
+ */
 export interface SimpleRule {
   id?: string;
   trigger: string;
   trigger_right?: string;
-  replacement: string |
-  ((leftMatches: string[], rightMatches: string[]) => string | void) |
-  ((selectionText: string, key: string) => string | void);
-  /** 旗标串：d=Delete 类 s=SelectKey 类 T=Tab 触发 r=正则 F=函数体 t/f/c=作用域 a=全部 */
+  replacement: string | FunctionReplacementRef;
+  /** 旗标串：d=Delete 类 s=SelectKey 类 T=Tab 触发 r=正则 F=函数替换体 t/f/c=作用域 a=全部 */
   options?: string;
   enabled?: boolean;
   description?: string;
@@ -137,6 +167,12 @@ export interface RuleEngineOptions {
    * 跳过或替换体不可用；#25 宿主接入时映射到 i18n 通知。
    */
   reportError?: (ruleId: string, message: string) => void;
+  /**
+   * 函数表注入（缺省组件内置表 FUNCTION_TABLE_BY_REF）。测试注入自定义
+   * 表；规则组件化 fork 直接扩展 function-table.ts（见 ADR-0003），无需
+   * 经此注入。
+   */
+  functionTable?: FunctionTableLike;
 }
 
 // ===== 工具 =====
@@ -153,12 +189,14 @@ export class RuleEngine {
   private ruleIdCounter: number = 0;
   private fnErrorLastNotify: Map<string, number> = new Map();
   private readonly reportError: ((ruleId: string, message: string) => void) | undefined;
+  private readonly functionTable: FunctionTableLike;
 
   /** 编译后正则缓存：key 为 rule.id（含 null = 已知非法，避免反复编译） */
   private regexCache: Map<string, CachedRegex | null> = new Map();
 
   constructor(options: RuleEngineOptions = {}) {
     this.reportError = options.reportError;
+    this.functionTable = options.functionTable ?? FUNCTION_TABLE_BY_REF;
   }
 
   // ===== 静态工具 =====
@@ -277,29 +315,70 @@ export class RuleEngine {
     return keys;
   }
 
+  /**
+   * F 旗标替换体解析（#17 预注册形态）：函数引用对象查表注入真函数；
+   * 以下三种形态拒绝装载（死替换体兜底 + reportError）——未知 ref、
+   * 签名种类与规则类型不符、遗留字符串函数体（`new Function` 路径已
+   * 删除，CSP 平台动态构造必炸，保留只会制造静默降级）。
+   */
+  static resolveFunctionReplacement(
+    replacement: SimpleRule['replacement'],
+    type: RuleType,
+    table: FunctionTableLike,
+  ): { fn: TextTransformFn | SelectKeyTransformFn } | { error: string } {
+    if (typeof replacement === 'string') {
+      return {
+        error:
+          `function body strings are no longer supported (page CSP blocks dynamic code); ` +
+          `use {"kind":"function","ref":"<id>"} instead (fork the component for custom functions)`,
+      };
+    }
+    const entry = table.get(replacement.ref);
+    if (!entry) return { error: `unknown function ref "${replacement.ref}"` };
+    const want = signatureKindForRuleType(type);
+    if (entry.signature !== want) {
+      return {
+        error: `function ref "${replacement.ref}" expects ${entry.signature} signature but rule type "${type}" requires ${want}`,
+      };
+    }
+    return { fn: entry.fn };
+  }
+
   static normalizeRule(
     simple: SimpleRule,
     reportError?: (ruleId: string, message: string) => void,
+    functionTable: FunctionTableLike = FUNCTION_TABLE_BY_REF,
   ): Omit<ConvertRule, 'id'> {
     const opts = RuleEngine.parseOptions(simple.options);
 
-    // F 旗标：函数体字符串经 new Function 编译（用户自定义规则的序列化
-    // 载体，上游同形态；执行沙箱边界归 #14 实施票评估）
-    let replacement: ConvertRule['replacement'] = simple.replacement;
-    if (opts.isFunctionReplacement && typeof simple.replacement === 'string') {
-      try {
-        if (opts.type === RuleType.SelectKey) {
-          replacement = new Function('selectionText', 'key', simple.replacement) as
-            (selectionText: string, key: string) => string | void;
-        } else {
-          replacement = new Function('leftMatches', 'rightMatches', simple.replacement) as
-            (leftMatches: string[], rightMatches: string[]) => string | void;
-        }
-      } catch (e) {
-        console.error(`[RuleEngine] Failed to compile function for rule "${simple.id ?? '?'}":`, e);
+    // 替换体归一（#17 预注册形态）：
+    // - F 旗标 → 函数引用查表注入（解析失败拒绝装载，死替换体兜底）；
+    // - 非 F 旗标却携带引用对象 → 形态失配，同样拒绝装载（外部脏数据防御）；
+    // - 其余 → 字符串字面量原样。
+    let replacement: ConvertRule['replacement'];
+    if (opts.isFunctionReplacement) {
+      const resolved = RuleEngine.resolveFunctionReplacement(
+        simple.replacement,
+        opts.type,
+        functionTable,
+      );
+      if ('fn' in resolved) {
+        replacement = resolved.fn;
+      } else {
+        console.error(
+          `[RuleEngine] Failed to resolve function for rule "${simple.id ?? '?'}": ${resolved.error}`,
+        );
         replacement = (): undefined => undefined;
-        reportError?.(simple.id ?? '?', `invalid function body: ${(e as Error).message}`);
+        reportError?.(simple.id ?? '?', resolved.error);
       }
+    } else if (isFunctionReplacementRef(simple.replacement)) {
+      console.error(
+        `[RuleEngine] Function ref replacement without F flag in rule "${simple.id ?? '?'}"`,
+      );
+      replacement = (): undefined => undefined;
+      reportError?.(simple.id ?? '?', 'function ref replacement requires the F option flag');
+    } else {
+      replacement = simple.replacement;
     }
 
     if (opts.type === RuleType.SelectKey) {
@@ -368,7 +447,7 @@ export class RuleEngine {
   }
 
   addSimpleRule(simple: SimpleRule): string {
-    const normalized = RuleEngine.normalizeRule(simple, this.reportError);
+    const normalized = RuleEngine.normalizeRule(simple, this.reportError, this.functionTable);
     return this.addRule({ ...normalized, id: simple.id });
   }
 

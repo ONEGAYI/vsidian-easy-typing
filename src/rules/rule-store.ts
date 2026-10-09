@@ -18,7 +18,7 @@
 // restoreBuiltinRule 不重复追加），均在方法注释标注。
 //
 // IO 全注入（RuleStoreIo），零平台依赖；宿主接线见 rules-host.ts。
-import { RuleEngine, type SimpleRule } from './rule-engine'
+import { RuleEngine, isFunctionReplacementRef, type SimpleRule } from './rule-engine'
 import { DEFAULT_BUILTIN_RULES } from './default-rules'
 
 /** 内置规则文件（相对组件数据目录，正斜杠） */
@@ -43,7 +43,6 @@ const SIMPLE_RULE_STRING_KEYS = [
   'id',
   'trigger',
   'trigger_right',
-  'replacement',
   'options',
   'description',
   'scope_language',
@@ -51,24 +50,37 @@ const SIMPLE_RULE_STRING_KEYS = [
 ] as const
 
 /**
- * 项级宽松校验：对象 + trigger/replacement 均为字符串即放行，已知字段浅
- * 拷贝、未知字段丢弃。函数体（F 旗标的 replacement 字符串）不做语法
- * 校验——#1 现状字面保留，校验收口归 #17。非法项返回 null。
+ * 项级宽松校验（#17 收口）：对象 + trigger 为字符串 + replacement 为合法
+ * 形态（字符串字面量或函数引用对象 `{kind:'function', ref}`）即放行，
+ * 已知字段浅拷贝、未知字段丢弃。**不查函数表**——存储层只管声明性数据
+ * 的形状（fork 组件可扩展函数表后存入本表之外的 ref）；ref 是否存在、
+ * 签名是否匹配由引擎装载时查表校验并 reportError（拒绝装载）。
+ * 遗留字符串函数体（F 旗标 + 字符串）在存储侧原样保留：数据不丢，
+ * 装载侧拒绝并上报，用户可在 UI 改选预注册函数。非法项返回 null。
  */
 export function sanitizeSimpleRule(value: unknown): SimpleRule | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
   const raw = value as Record<string, unknown>
-  if (typeof raw['trigger'] !== 'string' || typeof raw['replacement'] !== 'string') return null
+  if (typeof raw['trigger'] !== 'string') return null
   const rule: Record<string, unknown> = {}
   for (const key of SIMPLE_RULE_STRING_KEYS) {
     const v = raw[key]
     if (typeof v === 'string') rule[key] = v
   }
+  // replacement 双形态：字符串字面量原样；函数引用对象浅拷贝 kind/ref
+  const replacement = raw['replacement']
+  if (typeof replacement === 'string') {
+    rule['replacement'] = replacement
+  } else if (isFunctionReplacementRef(replacement)) {
+    rule['replacement'] = { kind: 'function', ref: replacement.ref }
+  } else {
+    return null
+  }
   if (typeof raw['enabled'] === 'boolean') rule['enabled'] = raw['enabled']
   if (typeof raw['priority'] === 'number' && Number.isFinite(raw['priority'])) {
     rule['priority'] = raw['priority']
   }
-  // 上面已保证 trigger/replacement 为字符串，此处仅收窄类型
+  // 上面已保证 trigger 为字符串，此处仅收窄类型
   return rule as unknown as SimpleRule
 }
 
