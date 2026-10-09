@@ -18,6 +18,7 @@ import {
   planSelectKeyRuleModification,
   type RuleInputPipelineContext,
 } from '../src/ruleBehaviorPipeline'
+import { isPositionProtected, parseUserDefinedRegExp } from '../src/userDefinedRegex'
 
 /** 按内置规则 id 集构造引擎（族拆分在 intercept 层，本文件按需拼装） */
 function engineOf(ruleIds: readonly string[]): RuleEngine {
@@ -452,5 +453,148 @@ describe('SelectKey 管线：触发面门控与边界', () => {
       inputCtx('——', 2, 'input.type', '——', [{ anchor: 2, head: 2 }], { from: 0, to: 5, text: 'hello' }),
     )
     expect(r).toBeNull()
+  })
+})
+
+// ===== 工单 #27：保护区 × 规则触发（「用户规则尊重保护区」的管线注入位） =====
+//
+// 语义锚点：上游 rule_processor.ts:22-29——检查列 = 事件类为 input（前缀）
+// 时回退一列（刚键入字符所在列），否则用列本身；命中保护区 → 规则不触发。
+// 上游仅 Input 类（triggerCvtRule）有此检查；Delete/SelectKey 为本票对
+// #9 管线的对称扩展（票面范围），规格记录于 docs/specs/protected-zones.md。
+
+describe('保护区注入：Input 管线（上游语义同构）', () => {
+  const engine = engineOf(['builtin-fw2hw-double'])
+
+  /** stub 探针：列 ∈ [2,5) 为保护区（覆盖注入形态的最小可控行内区间） */
+  const stubZone = { isProtected: (_line: string, column: number) => column >= 2 && column < 5 }
+
+  it('检查列回退一列：`。。` 光标列 4 → 检查列 3 ∈ 保护区 → 不触发', () => {
+    // 快照 ab。。（光标 4，inputText 。）：列 4 回退 3，落在 [2,5) → null
+    const r = planInputRuleModification(engine, inputCtx('ab。。', 4, 'input.type', '。'), {
+      protectedZone: stubZone,
+    })
+    expect(r).toBeNull()
+  })
+
+  it('同一行光标列 2（检查列 1 出区）→ 照常触发（回退语义的出区对照）', () => {
+    const r = planInputRuleModification(engine, inputCtx('。。', 2, 'input.type', '。'), {
+      protectedZone: stubZone,
+    })
+    expect(r?.changes[0]?.text).toBe('.')
+  })
+
+  it('IME 定稿（input.type.compose）同样回退一列并跳过', () => {
+    const r = planInputRuleModification(engine, inputCtx('ab。。', 4, 'input.type.compose', '。'), {
+      protectedZone: stubZone,
+    })
+    expect(r).toBeNull()
+  })
+
+  it('真实探针（{{}} 模板）：`{{。。}}` 内键入 → 不触发；区外 `x。。` → 触发', () => {
+    const zone = {
+      isProtected: (line: string, column: number) =>
+        isPositionProtected(line, column, parseUserDefinedRegExp('{{.*?}}|++')),
+    }
+    expect(
+      planInputRuleModification(engine, inputCtx('{{。。}}', 4, 'input.type', '。'), {
+        protectedZone: zone,
+      }),
+    ).toBeNull()
+    expect(
+      planInputRuleModification(engine, inputCtx('x。。', 3, 'input.type', '。'), {
+        protectedZone: zone,
+      })?.changes[0]?.text,
+    ).toBe('.')
+  })
+
+  it('多行文档：保护区判定只看光标所在行', () => {
+    const zone = {
+      isProtected: (line: string, column: number) =>
+        isPositionProtected(line, column, parseUserDefinedRegExp('{{.*?}}|++')),
+    }
+    // 第二行 {{。。}} 内键入、首行有无关 {{x}}：判定行 = 第二行
+    expect(
+      planInputRuleModification(engine, inputCtx('{{x}}\n{{。。}}', 10, 'input.type', '。'), {
+        protectedZone: zone,
+      }),
+    ).toBeNull()
+  })
+})
+
+describe('保护区注入：Delete 管线（票面对称扩展，列不回退）', () => {
+  const engine = engineOf(DELETE_RULE_IDS)
+
+  /** stub 探针：列 ∈ [0,2) 为保护区 */
+  const stubZone = { isProtected: (_line: string, column: number) => column < 2 }
+
+  it('事务前虚拟光标列 1 ∈ 保护区 → 联动删除不触发', () => {
+    // 事务前 【】、退格删 【（replaced {0,1}）：虚拟光标 = to = 1，列不回退
+    const r = planDeleteRuleModification(
+      engine,
+      inputCtx('】', 0, 'delete.backward', '', [{ anchor: 0, head: 0 }], { from: 0, to: 1, text: '【' }),
+      { protectedZone: stubZone },
+    )
+    expect(r).toBeNull()
+  })
+
+  it('delete.* 事件检查列不回退：列 1 即查列 1（对照 Input 的回退）', () => {
+    // 同场景把保护区收窄到仅列 0（若错误回退会查列 0 → 误跳过）
+    const zone0 = { isProtected: (_l: string, c: number) => c === 0 }
+    const r = planDeleteRuleModification(
+      engine,
+      inputCtx('】', 0, 'delete.backward', '', [{ anchor: 0, head: 0 }], { from: 0, to: 1, text: '【' }),
+      { protectedZone: zone0 },
+    )
+    expect(r?.plan?.changes[0]?.text).toBe('')
+  })
+
+  it('保护区外照常联动删除', () => {
+    const zone = {
+      isProtected: (line: string, column: number) =>
+        isPositionProtected(line, column, parseUserDefinedRegExp('{{.*?}}|++')),
+    }
+    const r = planDeleteRuleModification(
+      engine,
+      inputCtx('】', 0, 'delete.backward', '', [{ anchor: 0, head: 0 }], { from: 0, to: 1, text: '【' }),
+      { protectedZone: zone },
+    )
+    expect(r?.plan).toEqual({
+      changes: [{ offset: 0, length: 1, text: '' }],
+      selection: { anchor: 0, head: 0 },
+    })
+  })
+})
+
+describe('保护区注入：SelectKey 管线（票面对称扩展，input 类回退一列）', () => {
+  const engine = engineOf(SELECTKEY_RULE_IDS)
+
+  /** wrapCtx 同上游测试：选中 hello [0,5) 键 ·；检查列 = replaced.from 列 0 回退 → 0 */
+  const wrapCtx = (key: string): RuleInputPipelineContext =>
+    inputCtx(key, 1, 'input.type', key, [{ anchor: 1, head: 1 }], { from: 0, to: 5, text: 'hello' })
+
+  it('替换起点列 0 ∈ 保护区 → 包裹不触发', () => {
+    const zone = { isProtected: (_l: string, c: number) => c === 0 }
+    expect(planSelectKeyRuleModification(engine, wrapCtx('·'), { protectedZone: zone })).toBeNull()
+  })
+
+  it('保护区只罩列 1（回退后出区）→ 照常包裹（回退语义对照）', () => {
+    const zone = { isProtected: (_l: string, c: number) => c === 1 }
+    const r = planSelectKeyRuleModification(engine, wrapCtx('·'), { protectedZone: zone })
+    expect(r?.plan?.changes[0]?.text).toBe('`hello`')
+  })
+
+  it('真实探针：事务前重建文档 `{{hello}}` 内选区替换 → 不触发', () => {
+    // replaced.text = {{hello}}（事务前选区内容），重建 docText 即 {{hello}}
+    const zone = {
+      isProtected: (line: string, column: number) =>
+        isPositionProtected(line, column, parseUserDefinedRegExp('{{.*?}}|++')),
+    }
+    const ctx = inputCtx('·', 1, 'input.type', '·', [{ anchor: 1, head: 1 }], {
+      from: 0,
+      to: 9,
+      text: '{{hello}}',
+    })
+    expect(planSelectKeyRuleModification(engine, ctx, { protectedZone: zone })).toBeNull()
   })
 })
