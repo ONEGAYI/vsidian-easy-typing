@@ -11,4 +11,6 @@
 
 ## 索引
 
-尚无规格文档——首批规格随 M1 功能票（输入规则族）建立。里程碑与工单总览见 [README](../../README.md) 与 [Issues](https://github.com/ONEGAYI/vsidian-easy-typing/issues)。
+- [settings-mapping.md](settings-mapping.md)——设置字段映射表（#3）：上游 30 字段四去向、进 schema 的 23 项总表、形态变换口径与实施落档约定；默认值单一事实源在 `src/settings/defaults.ts`。
+
+里程碑与工单总览见 [README](../../README.md) 与 [Issues](https://github.com/ONEGAYI/vsidian-easy-typing/issues)。
