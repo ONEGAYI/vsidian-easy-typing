@@ -392,10 +392,16 @@ describe('命令 handler（视图路由 + 守卫 + 单事务派发）', () => {
     return { view, dispatched }
   }
 
-  function setup(view: EditorView | null) {
+  function setup(
+    view: EditorView | null,
+    options: Partial<{ getFocusedView: () => EditorView | null }> = {},
+  ) {
     const registry = createEditorViewRegistry()
     if (view !== null) registry.register(view)
-    return createToggleCommentCommandHandler({ views: registry })
+    return createToggleCommentCommandHandler({
+      views: registry,
+      ...(options.getFocusedView !== undefined ? { getFocusedView: options.getFocusedView } : {}),
+    })
   }
 
   it('命中：单事务派发（changes + selection + userEvent input.comment）', () => {
@@ -429,5 +435,21 @@ describe('命令 handler（视图路由 + 守卫 + 单事务派发）', () => {
     const { view, dispatched } = fakeCmdView('```xyz\ncode\n```', 10)
     setup(view)()
     expect(dispatched).toHaveLength(0)
+  })
+
+  it('聚焦视图不在登记表（嵌入 Live 视图）→ 拒绝执行，不误写主文档兜底（审查第 2 轮复核 P1，B-F3 同型）', () => {
+    // 平台事实：附加组件扩展槽仅挂主正文 Live 实例，嵌入视图不经
+    // viewRegistry 登记——焦点在嵌入视图时用户意图是嵌入文档，唯一在场
+    // 视图兜底会把命令写到主文档（误目标），拒绝执行并留痕
+    const { view: main, dispatched } = fakeCmdView('hello', 2)
+    const { view: embed } = fakeCmdView('embed', 1)
+    setup(main, { getFocusedView: () => embed })()
+    expect(dispatched).toHaveLength(0)
+  })
+
+  it('聚焦视图即登记主视图 → 正常派发（探针不破坏正常路径）', () => {
+    const { view, dispatched } = fakeCmdView('hello', 2)
+    setup(view, { getFocusedView: () => view })()
+    expect(dispatched).toHaveLength(1)
   })
 })

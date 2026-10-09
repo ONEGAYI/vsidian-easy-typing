@@ -499,7 +499,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       buildToggleCommentCommandDefinition(
         pickMessages(navigator.language).commands.toggleCommentTitle,
       ),
-      createToggleCommentCommandHandler({ views: viewRegistry }),
+      createToggleCommentCommandHandler({ views: viewRegistry, getFocusedView }),
     )
     // 页面释放时注销命令（平台随代次回收，此处显式闭环）
     sdk.onDispose(() => registration.dispose())

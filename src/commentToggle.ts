@@ -40,7 +40,9 @@
 import type { EditorState } from '@codemirror/state'
 import type { AddonCommandDefinition } from '../types/vendor/shared/addonCommands'
 import type { EditorViewRegistry } from './plainPasteCommand'
+import type { EditorView } from '@codemirror/view'
 import { detectScopeFromText } from './ruleScopeFallback'
+import { debugLog } from './logging'
 import { RuleScope } from './rules/rule-engine'
 
 // ---- 语言注释符表（上游 commentSymbols 逐条移植；键为小写语言标识） ----
@@ -266,15 +268,25 @@ export function buildToggleCommentCommandDefinition(title: string): AddonCommand
 /** 命令依赖（页面装配注入生产实现，测试接替身） */
 export interface ToggleCommentCommandDeps {
   readonly views: EditorViewRegistry
+  /** 焦点视图探针（嵌入视图拒绝口径，审查第 2 轮复核 P1——B-F3 同型） */
+  readonly getFocusedView?: () => EditorView | null
 }
 
 /**
  * 产出命令回调：取在场目标视图 → 计划 → 单事务派发（changes + 可选
  * selection，userEvent input.comment）。无视图/组合中/只读/未知语言一律
  * 静默无动作（上游未知语言 return false 同口径）。
+ *
+ * 嵌入视图口径（B-F3 同型修复）：焦点元素属于某个 CM6 视图但不在登记表
+ * （嵌入/悬停实例）时拒绝执行——唯一在场兜底会误写主文档。
  */
 export function createToggleCommentCommandHandler(deps: ToggleCommentCommandDeps): () => void {
   return () => {
+    const focused = deps.getFocusedView?.() ?? null
+    if (focused !== null && !deps.views.contains(focused)) {
+      debugLog('comment-toggle skipped: focused view not registered (embed/hover) — refuse fallback target')
+      return
+    }
     const view = deps.views.activeView()
     if (view === null) return
     if (view.compositionStarted || view.state.readOnly) return
