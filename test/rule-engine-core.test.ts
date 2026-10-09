@@ -457,7 +457,7 @@ describe('Tabstop 语法解析（工单 #14：恢复上游 parseTabstops）', ()
 })
 
 describe('内核零平台依赖（票面验收：import 语句扫描钉住）', () => {
-  it('src/rules 下不允许任何平台/运行时 import（obsidian/SDK/vscode/CM6/DOM）', async () => {
+  it('src/rules 下只允许模块内相对导入，禁止任何平台/运行时依赖', async () => {
     const { readFileSync, readdirSync } = await import('node:fs')
     const { fileURLToPath } = await import('node:url')
     const path = await import('node:path')
@@ -468,12 +468,14 @@ describe('内核零平台依赖（票面验收：import 语句扫描钉住）', 
       const lines = readFileSync(path.join(dir, file), 'utf8').split('\n')
       lines.forEach((line, index) => {
         if (!/^\s*import\b/.test(line)) return
-        // 规则模块只允许模块内相对 type 导入（数据模块引用内核类型）
+        // #14 起数据链模块（rule-store/rules-protocol/rules-host/rules-page）
+        // 与内核同域纯逻辑，允许模块间相对导入（值或 type）；意图不变：
+        // 禁一切平台/运行时依赖（下方 banned 列表）
         expect(
-          /^import type \{[^}]*\} from '\.\/[a-z-]+';?$/.test(line.trim()),
+          /^import (type )?\{[^}]*\} from '\.\/[a-z-]+';?$/.test(line.trim()),
           `src/rules/${file}:${index + 1} 非法导入：${line.trim()}`,
         ).toBe(true)
-        for (const banned of ['obsidian', 'vsidian-addon-sdk', 'vscode', '@codemirror', 'types/vendor']) {
+        for (const banned of ['obsidian', 'vsidian-addon-sdk', 'vscode', '@codemirror', 'types/vendor', 'vsidian']) {
           expect(line, `src/rules/${file}:${index + 1} 含平台依赖 ${banned}`).not.toContain(banned)
         }
       })
