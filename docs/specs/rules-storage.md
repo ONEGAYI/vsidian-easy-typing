@@ -45,6 +45,7 @@
 - **文件整体缺失 = 恢复出厂全量**（上游 exists=false 分支语义）：deletedIds 只约束 merge 补种路径，不拦截「文件不存在」分支——外部删除 builtin-rules.json 会复活已删内置规则，与上游一致（`test/rule-store.test.ts`「上游语义钉子」用例钉住，防好心修复）。
 - **languagePairs / customScriptCategories 未建持久化文件**：二者是间距引擎（smart space）的富结构，数据链归对应功能票；#3 边界句「富结构归你的 JSON 持久化」在本票只消费了 deletedBuiltinRuleIds（rule-state.json）。语言对种子仍以 `RICH_STRUCTURE_DEFAULTS` 为单一事实源，届时扩展同一 rule-state 文件或平行文件。
 - **revision 非持久化**：代次是运行态计数（每次激活期从 0 起），页面装载时以 -1 起步强制首拉；同一激活期内任何数据变化都会递增，跨激活期无比较意义（页面重新装载亦从 -1 起）。
+- **自写抑制窗口内的外部改动会被误丢弃（审查 C-P3-1，上游同款继承）**：`HostRulesService.onFileChange` 的自写抑制判据是「距上次成功写 < 2s 的文件事件一律忽略」（上游 `lastSaveTime` 同款，平台对自写也会回调 onDidChangeFile 所致）——外部同步工具恰在本组件写操作后 2s 内改写规则文件时，该事件被误判为自写回声而丢弃（不重载、revision 不增），宿主缓存与文件失配，直到下一次落在窗外的文件事件或组件重装载才恢复。上游行为一致，未收窄未放宽；同步工具侧的缓解是避开在本组件写入后立即改写（或改写后再触发一次落盘外保存让事件落在窗外）。
 - **页面装载链路与引擎消费均已接线**（审查 B-F1 / C-P1-2 修复收口）：page-editor.ts 装载引擎 + 轮询重载；`PageRulesClient` 的 `onReload` 快照喂规则源（`createRuleSnapshotSource`，src/ruleBehaviorIntercept.ts），#25/#9 行为族引擎经其同步重建——用户规则、内置停用与删除、外部改写轮询重载对编辑行为即时生效（端到端测试：test/ruleBehaviorIntercept.test.ts「端到端：存储态 → 行为族引擎」组）。装载前 / 通道不可用时行为族回落出厂数据。设置门控（上游 `userDefinedRegSwitch` 关闭时用户规则不参与）在消费侧经 #27 探针接线，存储层不复制开关。
 - **真实 storage 联调归 #21**（宿主集成验证票）：本票 mock 承载全部 storage 语义断言。
 

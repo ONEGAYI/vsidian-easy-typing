@@ -162,8 +162,10 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   // ============================================================
 
   // 导航模块（StateField + 高亮主题 + commands）：同一实例的 extension 与
-  // activateTabstops 绑定同一 StateField 身份，多编辑器实例（主正文与嵌入
-  // 视图）各自挂 extension 即可（field 按视图状态隔离）。
+  // activateTabstops 绑定同一 StateField 身份，扩展挂到哪个编辑器实例、
+  // 导航态就在该实例的视图状态内隔离（field 按视图状态隔离）。当前平台
+  // 附加组件扩展槽仅挂主正文 Live 实例——嵌入/悬停视图不挂载本组件扩展
+  //（登记面以平台装配事实为准，参照 plainPasteCommand.ts 同款订正）。
   const tabstopNav = createTabstopNavigation(cm6)
   sdk.registerExtension(tabstopNav.extension)
 
