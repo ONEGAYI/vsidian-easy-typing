@@ -408,8 +408,8 @@ export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): Rul
     )
   })
 
-  // 只读观察刷新设置缓存：设置页改 debug 后下一次输入即生效（平台 onChanged
-  // 每次输入触发——与 vsidian input-behavior 样例同形态）
+  // 只读观察刷新设置缓存：设置页改 debug 后下一次输入生效（平台 onChanged
+  // 每次输入触发，3s 节流窗压缩——C-R4-2，与 vsidian input-behavior 样例同形态）
   deps.behaviors.onChanged(createThrottledRefresh(() => gate.refresh()))
   return {
     outcomes: outcome,

@@ -36,7 +36,7 @@
 - **仅纯插入 + 塌缩单光标**：上游 `notSelected && changedStr.length < 1`——选区替换形态（replaced.text 非空）不格式化；inputText 含 `\n` 走 Enter 定稿分支。
 - **多光标结论**：`selections.length > 1` → 不处理。#25 管线取首光标坍缩语义；本管线因 prevCh 推导依赖 inputText 归因（平台 inputText 是多选区拼接），收窄为单光标，多光标键入不格式化（上游 asSingle().main 语义的保守收窄）。
 - **链序**：`06-autoformat` 加入 #25 五族共用的 `input-rules` 独占组（localId 数值前缀在 01-05 之后 = 平台默认有效序），复刻上游「triggerCvtRule 命中即 return、格式化只在规则零命中后运行」。族级开关（平台行为管理）= 上游 AutoFormat 总门的平台承载；autoCapital 等细粒度经 #3 设置门面（`effective.autoFormat` 在族回调内判定，关 → 恒 null 不占组，规则五族不受影响——与上游「规则先于 AutoFormat 门」一致）。history 一律 atomic（#25 joinPrevious 全量核对结论沿用：键入是外来条目不可并组）。
-- **设置消费**：`SETTINGS_TOPIC.get` 的 effective 拉 9 键（autoFormat / autoCapital / prefixDictionary / softSpaceLeft·RightSymbols / inlineCode·Formula·LinkSpaceMode / inlineLinkSmartSpace），装载时与每次 `behaviors.onChanged` 刷新，通道失败保持上次值、值类型失配回默认。languagePairs / customScriptCategories 不在 23 键 schema——出厂种子直取 `RICH_STRUCTURE_DEFAULTS`（富结构持久化与编辑 UI 归后续票，运行时消费面此为单一事实源）。SpaceMode 字符串档 ↔ SpaceState 数字档按下标同构换算。
+- **设置消费**：`SETTINGS_TOPIC.get` 的 effective 拉 9 键（autoFormat / autoCapital / prefixDictionary / softSpaceLeft·RightSymbols / inlineCode·Formula·LinkSpaceMode / inlineLinkSmartSpace），装载时与 `behaviors.onChanged` 刷新（3s 节流窗——C-R4-2，设置改动最迟一个窗口后的下一次键入生效），通道失败保持上次值、值类型失配回默认。languagePairs / customScriptCategories 不在 23 键 schema——出厂种子直取 `RICH_STRUCTURE_DEFAULTS`（富结构持久化与编辑 UI 归后续票，运行时消费面此为单一事实源）。SpaceMode 字符串档 ↔ SpaceState 数字档按下标同构换算。
 
 ### 作用域跳过（正则降级版 getPosLineType）
 

@@ -48,4 +48,4 @@
 ## 给后续票的提示
 
 - **#28（格式化命令共用保护区）**：`matchProtectedRanges(line, rules)` 即命令侧的保护区计算入口（命令重排对每行调用后经 `formatLine(line, curCh, undefined, settings, { protectedRanges })` 传入）；规则表解析复用 `parseUserDefinedRegExp`，设置消费形态参照 autoFormatIntercept 的 gate 缓存（refresh 时重建，勿每次命令解析）。
-- **#21（真实 webview 人工验证）**：本票验证点——`{{中文a}}` 内键入无空格插入、`userDefinedRegSwitch` 关后同场景恢复格式化；「用户规则尊重保护区」双开后 `{{。。}}` 内标点折叠不触发、开关关恢复；设置页改动下一次键入生效（onChanged 刷新）。
+- **#21（真实 webview 人工验证）**：本票验证点——`{{中文a}}` 内键入无空格插入、`userDefinedRegSwitch` 关后同场景恢复格式化；「用户规则尊重保护区」双开后 `{{。。}}` 内标点折叠不触发、开关关恢复；设置页改动下一次键入生效（onChanged 刷新，3s 节流窗——C-R4-2，窗口内顺延至窗口后的下一次键入）。

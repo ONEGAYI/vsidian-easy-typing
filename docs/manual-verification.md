@@ -229,7 +229,7 @@
 
 1. 修改保护区正则模板或任一开关后，**不重启**，回到编辑器继续键入。
 
-预期：下一次键入即按新值判定（onChanged 刷新链路）。
+预期：改设置后的下一次键入按新值判定（onChanged 刷新链路，3s 节流窗——C-R4-2：若上一次刷新在 3 秒内，则顺延至窗口后的下一次键入；验证时改完稍候 3 秒或连续键入几次再核对，勿误判缺陷）。
 
 ## 六、Tab 跳出 Tabout（#7）
 
@@ -465,11 +465,11 @@
 
 边界提示（设置在场但生效面受限，验证时勿误判缺陷）：`tabout` / `smartPaste` / `betterBackspace` / `betterCodeEdit` 键当前仅进 schema 展示，运行时门控接线以对应功能规格为准；`strictModeEnter` / `strictLineMode` 已决策走 C 先行路线（ADR-0002 §四：平台渲染设置 vsidian#423 先行，编辑侧补偿转 [#30](https://github.com/ONEGAYI/vsidian-easy-typing/issues/30) wait-for-upstreaming），设置键保持注册未接线；`autoFormatPaste` 主动侧与 `excludeFiles` 生效逻辑归 #28 命令族票（并行中，见第十六节）。
 
-### A56. onChanged 即时刷新
+### A56. onChanged 节流刷新
 
 1. 改 `autoFormat` 开关后**不重启**，直接回编辑器键入 `中文a`。
 
-预期：下一次键入即按新值（onChanged 刷新；瞬时通道失败保持上次值）。
+预期：改设置后的下一次键入按新值（onChanged 刷新，3s 节流窗——C-R4-2，窗口内顺延；瞬时通道失败保持上次值）。
 
 ### A57. 跨窗口对账
 

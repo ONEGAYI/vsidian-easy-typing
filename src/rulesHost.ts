@@ -18,6 +18,7 @@ import type {
   AddonStorageWatchHandle,
 } from '../types/vendor/shared/addonStorage'
 import type { AddonChannelRegistry } from '../types/vendor/host/addons/addonRegistry'
+import { debugLog } from './logging'
 import { RuleStore, type RuleStoreIo, type RulesSnapshot } from './rules/rule-store'
 import type { SimpleRule } from './rules/rule-engine'
 import type { RulesMutateResult } from './rules/rules-protocol'
@@ -87,14 +88,17 @@ export class HostRulesService {
   // ===== 装载 =====
 
   /** 惰性装载（并发共享同一次 init）；返回三份数据快照 + 当前代次。
-   * init 失败不留滞 rejected 态——下次调用重新装载（审查第 4 轮 C-R4-5） */
+   * init 失败不留滞 rejected 态——下次调用重新装载（审查第 4 轮 C-R4-5；
+   * 清空守卫见 R5-N3：reload 换新 attempt 后，旧 attempt 的失败不得抹掉
+   * 新注册） */
   async ensureLoaded(): Promise<RulesSnapshot & { revision: number }> {
     if (!this.initPromise) {
       const attempt = this.store.init()
-      this.initPromise = attempt.catch((err: unknown) => {
-        this.initPromise = null
+      const chained = attempt.catch((err: unknown) => {
+        if (this.initPromise === chained) this.initPromise = null
         throw err
       })
+      this.initPromise = chained
     }
     await this.initPromise
     return { ...this.store.getSnapshot(), revision: this.revision }
@@ -281,7 +285,15 @@ export class HostRulesService {
   private async reload(): Promise<void> {
     if (this.disposed) return
     this.initPromise = null // 作废已装载态，强制重走 init（文件被删则恢复出厂）
-    await this.ensureLoaded()
+    try {
+      await this.ensureLoaded()
+    } catch (err) {
+      // 外部变化 + 瞬时读失败（C-R4-1 的 throw 路径）：吞掉拒绝——去抖回调
+      // 在生产落入裸 setTimeout，rejected promise 会成宿主 unhandled
+      // rejection（R5-N1）。仍 bump 代次：页面轮询发现 revision 变化即
+      // load，load 经 ensureLoaded 重试装载，形成 2s 粒度自愈闭环直至成功
+      debugLog('rules reload failed (transient io), page poll will retry:', err)
+    }
     this.revision++
   }
 

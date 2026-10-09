@@ -389,4 +389,27 @@ describe('存储读失败防护与 init 自愈（审查第 4 轮 C-R4-1 / C-R4-5
     const snapshot = await service.ensureLoaded()
     expect(snapshot.user.map((r) => r.trigger).sort()).toEqual(['a', 'b'])
   })
+
+  it('外部变化 + 瞬时读失败：reload 吞拒绝、revision 仍递增——页面轮询驱动自愈闭环（审查 R5-N1）', async () => {
+    const mock = mockStorage()
+    const { service, scheduler } = newService(mock)
+    await service.ensureLoaded()
+    const baseRev = service.revision
+
+    mock.failReads.add(USER_RULES_FILE)
+    mock.tick(2000) // 越过自写抑制窗
+    mock.emit(USER_RULES_FILE, 'change')
+    await scheduler.firePending() // reload 落定：不 reject（旧实现成宿主 unhandled rejection）
+    expect(service.revision).toBe(baseRev + 1) // 失败仍 bump——页面轮询发现变化即拉，拉经 ensureLoaded 重试
+
+    // 故障解除：下次外部事件 → 重载成功恢复数据链
+    mock.failReads.delete(USER_RULES_FILE)
+    mock.files.set(USER_RULES_FILE, JSON.stringify([{ trigger: 'z', replacement: 'Z', id: 'user-z' }], null, 2))
+    mock.tick(2000)
+    mock.emit(USER_RULES_FILE, 'change')
+    await scheduler.firePending()
+    expect(service.revision).toBe(baseRev + 2)
+    const snapshot = await service.ensureLoaded()
+    expect(snapshot.user.map((r) => r.trigger)).toContain('z')
+  })
 })

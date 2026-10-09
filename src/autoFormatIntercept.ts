@@ -19,8 +19,9 @@
 // 【设置消费】#3 门面 effective（SETTINGS_TOPIC.get）拉取 9 键
 //（autoFormat / autoCapital / prefixDictionary / softSpaceLeft·RightSymbols /
 // inlineCode·Formula·LinkSpaceMode / inlineLinkSmartSpace），装载时与每次
-// behaviors.onChanged 刷新缓存（平台 onChanged 每次输入触发——设置页改
-// 动下一次键入即生效）；通道失败保持上次值（首拉前为出厂默认）。语言对
+// behaviors.onChanged 刷新缓存（平台 onChanged 每次输入触发，经 3s 节流窗
+// 压缩——C-R4-2：设置页改动最迟一个窗口后的下一次键入生效）；通道失败
+// 保持上次值（首拉前为出厂默认）。语言对
 // 与自定义字符类不在 23 键 schema——languagePairs / customScriptCategories
 // 出厂种子直取 RICH_STRUCTURE_DEFAULTS（富结构持久化归后续票，运行时
 // 消费面此为单一事实源）。
@@ -270,7 +271,8 @@ export function registerAutoFormatBehavior(deps: RegisterAutoFormatDeps): RuleBe
     debugLog('autoformat behavior register rejected:', result.reason)
   }
 
-  // 只读观察刷新设置缓存（平台 onChanged 每次输入触发——设置页改动下一次键入生效）
+  // 只读观察刷新设置缓存（平台 onChanged 每次输入触发，3s 节流窗——C-R4-2：
+  // 设置页改动最迟一个窗口后的下一次键入生效）
   deps.behaviors.onChanged(createThrottledRefresh(() => gate.refresh()))
   return [
     result.ok

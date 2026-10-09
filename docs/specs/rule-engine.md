@@ -128,7 +128,7 @@
 
 ### 设置门控（总门核对结论）
 
-**上游规则触发路径无全局总开关**——`settings_types.ts` 全字段核对：规则启停仅有 per-rule `enabled` + 规则管理器（`deletedBuiltinRuleIds`，归 #14 storage 族）；`tryProcessInput` 对 `triggerCvtRule` 无设置门。#3 生效面 23 键中无 `ruleTriggerEnabled` 类键，**插件侧不设总门**：整链关闭 = 平台行为管理逐族关闭（或停用组件）。管线对设置面的唯一消费是 `debug`（引擎 `ctx.debug` 日志门，`SETTINGS_TOPIC.get` 拉取 + 每次 `behaviors.onChanged` 刷新）。
+**上游规则触发路径无全局总开关**——`settings_types.ts` 全字段核对：规则启停仅有 per-rule `enabled` + 规则管理器（`deletedBuiltinRuleIds`，归 #14 storage 族）；`tryProcessInput` 对 `triggerCvtRule` 无设置门。#3 生效面 23 键中无 `ruleTriggerEnabled` 类键，**插件侧不设总门**：整链关闭 = 平台行为管理逐族关闭（或停用组件）。管线对设置面的唯一消费是 `debug`（引擎 `ctx.debug` 日志门，`SETTINGS_TOPIC.get` 拉取 + `behaviors.onChanged` 刷新（3s 节流窗——C-R4-2））。
 
 ### reportError 接线与函数替换体规则的装载处置（#17 更新）
 
