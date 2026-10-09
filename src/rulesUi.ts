@@ -10,17 +10,21 @@
 //
 // 【内置规则边界（#1/#3 口径）】逐条启用开关走平台「行为冲突管理」不在此
 // 页；本页对内置规则只提供停用（deleteBuiltinRule → deletedBuiltinRuleIds）
-// 与恢复/重置入口，页头给引导文案。函数替换体（F 旗标）只读展示 + 提示，
-// 保存保留原值（编辑能力归 #17）。
+// 与恢复/重置入口，页头给引导文案。函数替换体（F 旗标）#17 解锁为预注册
+// 函数引用选择（ref 下拉 + 函数源码只读展示；函数本体编辑不在规则 JSON，
+// 自定义走组件化 fork，提示文案引导）。
 import type { Messages } from './i18n'
 import { RuleEngine, RuleScope, RuleTriggerMode, RuleType, type SimpleRule } from './rules/rule-engine'
 import { DEFAULT_BUILTIN_RULES } from './rules/default-rules'
+import { FUNCTION_TABLE_BY_REF, signatureKindForRuleType, type FunctionTableEntry } from './rules/function-table'
 import { RulesSettingsClient } from './rules/rules-settings-client'
 import {
   buildSimpleRuleFromForm,
   computeDropIndex,
   defaultRuleFormModel,
+  firstFunctionRefForType,
   formModelFromSimpleRule,
+  functionRefValidForType,
   previewRuleText,
   testSingleRule,
   toggleFormScope,
@@ -587,6 +591,13 @@ export function mountRulesSettingsView(
       pill.dataset.pillValue = value
       pill.addEventListener('click', () => {
         context.model.ruleType = value
+        // 类型切换后签名失配的函数 ref 自动改选该类型首个可用项（空 = 用户重选）
+        if (
+          context.model.isFunction &&
+          !functionRefValidForType(context.model.functionRef, value)
+        ) {
+          context.model.functionRef = firstFunctionRefForType(value)
+        }
         refreshFormVisibility()
         runTest()
       })
@@ -684,11 +695,28 @@ export function mountRulesSettingsView(
     matchGroup.append(flagsRow)
     body.append(matchGroup)
 
-    // -- 替换组（函数体只读 / 字符串可编辑） --
+    // -- 替换组（字符串可编辑 / 函数引用选择 + 源码只读展示） --
     const replGroup = el('div', `${CLS}-form-group`)
     replGroup.setAttribute('data-vet-group', 'replacement')
     const replHeader = el('div', `${CLS}-form-group-header`)
     replHeader.append(el('span', `${CLS}-form-group-title`, f.groupReplacement))
+    // 函数式替换开关（#17 解锁）：打开后替换面变为预注册函数引用选择
+    const fnChip = el('button', `${CLS}-chip`, f.fieldIsFunction)
+    fnChip.type = 'button'
+    fnChip.setAttribute('data-vet-field', 'isFunctionChip')
+    fnChip.addEventListener('click', () => {
+      context.model.isFunction = !context.model.isFunction
+      // 打开时缺省预选当前类型首个可用函数（避免空 ref 立即校验报错）
+      if (
+        context.model.isFunction &&
+        !functionRefValidForType(context.model.functionRef, context.model.ruleType)
+      ) {
+        context.model.functionRef = firstFunctionRefForType(context.model.ruleType)
+      }
+      refreshFormVisibility()
+      runTest()
+    })
+    replHeader.append(fnChip)
     replGroup.append(replHeader)
 
     const replRow = el('div', `${CLS}-form-row`)
@@ -710,6 +738,23 @@ export function mountRulesSettingsView(
     replHint.setAttribute('data-vet-field', 'replacementHint')
     replGroup.append(replHint)
 
+    // 函数引用选择行：预注册表内按规则类型过滤（选项经 refreshFormVisibility 重建）
+    const fnRefRow = el('label', `${CLS}-form-row`)
+    fnRefRow.setAttribute('data-vet-field', 'functionRefRow')
+    fnRefRow.append(el('span', `${CLS}-form-name`, f.fieldFunctionRef))
+    const fnRefSelect = el('select') as HTMLSelectElement
+    fnRefSelect.className = `${CLS}-select`
+    fnRefSelect.setAttribute('aria-label', f.fieldFunctionRef)
+    fnRefSelect.setAttribute('data-vet-input', 'functionRef')
+    fnRefSelect.addEventListener('change', () => {
+      context.model.functionRef = fnRefSelect.value
+      refreshFormVisibility()
+      runTest()
+    })
+    fnRefRow.append(fnRefSelect)
+    replGroup.append(fnRefRow)
+
+    // 选中函数的源码只读展示（函数本体在组件代码，不随规则 JSON 存储）
     const fnBlock = el('div', `${CLS}-fn-block`)
     fnBlock.setAttribute('data-vet-field', 'fnEditor')
     fnBlock.append(el('span', `${CLS}-form-name`, f.fieldReplacement))
@@ -859,21 +904,49 @@ export function mountRulesSettingsView(
       triggerDesc.textContent = model.isRegex ? '' : f.hintTriggerEscape
     }
 
-    // 替换体：函数锁 → 只读代码块；字符串 → 可编辑 textarea
+    // 替换体：函数式 → 引用选择 + 源码只读块；字符串 → 可编辑 textarea
+    const isFn = model.isFunction
+    overlay
+      .querySelector<HTMLButtonElement>('[data-vet-field="isFunctionChip"]')
+      ?.classList.toggle(`${CLS}-chip-active`, isFn)
     const replTextarea = fieldRow('replacementTextarea')
+    const fnRefRow = fieldRow('functionRefRow')
     const fnBlock = fieldRow('fnEditor')
-    replTextarea?.classList.toggle(`${CLS}-hidden`, model.functionLocked)
-    fnBlock?.classList.toggle(`${CLS}-hidden`, !model.functionLocked)
-    if (model.functionLocked) {
+    replTextarea?.classList.toggle(`${CLS}-hidden`, isFn)
+    fnRefRow?.classList.toggle(`${CLS}-hidden`, !isFn)
+    fnBlock?.classList.toggle(`${CLS}-hidden`, !isFn)
+    if (isFn) {
+      // 选项重建：仅列当前规则类型可用的签名（签名种类与规则类型的配对口径）
+      const fnRefSelect = overlay.querySelector<HTMLSelectElement>('[data-vet-input="functionRef"]')
+      if (fnRefSelect) {
+        const want = signatureKindForRuleType(model.ruleType)
+        const groupLabel = want === 'selectKey' ? f.fnGroupSelectKey : f.fnGroupText
+        const available = [...FUNCTION_TABLE_BY_REF.values()].filter(
+          (entry) => entry.signature === want,
+        )
+        fnRefSelect.textContent = ''
+        const group = doc.createElement('optgroup')
+        group.label = groupLabel
+        for (const entry of available) {
+          const option = doc.createElement('option')
+          option.value = entry.ref
+          option.textContent = entry.ref
+          group.append(option)
+        }
+        fnRefSelect.append(group)
+        fnRefSelect.value = model.functionRef
+      }
+      // 选中函数的源码只读展示（在场函数才展示；未选/失配给空块）
+      const entry: FunctionTableEntry | undefined = FUNCTION_TABLE_BY_REF.get(model.functionRef)
       const fnCode = overlay.querySelector<HTMLElement>('[data-vet-field="fnCode"]')
-      if (fnCode) renderHighlightedCode(fnCode, model.replacement)
-      const fnHint = overlay.querySelector<HTMLElement>('[data-vet-field="fnHint"]')
-      if (fnHint) {
+      if (fnCode) renderHighlightedCode(fnCode, entry ? String(entry.fn) : '')
+      const fnHintEl = overlay.querySelector<HTMLElement>('[data-vet-field="fnHint"]')
+      if (fnHintEl) {
         const parts: string[] = [
           isSelectKey ? f.functionHintSelectKey : f.functionHintInputDelete,
           f.functionReadonlyHint,
         ]
-        fnHint.textContent = parts.join('\n')
+        fnHintEl.textContent = parts.join('\n')
       }
     } else {
       const replHint = overlay.querySelector<HTMLElement>('[data-vet-field="replacementHint"]')
@@ -903,7 +976,7 @@ export function mountRulesSettingsView(
     return overlay.querySelector<HTMLElement>(`[data-vet-field="${name}"]`)
   }
 
-  /** 函数体只读高亮展示（词法器 + span 叠色，无 textarea——不可编辑） */
+  /** 函数源码只读高亮展示（词法器 + span 叠色，无 textarea——不可编辑） */
   function renderHighlightedCode(container: HTMLElement, code: string): void {
     container.textContent = ''
     let cursor = 0
@@ -927,10 +1000,14 @@ export function mountRulesSettingsView(
     const invalid = validateRuleForm(context.model)
     if (invalid) {
       if (errorLine) {
-        errorLine.textContent =
-          invalid.kind === 'required'
-            ? f.errTriggerRequired
-            : `${f.invalidRegex}：${invalid.detail}`
+        if (invalid.kind === 'required' && invalid.field === 'trigger') {
+          errorLine.textContent = f.errTriggerRequired
+        } else if (invalid.field === 'functionRef') {
+          errorLine.textContent =
+            invalid.kind === 'required' ? f.errFunctionRefRequired : f.errFunctionRefInvalid
+        } else {
+          errorLine.textContent = `${f.invalidRegex}：${invalid.detail}`
+        }
       }
       return
     }
@@ -986,7 +1063,7 @@ export function mountRulesSettingsView(
     const docText = input.value
     const from = input.selectionStart ?? docText.length
     const to = input.selectionEnd ?? from
-    // 函数锁下试运行用原函数体（表单不可编辑也不应失真）
+    // 函数式替换下试运行用当前选中 ref 装配的引用规则（选择面即所见）
     const rule = buildSimpleRuleFromForm(context.model, context.original ?? undefined)
     const outcome = testSingleRule(rule, { docText, from, to })
     if (outcome.kind === 'miss') {

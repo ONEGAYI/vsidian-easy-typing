@@ -8,7 +8,9 @@ import {
   buildSimpleRuleFromForm,
   computeDropIndex,
   defaultRuleFormModel,
+  firstFunctionRefForType,
   formModelFromSimpleRule,
+  functionRefValidForType,
   previewRuleText,
   testSingleRule,
   toggleFormScope,
@@ -36,7 +38,7 @@ describe('formModelFromSimpleRule（规则 → 表单初值）', () => {
     expect(model.ruleType).toBe(RuleType.Input)
     expect(model.triggerMode).toBe(RuleTriggerMode.Tab)
     expect(model.isRegex).toBe(true)
-    expect(model.functionLocked).toBe(true)
+    expect(model.isFunction).toBe(true)
     expect(model.scopes).toEqual([RuleScope.Formula, RuleScope.Code])
     expect(model.priority).toBe(7)
     expect(model.enabled).toBe(false)
@@ -65,7 +67,7 @@ describe('formModelFromSimpleRule（规则 → 表单初值）', () => {
     expect(model.priority).toBe(100)
     expect(model.enabled).toBe(true)
     expect(model.scopes).toEqual([RuleScope.All])
-    expect(model.functionLocked).toBe(false)
+    expect(model.isFunction).toBe(false)
   })
 })
 
@@ -126,19 +128,43 @@ describe('buildSimpleRuleFromForm（表单 → 规则装配）', () => {
     expect(buildSimpleRuleFromForm(model).regex_flags).toBeUndefined()
   })
 
-  it('函数只读锁：replacement 恒取原值（原函数体不可编辑也不可丢失）', () => {
-    const original: SimpleRule = {
-      trigger: 'x',
-      replacement: 'return leftMatches[0];',
-      options: 'F',
-    }
-    const model = formModelFromSimpleRule(original)
-    expect(model.functionLocked).toBe(true)
-    model.trigger = 'y'
-    model.replacement = '篡改体' // 表单只读失效时的防御面：装配仍保留原值
-    const rule = buildSimpleRuleFromForm(model, original)
-    expect(rule.replacement).toBe('return leftMatches[0];')
+  it('函数式替换装配：isFunction 拼F旗标、replacement 为 {kind,ref} 引用对象（#17）', () => {
+    const model = defaultRuleFormModel()
+    model.trigger = 'x'
+    model.isFunction = true
+    model.functionRef = 'autopairInput'
+    const rule = buildSimpleRuleFromForm(model)
+    expect(rule.replacement).toEqual({ kind: 'function', ref: 'autopairInput' })
     expect(rule.options).toContain('F')
+    // 关闭开关 → 回字符串字面量形态、旗标收回
+    model.isFunction = false
+    model.replacement = 'R$0'
+    const plain = buildSimpleRuleFromForm(model)
+    expect(plain.replacement).toBe('R$0')
+    expect(plain.options ?? '').not.toContain('F')
+  })
+
+  it('函数引用规则 → 表单往返（ref 进 functionRef，replacement 面清空）', () => {
+    const source: SimpleRule = {
+      id: 'u-fn',
+      trigger: 'x',
+      replacement: { kind: 'function', ref: 'convFormula' },
+      options: 'rF',
+    }
+    const model = formModelFromSimpleRule(source)
+    expect(model.isFunction).toBe(true)
+    expect(model.functionRef).toBe('convFormula')
+    expect(model.replacement).toBe('')
+    const round = buildSimpleRuleFromForm(model)
+    expect(round.replacement).toEqual({ kind: 'function', ref: 'convFormula' })
+    expect(round.options).toBe('rF')
+  })
+
+  it('遗留字符串函数体规则：isFunction 为真但 functionRef 为空（保存须改选）', () => {
+    const legacy: SimpleRule = { trigger: 'x', replacement: 'return 1;', options: 'F' }
+    const model = formModelFromSimpleRule(legacy)
+    expect(model.isFunction).toBe(true)
+    expect(model.functionRef).toBe('')
   })
 
   it('表单 ⇄ 规则全字段往返（非函数规则）', () => {
@@ -194,6 +220,35 @@ describe('validateRuleForm（保存前校验）', () => {
     model.trigger = '(unclosed'
     expect(validateRuleForm(model)).toBeNull()
   })
+
+  it('函数式替换：未选函数 → functionRef required；ref 不在场或签名失配 → invalid', () => {
+    const model = defaultRuleFormModel()
+    model.trigger = 'x'
+    model.isFunction = true
+    model.functionRef = ''
+    expect(validateRuleForm(model)).toEqual({ field: 'functionRef', kind: 'required' })
+    model.functionRef = 'noSuchRef'
+    expect(validateRuleForm(model)).toEqual({ field: 'functionRef', kind: 'invalid' })
+    // selectKey 函数配 Input 规则 → 签名失配
+    model.functionRef = 'selWrapQuotes'
+    expect(validateRuleForm(model)).toEqual({ field: 'functionRef', kind: 'invalid' })
+    // 配对后通过
+    model.ruleType = RuleType.SelectKey
+    expect(validateRuleForm(model)).toBeNull()
+  })
+
+  it('functionRefValidForType / firstFunctionRefForType：签名配对口径与缺省预选', () => {
+    expect(functionRefValidForType('autopairInput', RuleType.Input)).toBe(true)
+    expect(functionRefValidForType('autopairInput', RuleType.Delete)).toBe(true)
+    expect(functionRefValidForType('autopairInput', RuleType.SelectKey)).toBe(false)
+    expect(functionRefValidForType('selWrapQuotes', RuleType.SelectKey)).toBe(true)
+    expect(functionRefValidForType('selWrapQuotes', RuleType.Input)).toBe(false)
+    expect(functionRefValidForType('noSuchRef', RuleType.Input)).toBe(false)
+    expect(functionRefValidForType('', RuleType.Input)).toBe(false)
+    // 缺省预选落在正确签名组（text 组与 selectKey 组各取一项）
+    expect(functionRefValidForType(firstFunctionRefForType(RuleType.Input), RuleType.Input)).toBe(true)
+    expect(functionRefValidForType(firstFunctionRefForType(RuleType.SelectKey), RuleType.SelectKey)).toBe(true)
+  })
 })
 
 // ===== 作用域切换 =====
@@ -244,8 +299,9 @@ describe('previewRuleText（无 description 时的触发 → 替换形态）', (
   it('非正则触发式转义展示；F 旗标函数体原样展示（上游 repl 分支同语义）；右侧触发式拼接', () => {
     expect(previewRuleText({ trigger: 'a\n', replacement: 'b', options: '' })).toBe('a\\n → b')
     // 上游 repl = typeof replacement === 'string' ? replacement : '(fn)'——
-    // 序列化数据中 F 规则的函数体是字符串，列表预览原样展示
+    // 遗留字符串函数体（#17 前序列化形态）原样展示；引用形态显示 fn:<ref>
     expect(previewRuleText({ trigger: 'x', replacement: 'return 1;', options: 'F' })).toBe('x → return 1;')
+    expect(previewRuleText({ trigger: 'x', replacement: { kind: 'function', ref: 'convFormula' }, options: 'rF' })).toBe('x → fn:convFormula')
     expect(previewRuleText({ trigger: '(', trigger_right: ')', replacement: '', options: 'r' })).toBe('( … ) → ')
   })
 })
@@ -262,6 +318,18 @@ describe('testSingleRule（规则测试编辑器内核）', () => {
     if (outcome.kind !== 'hit') return
     expect(outcome.result.matchRange).toEqual({ from: 1, to: 3 })
     expect(outcome.outputText).toBe('a—b')
+    expect(outcome.cursor).toBe(2)
+  })
+
+  it('函数引用规则：经默认函数表装载命中（试运行链路端到端）', () => {
+    const outcome = testSingleRule(
+      { trigger: '（', replacement: { kind: 'function', ref: 'autopairInput' }, options: 'F' },
+      { docText: 'a（', from: 2, to: 2 },
+    )
+    expect(outcome.kind).toBe('hit')
+    if (outcome.kind !== 'hit') return
+    // autopairInput 返回 '（$0）'：$0 去标记，光标落配对之间（matchRange from=1）
+    expect(outcome.outputText).toBe('a（）')
     expect(outcome.cursor).toBe(2)
   })
 

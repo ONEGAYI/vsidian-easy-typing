@@ -7,6 +7,7 @@
 // - JS 词法器：rule_edit_modal.ts tokenizeJS 原样移植（CM6 高亮的降级替代
 //   ——设置页无 cm6 共享运行时，用 textarea + 着色叠层实现）。
 import { RuleEngine, RuleScope, RuleTriggerMode, RuleType, type ApplyResult, type SimpleRule } from './rule-engine'
+import { FUNCTION_TABLE_BY_REF, signatureKindForRuleType } from './function-table'
 
 // ===== 表单模型 =====
 
@@ -25,10 +26,14 @@ export interface RuleFormModel {
   enabled: boolean
   scopes: RuleScope[]
   /**
-   * 函数替换体只读锁（#16 边界）：F 旗标规则的函数体在 #17 收口前不可
-   * 编辑——true 时表单展示只读函数体 + 提示，保存恒保留原 replacement。
+   * 函数式替换开关（#17 解锁）：true 时替换体为预注册函数引用（options
+   * 拼F旗标、replacement 装配 {kind:'function', ref}）。仅引用选择，
+   * 不含函数体编辑——函数本体在组件代码的函数表（自定义走组件化
+   * fork，见 ADR-0002）。
    */
-  functionLocked: boolean
+  isFunction: boolean
+  /** 选中的函数表 ref（isFunction 为 true 时装配进 replacement；空 = 未选） */
+  functionRef: string
 }
 
 /** 新建规则的表单初值（上游 create 模式默认值） */
@@ -46,14 +51,17 @@ export function defaultRuleFormModel(): RuleFormModel {
     description: '',
     enabled: true,
     scopes: [RuleScope.All],
-    functionLocked: false,
+    isFunction: false,
+    functionRef: '',
   }
 }
 
 /**
  * 既有规则 → 表单模型（上游 RuleEditModal 构造器的初值解析）：options
  * 拆解为枚举态；trigger/trigger_right 经 escapeText 转可见转义（非正则
- * 模式下 \n 等真实控制字符与反斜杠须可见可编辑）。
+ * 模式下 \n 等真实控制字符与反斜杠须可见可编辑）。函数引用规则取 ref
+ * 进 functionRef；遗留字符串函数体（#17 前数据）functionRef 留空，保存
+ * 须改选预注册函数。
  */
 export function formModelFromSimpleRule(rule: SimpleRule): RuleFormModel {
   const opts = RuleEngine.parseOptions(rule.options)
@@ -61,13 +69,14 @@ export function formModelFromSimpleRule(rule: SimpleRule): RuleFormModel {
   model.ruleType = opts.type
   model.triggerMode = opts.triggerMode
   model.isRegex = opts.isRegex
-  model.functionLocked = opts.isFunctionReplacement
+  model.isFunction = opts.isFunctionReplacement
   model.scopes = opts.scope.length > 0 ? [...opts.scope] : [RuleScope.All]
   model.trigger = RuleEngine.escapeText(rule.trigger, opts.isRegex)
   if (rule.trigger_right !== undefined) {
     model.triggerRight = RuleEngine.escapeText(rule.trigger_right, opts.isRegex)
   }
   model.replacement = typeof rule.replacement === 'string' ? rule.replacement : ''
+  if (typeof rule.replacement !== 'string') model.functionRef = rule.replacement.ref
   if (rule.regex_flags !== undefined) model.regexFlags = RuleEngine.normalizeRegexFlags(rule.regex_flags)
   if (typeof rule.priority === 'number') model.priority = rule.priority
   if (rule.description !== undefined) model.description = rule.description
@@ -79,18 +88,19 @@ export function formModelFromSimpleRule(rule: SimpleRule): RuleFormModel {
 /**
  * 表单 → SimpleRule 装配（上游 buildSimpleRule）：options 旗标拼装、
  * 非正则 trigger 经 unescapeText 还原、空串可选字段归 undefined。
- * functionLocked 时 replacement 恒取原值（原函数体不可编辑也不可丢失）。
+ * isFunction 时 replacement 装配为函数引用对象（ref 经 validateRuleForm
+ * 把关在场与签名配对）。
  */
 export function buildSimpleRuleFromForm(
   model: RuleFormModel,
-  original?: SimpleRule,
+  _original?: SimpleRule,
 ): SimpleRule {
   let options = ''
   if (model.ruleType === RuleType.Delete) options += 'd'
   else if (model.ruleType === RuleType.SelectKey) options += 's'
   if (model.ruleType === RuleType.Input && model.triggerMode === RuleTriggerMode.Tab) options += 'T'
   if (model.isRegex) options += 'r'
-  if (model.functionLocked) options += 'F'
+  if (model.isFunction) options += 'F'
   if (!model.scopes.includes(RuleScope.All)) {
     if (model.scopes.includes(RuleScope.Text)) options += 't'
     if (model.scopes.includes(RuleScope.Formula)) options += 'f'
@@ -101,8 +111,8 @@ export function buildSimpleRuleFromForm(
     trigger: model.isRegex ? model.trigger : RuleEngine.unescapeText(model.trigger),
     trigger_right:
       (model.isRegex ? model.triggerRight : RuleEngine.unescapeText(model.triggerRight)) || undefined,
-    replacement: model.functionLocked
-      ? (original?.replacement ?? model.replacement)
+    replacement: model.isFunction
+      ? { kind: 'function', ref: model.functionRef }
       : model.replacement,
     options: options || undefined,
     priority: model.priority,
@@ -119,13 +129,38 @@ export function buildSimpleRuleFromForm(
 export type RuleFormError =
   | { field: 'trigger'; kind: 'required' }
   | { field: 'trigger' | 'triggerRight'; kind: 'invalid-regex'; detail: string }
+  | { field: 'functionRef'; kind: 'required' }
+  | { field: 'functionRef'; kind: 'invalid' }
+
+/** 函数 ref 对规则类型是否有效（在场且签名配对；UI 选择面与校验共用） */
+export function functionRefValidForType(ref: string, ruleType: RuleType): boolean {
+  const entry = FUNCTION_TABLE_BY_REF.get(ref)
+  if (!entry) return false
+  return entry.signature === signatureKindForRuleType(ruleType)
+}
+
+/** 该规则类型可用的首个函数 ref（函数开关打开时的缺省预选；无可用返回空串） */
+export function firstFunctionRefForType(ruleType: RuleType): string {
+  const want = signatureKindForRuleType(ruleType)
+  for (const entry of FUNCTION_TABLE_BY_REF.values()) {
+    if (entry.signature === want) return entry.ref
+  }
+  return ''
+}
 
 /**
  * 保存前校验（上游 Notice 两分支的结构化形态，文案映射归 UI 层）：
- * 触发式必填；正则模式下经 RuleEngine.validateRegex 校验两侧模式。
+ * 触发式必填；函数式替换须选中与规则类型配对的预注册函数；正则模式下
+ * 经 RuleEngine.validateRegex 校验两侧模式。
  */
 export function validateRuleForm(model: RuleFormModel): RuleFormError | null {
   if (model.trigger.trim().length === 0) return { field: 'trigger', kind: 'required' }
+  if (model.isFunction) {
+    if (model.functionRef.length === 0) return { field: 'functionRef', kind: 'required' }
+    if (!functionRefValidForType(model.functionRef, model.ruleType)) {
+      return { field: 'functionRef', kind: 'invalid' }
+    }
+  }
   const regexError = RuleEngine.validateRegex(buildSimpleRuleFromForm(model))
   if (regexError !== null) {
     const field = regexError.startsWith('trigger_right') ? 'triggerRight' : 'trigger'
@@ -168,14 +203,16 @@ export function computeDropIndex(fromIndex: number, targetIndex: number, dropOnB
 // ===== 列表预览（上游 buildRuleItem 的 preview 拼装） =====
 
 /**
- * 规则列表预览行：无 description 时退化为「触发 → 替换」形态；函数体
- * 显示 (fn)；非正则触发式经 escapeText 转可见。
+ * 规则列表预览行：无 description 时退化为「触发 → 替换」形态；函数引用
+ * 显示 fn:<ref>；遗留字符串函数体原样显示；非正则触发式经 escapeText
+ * 转可见。
  */
 export function previewRuleText(rule: SimpleRule): string {
   if (rule.description) return rule.description
   const opts = RuleEngine.parseOptions(rule.options)
   const render = (text: string): string => RuleEngine.escapeText(text, opts.isRegex)
-  const repl = typeof rule.replacement === 'string' ? rule.replacement : '(fn)'
+  const repl =
+    typeof rule.replacement === 'string' ? rule.replacement : `fn:${rule.replacement.ref}`
   const left = render(rule.trigger)
   const right = rule.trigger_right ? ` … ${render(rule.trigger_right)}` : ''
   return `${left}${right} → ${repl}`

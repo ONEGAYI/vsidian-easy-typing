@@ -470,6 +470,19 @@
   box-sizing: border-box;
 }
 
+/* 预注册函数引用下拉（#17：选项为函数表 ref，源码另示只读块） */
+.vsidian-easy-typing-select {
+  padding: 4px 8px;
+  border: 1px solid var(--vscode-dropdown-border, rgba(128, 128, 128, 0.35));
+  border-radius: 4px;
+  background: var(--vscode-dropdown-background, #3c3c3c);
+  color: var(--vscode-dropdown-foreground, #cccccc);
+  font-size: 12px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  width: 100%;
+  box-sizing: border-box;
+}
+
 .vsidian-easy-typing-textarea {
   min-height: 72px;
   resize: vertical;
