@@ -41,7 +41,7 @@
 
 ## 已知边界
 
-- **函数替换体校验宽松放行**：`sanitizeSimpleRule` 对 replacement 字符串（含 F 旗标函数体）不做语法校验，#1 现状字面保留；编译执行面与沙箱边界归 #17 收口（票面边界）。
+- **函数替换体引用形态收口（#17 已落地）**：`sanitizeSimpleRule` 接受 `replacement` 双形态——字符串字面量或函数引用对象 `{kind:'function', ref}`（kind/ref 浅拷贝、附加键丢弃、畸形引用拒绝）。**不查函数表**：存储层只管声明性数据的形状（fork 组件扩展函数表后可存内置表之外的 ref），ref 是否存在、签名是否匹配由引擎装载时查表校验并 reportError（见 [rule-engine.md](rule-engine.md) 函数替换体预注册节）。遗留字符串函数体（F 旗标 + 字符串）存储侧原样保留——数据不丢，装载侧拒绝并通知，用户可在 UI 改选预注册函数。决策见 [ADR-0002](../adr/0002-function-replacement-preregistered-table.md)。
 - **文件整体缺失 = 恢复出厂全量**（上游 exists=false 分支语义）：deletedIds 只约束 merge 补种路径，不拦截「文件不存在」分支——外部删除 builtin-rules.json 会复活已删内置规则，与上游一致（`test/rule-store.test.ts`「上游语义钉子」用例钉住，防好心修复）。
 - **languagePairs / customScriptCategories 未建持久化文件**：二者是间距引擎（smart space）的富结构，数据链归对应功能票；#3 边界句「富结构归你的 JSON 持久化」在本票只消费了 deletedBuiltinRuleIds（rule-state.json）。语言对种子仍以 `RICH_STRUCTURE_DEFAULTS` 为单一事实源，届时扩展同一 rule-state 文件或平行文件。
 - **revision 非持久化**：代次是运行态计数（每次激活期从 0 起），页面装载时以 -1 起步强制首拉；同一激活期内任何数据变化都会递增，跨激活期无比较意义（页面重新装载亦从 -1 起）。
@@ -52,5 +52,5 @@
 
 - **#15（Tabstop 导航）**：`ApplyResult.tabstops`（`{number, from, to}` 文档绝对坐标，number 升序）已填充，`cursor` 落 `tabstops[0].from`；分组导航把 tabstop 组转多光标选区 + Tab/Shift-Tab 跳转，引擎零改动。
 - **#16（规则管理 UI，已落地）**：读写全经 `RULES_TOPIC`（`src/rules/rules-protocol.ts`）；`get` 返回 `{ revision, builtin, user, deletedBuiltinRuleIds }`；mutate 11 op 覆盖增删改/开关/排序/触发模式/删除恢复重置/导入（content 字符串）；`exportUser` 给下载、`storageUri` 给「打开数据目录」类提示。设置页（setup 通道）与编辑器页（enable 通道）都已注册。实施落档见 [rules-ui.md](rules-ui.md)。
-- **#17（函数替换体）**：函数体字符串现状字面保留（存储 + `new Function` 编译执行）；`sanitizeSimpleRule` 的宽松校验点是收口位置（`src/rules/rule-store.ts`）。
+- **#17（函数替换体，已落地）**：`replacement` 引用对象形态随 JSON 序列化无损往返（出厂种子 → 落盘 → 解析回读，`test/rule-store.test.ts` 钉住）；mutate 通道的 rule 载荷经 `sanitizeSimpleRule` 同一收口，UI 产出的引用对象可直传。实施落档见 [rule-engine.md](rule-engine.md) 与 ADR-0002。
 - **#25（输入行为链）**：`PageRulesClient.engine`（`src/rules/rules-page.ts`）即消费入口——规则已在引擎内、自动重载已就绪；作用域判定按 #1 设计注入 `scopeHint`。
