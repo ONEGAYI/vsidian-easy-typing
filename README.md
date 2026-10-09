@@ -32,6 +32,7 @@ npm install        # 安装 devDependencies（精确版本，无运行时依赖�
 npm run compile    # 三产物构建（宿主 CJS + 编辑器/设置页 chrome114 IIFE）+ tsc 类型检查
 npm run test       # vitest 冒烟与结构契约
 npm run vendor:check  # 校验 types/vendor SDK 类型快照无漂移
+npm run package    # 打包 VSIX + 体积/内容红线检查 + 解包冒烟（只产本地 VSIX，无上传路径）
 ```
 
 工程设施细节（构建桥双防线、vendor 类型快照、清单红线）见 [AGENTS.md](AGENTS.md) 的「工程设施」节与 [ADR-0001](docs/adr/0001-scaffold-build-bridge-and-vendor.md)。
