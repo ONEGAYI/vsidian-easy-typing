@@ -1,13 +1,21 @@
 // 内置规则数据（工单 #1）——上游 easy-typing-obsidian v6.0.9
-// src/default_rules.ts 全量原样移植（纯数据 + 函数体字符串，零平台依赖）。
+// src/default_rules.ts 全量原样移植（纯数据，零平台依赖）。
 //
 // 计数口径：上游实测 20 条（default_rules.ts 的 id 与六语言包
 // builtinRuleDescriptions 键集一致），票面「22 条」为计数偏差，按全量
 // 口径移植（见 docs/specs/rule-engine.md 已知边界）。
 //
+// 【#17 函数引用形态】上游 10 条函数体规则（F 旗标 + 函数体字符串）在此
+// 迁移为函数引用：replacement 为 `{kind:'function', ref:'<id>'}`，函数本体
+// 是 src/rules/function-table.ts 内的真函数（逐条语义对照，ref 映射表见
+// 该模块头注）。平台 CSP 不放行 unsafe-eval，new Function 动态构造必被
+// 拦截——引用形态是函数替换体在本平台的唯一装载形态（ADR-0002）。
+// 匹配面（trigger/trigger_right/regex_flags）、优先级、描述与其余规则
+// 仍为上游数据逐字段原样。
+//
 // description 为上游数据原样保留（中文）；展示层本地化沿用上游模式——
-// 以规则 id 为键映射语言包 builtinRuleDescriptions（归 #16 规则管理 UI /
-// #19 i18n 完整化），本模块不承载用户可见渲染。
+// 以规则 id 为键映射语言包 builtinRuleDescriptions（归 #19 i18n 完整化），
+// 本模块不承载用户可见渲染。
 //
 // 内置规则逐条开关走平台「行为冲突管理」（行为注册粒度），本模块的
 // enabled 字段是数据态默认值，不自建开关 UI（口径见工单 #1）。
@@ -16,7 +24,7 @@ import type { SimpleRule } from './rule-engine'
 // 优先级分层（数字越小越优先）:
 //   10: 自动配对 + 基础转换
 //   15: 半角转全角（CJK字符后）
-//   20: 全角转半角（连续两个相同全角标点）
+//   20: 全角转半角（连续两个全角标点）
 //   30: 删除配对
 //   40: 选中替换
 //   50: 引用处理
@@ -27,7 +35,7 @@ export const DEFAULT_BUILTIN_RULES: (SimpleRule & { id: string })[] = [
   {
     id: 'builtin-autopair-input',
     trigger: '[（《「『“”‘’《]',
-    replacement: "const p={'【':'【$0】','（':'（$0）','《':'《$0》','「':'「$0」','『':'『$0』','“':'“$0”','”':'“$0”','‘':'‘$0’','’':'‘$0’','《':'《$0》'}; return p[leftMatches[0]];",
+    replacement: { kind: 'function', ref: 'autopairInput' },
     options: 'rF',
     priority: 10,
     description: '输入全角括号/引号时自动补全配对',
@@ -36,7 +44,7 @@ export const DEFAULT_BUILTIN_RULES: (SimpleRule & { id: string })[] = [
     id: 'builtin-autopair-jump',
     trigger: "《》|“”|““|‘’|‘‘|（）",
     trigger_right: "》|”|’|）",
-    replacement: "const map = {\n  \"《》\": [\"》\", \"《》\"],\n  \"（）\": [\"）\", \"（）\"],\n  \"“”\": [\"”\", \"“”\"],\n  \"““\": [\"”\", \"“”\"],\n  \"‘’\": [\"’\", \"‘’\"],\n  \"‘‘\": [\"’\", \"‘’\"]\n}\nif(map[leftMatches[0]][0]==rightMatches[0]){\n  return map[leftMatches[0]][1];\n}\nreturn undefined;",
+    replacement: { kind: 'function', ref: 'autopairJump' },
     options: 'rF',
     priority: 5,
     description: '输入右侧配对符号时自动跳过，避免重复插入'
@@ -45,7 +53,7 @@ export const DEFAULT_BUILTIN_RULES: (SimpleRule & { id: string })[] = [
     id: 'builtin-autopair-delete',
     trigger: "[【（《「『“‘]",
     trigger_right: "[】）》」』”’]",
-    replacement: "const p={'【':'】','（':'）','《':'》','「':'」','『':'』','“':'”','‘':'’'}; return p[leftMatches[0]]===rightMatches[0] ? '' : undefined;",
+    replacement: { kind: 'function', ref: 'autopairDelete' },
     options: 'drF',
     priority: 10,
     description: '删除全角括号/引号时同时删除配对',
@@ -66,7 +74,7 @@ export const DEFAULT_BUILTIN_RULES: (SimpleRule & { id: string })[] = [
     id: 'builtin-conv-formula',
     trigger: '(￥￥|¥¥|\\$￥|\\$¥|\\$\\$)',
     trigger_right: '\\$?',
-    replacement: "return rightMatches[0] === '$' ? '$$\\n$0\\n$$' : '$$0$';",
+    replacement: { kind: 'function', ref: 'convFormula' },
     options: 'rF',
     priority: 10,
     description: '￥/$ 符号组合转行内或块级公式',
@@ -74,7 +82,7 @@ export const DEFAULT_BUILTIN_RULES: (SimpleRule & { id: string })[] = [
   {
     id: 'builtin-conv-linestart',
     trigger: '(^|\\n)([》、])',
-    replacement: "const m = {'》': '[[1]]> $0', '、': '[[1]]/$0'}; return m[leftMatches[2]];",
+    replacement: { kind: 'function', ref: 'convLinestart' },
     options: 'rF',
     priority: 10,
     description: '行首 》 转引用标记、行首 、 转斜杠',
@@ -86,7 +94,7 @@ export const DEFAULT_BUILTIN_RULES: (SimpleRule & { id: string })[] = [
     id: 'builtin-conv-hw2fw',
     trigger: '([\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af])([,.:?!;\(])',
     trigger_right: '\\)?',
-    replacement: "const m={',':'，','.':'。','?':'？','!':'！',':':'：',';':'；','(':'（$0）'}; return leftMatches[1] + m[leftMatches[2]];",
+    replacement: { kind: 'function', ref: 'convHw2fw' },
     options: 'rF',
     priority: 15,
     enabled: false,
@@ -98,7 +106,7 @@ export const DEFAULT_BUILTIN_RULES: (SimpleRule & { id: string })[] = [
     id: 'builtin-fw2hw-double',
     trigger: "([。！；，：？》｜（《])\\1",
     trigger_right: '[）》]?',
-    replacement: "const p={'（':['）','($0)'],'《':['》','<$0']};\nconst m={'。':'.$0','！':'!$0','；':';$0','，':',$0','：':':$0','？':'?$0','》':'>$0','｜':'|$0','（':'($0)','《':'<$0'};\nconst c=leftMatches[1],r=rightMatches[0]||'',e=p[c]; \nreturn e&&e[0]===r?e[1]:m[c];",
+    replacement: { kind: 'function', ref: 'fw2hwDouble' },
     options: 'rF',
     priority: 3,
     description: '连续输入两个相同全角标点转对应半角',
@@ -138,7 +146,7 @@ export const DEFAULT_BUILTIN_RULES: (SimpleRule & { id: string })[] = [
   {
     id: 'builtin-sel-wrap-symbols',
     trigger: `【¥￥`,
-    replacement: "const m={'¥': ['$', '$'], '￥': ['$', '$'], '【': ['[', ']']}; \nreturn m[key][0] + '${0:${SEL}}' + m[key][1];",
+    replacement: { kind: 'function', ref: 'selWrapSymbols' },
     options: 'sF',
     priority: 40,
     description: '选中文字后输入 【/¥/￥ 包裹为 []/$$',
@@ -146,7 +154,7 @@ export const DEFAULT_BUILTIN_RULES: (SimpleRule & { id: string })[] = [
   {
     id: 'builtin-sel-wrap-quotes',
     trigger: `“”‘’`,
-    replacement: "const m={'“': ['“','”'], '”': ['“','”'], '‘': ['‘','’'], '’': ['‘','’']}; return m[key][0] + '${0:${SEL}}' + m[key][1];",
+    replacement: { kind: 'function', ref: 'selWrapQuotes' },
     options: 'sF',
     priority: 40,
     description: '选中文字后输入全角引号，配对引号包裹',
@@ -154,7 +162,7 @@ export const DEFAULT_BUILTIN_RULES: (SimpleRule & { id: string })[] = [
   {
     id: 'builtin-sel-wrap-cjk-brackets',
     trigger: `《（`,
-    replacement: "const m={'《': ['《','》'], '（': ['（','）']}; return m[key][0] + '${0:${SEL}}' + m[key][1];",
+    replacement: { kind: 'function', ref: 'selWrapCjkBrackets' },
     options: 'sF',
     priority: 40,
     description: '选中文字后输入《（，配对括号包裹',

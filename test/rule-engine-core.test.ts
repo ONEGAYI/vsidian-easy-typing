@@ -131,22 +131,55 @@ describe('normalizeRule 规则归一（SimpleRule → ConvertRule）', () => {
     expect(rule.triggerMode).toBe(RuleTriggerMode.Auto)
   })
 
-  it('F 旗标把函数体字符串编译为函数', () => {
+  it('F 旗标经函数表把引用解析为真函数（#17 预注册形态）', () => {
     const rule = RuleEngine.normalizeRule({
       trigger: 'x',
-      replacement: "return leftMatches[0] + '!';",
+      replacement: { kind: 'function', ref: 'autopairInput' },
       options: 'rF',
     })
     expect(typeof rule.replacement).toBe('function')
-    expect((rule.replacement as (l: string[], r: string[]) => string)(['x'], [])).toBe('x!')
+    const fn = rule.replacement as (l: string[], r: string[]) => string | void
+    expect(fn(['（'], [])).toBe('（$0）')
   })
 
-  it('函数体编译失败：静默为永不返回的替换体并上报，不中断装配', () => {
+  it('SelectKey 类规则解析 selectKey 签名函数（selectionText/key 参数面）', () => {
+    const rule = RuleEngine.normalizeRule({
+      trigger: '¥',
+      replacement: { kind: 'function', ref: 'selWrapSymbols' },
+      options: 'sF',
+    })
+    const fn = rule.replacement as (sel: string, key: string) => string | void
+    expect(fn('abc', '¥')).toBe('$${0:${SEL}}$')
+  })
+
+  it.each([
+    [
+      '未知 ref',
+      { trigger: 'x', replacement: { kind: 'function', ref: 'noSuchFn' }, options: 'rF' } as SimpleRule,
+      'unknown function ref "noSuchFn"',
+    ],
+    [
+      '签名与规则类型不符（selectKey 函数配 Input 规则）',
+      { trigger: 'x', replacement: { kind: 'function', ref: 'selWrapSymbols' }, options: 'rF' } as SimpleRule,
+      'expects selectKey signature but rule type "input" requires text',
+    ],
+    [
+      '遗留字符串函数体（new Function 路径已删除）',
+      { trigger: 'x', replacement: 'return 1;', options: 'F' } as SimpleRule,
+      'function body strings are no longer supported',
+    ],
+    [
+      '函数引用对象缺 F 旗标（形态失配防御）',
+      { trigger: 'x', replacement: { kind: 'function', ref: 'autopairInput' }, options: 'r' } as SimpleRule,
+      'requires the F option flag',
+    ],
+  ])('拒绝装载：%s → 死替换体 + reportError 上报', (_name, rule, messagePart) => {
     const reportError = vi.fn()
     const engine = new RuleEngine({ reportError })
-    engine.addSimpleRule({ trigger: 'x', replacement: 'return syntax error((', options: 'rF' })
+    engine.addSimpleRule(rule)
     expect(reportError).toHaveBeenCalledTimes(1)
-    // 死替换体：函数返回 undefined → process 永不命中
+    expect(reportError.mock.calls[0]![1]).toContain(messagePart)
+    // 死替换体：函数返回 undefined → process 永不命中，同批其他规则不受影响
     expect(engine.process(inputCtx('x', 1))).toBeNull()
   })
 })
@@ -333,28 +366,67 @@ describe('正则缓存', () => {
   })
 })
 
-describe('函数替换体执行', () => {
-  it('返回 undefined 视为不命中，落穿到后续规则', () => {
-    const engine = new RuleEngine()
+describe('函数替换体执行（#17 预注册形态；自定义表经构造选项注入）', () => {
+  /** 测试用自定义函数表（验证注入面；fork 场景直接扩展 function-table.ts） */
+  function customTableEngine(
+    fn: (leftMatches: string[], rightMatches: string[]) => string | void,
+    reportError?: (id: string, msg: string) => void,
+  ): RuleEngine {
+    const table = new Map<string, import('../src/rules/function-table').FunctionTableEntry>([
+      ['testFn', { ref: 'testFn', signature: 'text', fn }],
+    ])
+    const engine = new RuleEngine({ reportError, functionTable: table })
     engine.addSimpleRule({
       trigger: 'x',
-      replacement: "if (leftMatches[0] !== 'zzz') return undefined; return 'NEVER';",
+      replacement: { kind: 'function', ref: 'testFn' },
       options: 'F',
       priority: 1,
     })
+    return engine
+  }
+
+  it('返回 undefined 视为不命中，落穿到后续规则', () => {
+    const engine = customTableEngine(() => undefined)
     engine.addSimpleRule({ trigger: 'x', replacement: 'FALLBACK', options: '', priority: 10 })
     expect(engine.process(inputCtx('x', 1))?.newText).toBe('FALLBACK')
   })
 
+  it('函数返回串进入后处理链（$0 占位符解析与捕获组引用照常）', () => {
+    const engine = customTableEngine((l) => `<${l[0]!}$0>`)
+    const result = engine.process(inputCtx('ax', 2))
+    expect(result?.newText).toBe('<x>')
+    // matchRange {from:1}：'<x' 两字符后 $0 → from = 1 + 2
+    expect(result?.tabstops).toEqual([{ number: 0, from: 3, to: 3 }])
+  })
+
   it('运行时异常：节流上报（5 秒内一次）且不命中，后续规则继续', () => {
     const reportError = vi.fn()
-    const engine = new RuleEngine({ reportError })
-    engine.addSimpleRule({ trigger: 'x', replacement: 'throw new Error("boom");', options: 'F', priority: 1 })
+    const engine = customTableEngine(() => {
+      throw new Error('boom')
+    }, reportError)
     engine.addSimpleRule({ trigger: 'x', replacement: 'NEXT', options: '', priority: 10 })
     expect(engine.process(inputCtx('x', 1))?.newText).toBe('NEXT')
     expect(engine.process(inputCtx('x', 1))?.newText).toBe('NEXT')
     expect(reportError).toHaveBeenCalledTimes(1)
     expect(reportError.mock.calls[0]![0]).toMatch(/^rule-/)
+  })
+
+  it('SelectKey 签名注入：selectionText/key 参数直达', () => {
+    const table = new Map<string, import('../src/rules/function-table').FunctionTableEntry>([
+      ['testSel', { ref: 'testSel', signature: 'selectKey', fn: (sel: string, key: string) => `[${key}]${sel}` }],
+    ])
+    const engine = new RuleEngine({ functionTable: table })
+    engine.addSimpleRule({ trigger: 'k', replacement: { kind: 'function', ref: 'testSel' }, options: 'sF' })
+    const result = engine.process({
+      kind: RuleType.SelectKey,
+      docText: 'xabcz',
+      selection: { from: 1, to: 4 },
+      inserted: 'k',
+      changeType: 'input.type',
+      scopeHint: RuleScope.Text,
+      key: 'k',
+    })
+    expect(result?.newText).toBe('[k]abc')
   })
 })
 

@@ -137,9 +137,10 @@ export function createRulePipelineGate(channel: RulePipelineChannelSubset): Rule
 // ===== reportError 适配：全局节流 + 宿主通知通道 =====
 
 /** 上报节流窗口（毫秒）：窗口期内仅首条发通道请求，其余 debugLog 留痕。
- * 引擎对运行时异常已按规则 5 秒节流，此处全局窗防御 CSP 环境下装载期
- * 多条函数体规则同时编译失败的批量轰炸（#405 定案：webview 不放行
- * unsafe-eval，函数体规则在真实页面编译失败——按 #1 现状跳过并上报） */
+ * 引擎对运行时异常已按规则 5 秒节流，此处全局窗防御装载期多条规则同时
+ * 解析失败的批量轰炸（#17 起函数替换体为预注册引用形态：未知 ref /
+ * 签名失配 / 遗留字符串函数体在装载期拒绝并上报；#1 时代 new Function
+ * 在 CSP 页面批量编译失败的场景已随该路径删除根治） */
 export const RULE_ERROR_NOTIFY_WINDOW_MS = 5000
 
 /** 通道请求失败（released/timeout）静默——上报是尽力而为通道 */

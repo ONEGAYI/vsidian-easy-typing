@@ -108,6 +108,19 @@ describe('源码导入纪律（构建桥第一道防线的测试侧镜像）', (
       })
     }
   })
+
+  it('动态代码禁令（#17）：src 下不得调用 new Function / eval——CSP 页面必炸，函数替换体走预注册函数表', () => {
+    for (const rel of srcFiles) {
+      // 注释行豁免（头注与决策说明会提及该词；禁的是可执行代码）
+      const codeLines = readFileSync(path.join(repoRoot, rel), 'utf8')
+        .split('\n')
+        .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      for (const line of codeLines) {
+        expect(line, `${rel} 含 new Function 调用`).not.toContain('new Function')
+        expect(line, `${rel} 含 eval 调用`).not.toMatch(/\beval\s*\(/)
+      }
+    }
+  })
 })
 
 describe('LICENSE 双署名', () => {
