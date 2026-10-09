@@ -77,7 +77,7 @@ npm run vendor:check  # 校验 types/vendor SDK 类型快照无漂移
 npm run package    # 打包 VSIX + 体积/内容红线检查 + 解包冒烟（只产本地 VSIX，无上传路径）
 ```
 
-工程设施细节（构建桥双防线、vendor 类型快照、清单红线）见 [AGENTS.md](AGENTS.md) 的「工程设施」节与 [ADR-0001](docs/adr/0001-scaffold-build-bridge-and-vendor.md)。
+工程设施细节（构建桥双防线、vendor 类型快照、清单红线）见 [AGENTS.md](AGENTS.md) 的「工程设施」节与 [ADR-0001](docs/adr/0001-scaffold-build-bridge-and-vendor.md)。以本仓库为模板起步的新插件作者导览见[范例导读](docs/showcase.md)，代码分层与触发通道见[代码导览](docs/architecture.md)（工单 #20）。
 
 ## 致敬与许可
 
