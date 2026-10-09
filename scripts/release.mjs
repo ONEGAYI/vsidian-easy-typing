@@ -50,6 +50,7 @@ const REQUIRED_ROOT = ['extension.vsixmanifest', '[content_types].xml']
 const REQUIRED_RUNTIME = [
   'package.json',
   'readme.md',
+  'readme.en.md', // #19 双语 README——vsce 对仓库 README.en.md 自动打入
   'changelog.md', // vsce 对仓库 CHANGELOG.md 自动打入（实测小写形态）
   'license', // 实测形态 LICENSE.txt，前缀匹配兜底
   'dist/extension.js',
@@ -81,7 +82,15 @@ const FORBIDDEN_PATTERNS = [
 // .zcode 等工具残留混入包内且黑名单拦不住），未知顶层条目一律拒绝；
 // dist/ 内未登记产物同样拒绝（构建实验残留）。新增根级运行时资产须同步
 // 登记此处与 REQUIRED_RUNTIME。
-const ALLOWED_TOP = new Set(['dist', 'package.json', 'readme.md', 'changelog.md', 'license', 'license.txt'])
+const ALLOWED_TOP = new Set([
+  'dist',
+  'package.json',
+  'readme.md',
+  'readme.en.md',
+  'changelog.md',
+  'license',
+  'license.txt',
+])
 const ALLOWED_DIST = new Set(REQUIRED_RUNTIME.filter((rel) => rel.startsWith('dist/')))
 
 /** 解析 `unzip -l` 输出为条目列表（name 含 `extension/` 前缀）。 */
