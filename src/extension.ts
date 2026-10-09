@@ -11,7 +11,7 @@ import * as vscode from 'vscode'
 import type { AddonDefinition, AddonSetupContext } from '../types/vendor/host/addons/addonRegistry'
 import type { VsidianHostExports } from './host-api'
 import { pickMessages } from './i18n'
-import { attachSettings, RULE_ERROR_TOPIC, SETTINGS_TOPIC, type EasyTypingSettingsFacade } from './settings/store'
+import { attachSettings, NOTICE_TOPIC, RULE_ERROR_TOPIC, SETTINGS_TOPIC, type EasyTypingSettingsFacade } from './settings/store'
 import { buildSettingDefinitions } from './settings/definitions'
 import { HostRulesService, registerRulesChannels } from './rulesHost'
 import { debugLog, setDebugEnabled } from './logging'
@@ -73,6 +73,21 @@ function registerSettingsChannels(setupCtx: AddonSetupContext): void {
     void vscode.window.showWarningMessage(
       messages.ruleError.notify.replace('{id}', request.ruleId).replace('{message}', request.message),
     )
+    return null
+  })
+  // 通用通知（工单 #28）：命令回执的上游 Obsidian Notice 等价通道——
+  // 切换自动格式化的新状态、文件排除命中说明；文案走 notices 字典，
+  // 宿主按 vscode.env.language 本地化。info 级（命令正常回执，非告警）
+  setupCtx.channel.handle(NOTICE_TOPIC, (payload) => {
+    const request = payload as { kind?: unknown; enabled?: unknown }
+    const messages = pickMessages(vscode.env.language)
+    let text: string | null = null
+    if (request?.kind === 'auto-format-toggled') {
+      text = request.enabled === true ? messages.notices.autoFormatToggledOn : messages.notices.autoFormatToggledOff
+    } else if (request?.kind === 'command-file-excluded') {
+      text = messages.notices.commandFileExcluded
+    }
+    if (text !== null) void vscode.window.showInformationMessage(text)
     return null
   })
 }

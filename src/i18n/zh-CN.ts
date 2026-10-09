@@ -6,6 +6,12 @@ const zhMessages = {
     // 工单 #12 纯文本粘贴命令标题（区别于平台「粘贴纯文本」：本命令同时
     // 置跳过自动格式化标记，#26 格式化管线消费）
     pastePlainTitle: '纯文本粘贴（跳过自动格式化）',
+    // 工单 #28 格式化命令族标题（文案对照上游 locale commands 词条）
+    formatArticleTitle: '格式化全文',
+    formatSelectionTitle: '格式化选中部分/当前行',
+    deleteBlankLinesTitle: '删除选中部分/全文的多余空白行',
+    toggleAutoFormatTitle: '切换自动格式化开关',
+    convertCodeBlockTitle: '插入代码块',
   },
   settings: {
     tabout: {
@@ -155,6 +161,13 @@ const zhMessages = {
   // 规则错误通知模板（工单 #25；{id} 规则 id、{message} 引擎上报的技术细节）
   ruleError: {
     notify: '输入规则 {id} 已跳过：{message}',
+  },
+  // 通用通知文案（工单 #28；上游 Obsidian Notice 的宿主等价通道消费——
+  // 页面经 NOTICE_TOPIC 上报，宿主 showInformationMessage 承接）
+  notices: {
+    autoFormatToggledOn: '自动格式化已开启',
+    autoFormatToggledOff: '自动格式化已关闭',
+    commandFileExcluded: '当前文件在排除清单（排除文件夹/文件）中，命令未执行',
   },
   // 规则管理设置页文案（工单 #16）：对照上游 locale headers.toolTip.
   // ruleEditModal.dropdownOptions 词条，按平台自绘页形态改写

@@ -29,6 +29,12 @@ export const SETTINGS_TOPIC = {
  * SETTINGS_TOPIC 的落位约定）。 */
 export const RULE_ERROR_TOPIC = 'easyTyping.ruleError.notify'
 
+/** 通用通知通道 topic（工单 #28）：页面侧命令回执上报 → 宿主
+ * showInformationMessage（上游 Obsidian Notice 的等价通道）。payload 为
+ * 判别联合 { kind: 'auto-format-toggled'; enabled: boolean } |
+ * { kind: 'command-file-excluded' }，返回 null（尽力而为通道）。 */
+export const NOTICE_TOPIC = 'easyTyping.notice.show'
+
 /** 门面对外视图（生效值只读） */
 export type EffectiveSettingsView = Readonly<EffectiveEasyTypingSettings>
 

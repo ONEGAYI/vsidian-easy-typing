@@ -6,6 +6,12 @@ import type { Messages } from './index'
 export const enMessages: Messages = {
   commands: {
     pastePlainTitle: 'Paste as plain text (skip auto formatting)',
+    // 工单 #28 格式化命令族标题（文案对照上游 locale commands 词条）
+    formatArticleTitle: 'Format current article',
+    formatSelectionTitle: 'Format selected text or current line',
+    deleteBlankLinesTitle: 'Delete blank lines of the selected or whole article',
+    toggleAutoFormatTitle: 'Switch autoformat',
+    convertCodeBlockTitle: 'Insert code block w/wo selection',
   },
   settings: {
     tabout: {
@@ -155,6 +161,13 @@ export const enMessages: Messages = {
   // Rule error notification template (issue #25; {id} rule id, {message} engine-reported detail)
   ruleError: {
     notify: 'Input rule {id} skipped: {message}',
+  },
+  // Generic notice copy (issue #28; consumed by the host-side equivalent of
+  // the upstream Obsidian Notice channel — the page reports via NOTICE_TOPIC)
+  notices: {
+    autoFormatToggledOn: 'Auto formatting enabled',
+    autoFormatToggledOff: 'Auto formatting disabled',
+    commandFileExcluded: 'Current file is in the exclusion list (excluded folders/files); command not executed',
   },
   // Rules management settings page copy (issue #16): follows upstream locale
   // headers / toolTip / ruleEditModal / dropdownOptions entries, adapted to
