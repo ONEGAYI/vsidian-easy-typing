@@ -203,6 +203,16 @@ describe('domEventHandlers paste 处理器：接管/透传与派发形态', () =
     expect(marker.pasteDetected).toBe(true)
   })
 
+  it('设置门控显式开（审查 B-F5 装配接线）：命中场景照常接管续接（与缺省恒开同形）', () => {
+    const { deps } = handlerdeps({ isSmartPasteEnabled: () => true })
+    const handler = createSmartPastePasteHandler(deps)
+    const { view, calls } = fakeView(stateAt('- item', 6))
+    const event = pasteEvent('aa\nbb')
+    expect(handler(event as unknown as Event, view)).toBe(true)
+    expect(event.defaultPrevented).toBe(true)
+    expect(calls).toHaveLength(1)
+  })
+
   it('纯文本意图不被事件级标记冲掉（命令置 plain 后合成事件透传仍保留）', () => {
     const { deps, marker } = handlerdeps()
     marker.markPaste(true)

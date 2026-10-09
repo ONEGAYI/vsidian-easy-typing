@@ -13,7 +13,7 @@
 import { describe, expect, it } from 'vitest'
 import { EditorSelection, EditorState } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
-import { betterBackspaceCommand, planBetterBackspace } from '../src/backspaceIntercept'
+import { betterBackspaceCommand, createBetterBackspaceCommand, planBetterBackspace } from '../src/backspaceIntercept'
 
 /** 文档 + 折叠光标构造 */
 function stateAt(doc: string, cursor: number): EditorState {
@@ -179,5 +179,40 @@ describe('keymap Command betterBackspaceCommand：接管/透传与派发形态',
     const { view, calls } = fakeView(state)
     expect(betterBackspaceCommand(view)).toBe(false)
     expect(calls).toHaveLength(0)
+  })
+})
+
+describe('createBetterBackspaceCommand：设置门控透传（审查 B-F5，#11 modAGate 形态）', () => {
+  interface DispatchSpec {
+    changes?: Array<{ from: number; to: number; insert: string }>
+    selection?: { anchor: number; head: number }
+    userEvent?: string
+    scrollIntoView?: boolean
+  }
+
+  function fakeView(state: EditorState): { view: EditorView; calls: DispatchSpec[] } {
+    const calls: DispatchSpec[] = []
+    const view = {
+      state,
+      compositionStarted: false,
+      dispatch: (spec: DispatchSpec) => {
+        calls.push(spec)
+      },
+    }
+    return { view: view as unknown as EditorView, calls }
+  }
+
+  it('门控关闭：命中场景也透传（return false 零派发——行为与不注册本 keymap 等价）', () => {
+    const command = createBetterBackspaceCommand({ isEnabled: () => false })
+    const { view, calls } = fakeView(stateAt('1. a\n2. \n3. b', 8))
+    expect(command(view)).toBe(false)
+    expect(calls).toHaveLength(0)
+  })
+
+  it('门控开启：原 Command 语义（命中接管 + 派发删除事务）', () => {
+    const command = createBetterBackspaceCommand({ isEnabled: () => true })
+    const { view, calls } = fakeView(stateAt('1. a\n2. \n3. b', 8))
+    expect(command(view)).toBe(true)
+    expect(calls).toHaveLength(1)
   })
 })

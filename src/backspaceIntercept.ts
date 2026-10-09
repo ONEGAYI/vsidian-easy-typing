@@ -27,8 +27,10 @@
 // - IME 组合中与只读状态不接管（组合文本即正文、只读实例不该写——
 //   平台 listEditing 同口径）。
 //
-// 设置门控：上游 settings.BetterBackspace 开关随本组件设置票接线，
-// 本层先行恒开（关闭 = 不注册本 keymap）。
+// 设置门控（审查 B-F5 修复）：上游 settings.BetterBackspace 开关经 #3
+// 设置通道接线——page-editor 装配处按 createBetterBackspaceCommand({
+// isEnabled }) 注入运行时门（「恒注册 + 设置门控透传」形态，对齐 #11
+// modAGate——关闭时 return false，行为与不注册本 keymap 等价）。
 import type { EditorState } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import { parseEmptyLinePrefix, planEmptyPrefixBackspace } from './backspaceAlgorithm'
@@ -98,4 +100,14 @@ export const betterBackspaceCommand = (view: EditorView): boolean => {
     scrollIntoView: true,
   })
   return true
+}
+
+/**
+ * 设置门控包装（审查 B-F5 修复，对齐 #11 createModACommand 形态）：门控
+ * 关闭 → return false 透传（行为与不注册本 keymap 等价）；开启 → 原
+ * Command 语义。isEnabled 由 page-editor 注入（装载拉取 + 焦点回归刷新）。
+ */
+export function createBetterBackspaceCommand(options: { isEnabled: () => boolean }): (view: EditorView) => boolean {
+  const { isEnabled } = options
+  return (view) => (isEnabled() ? betterBackspaceCommand(view) : false)
 }

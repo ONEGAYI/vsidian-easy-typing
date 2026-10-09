@@ -17,9 +17,10 @@
 // 核对」节。
 //
 // 与上游的差异：上游从 PluginContext 读 settings.Tabout 开关——本组件
-// 设置面尚未建立（随设置票落地），本层先行恒开；后续在 page-editor
-// 装配处按设置门控是否注册 keymap（票面评论：功能粒度开关由本插件
-// 设置控制是否注册相应 keymap）。
+// 经 #3 设置通道门控（审查 B-F5 修复）：page-editor 装配处按
+// createTaboutCommand({ isEnabled }) 注入运行时门（「恒注册 + 设置门控
+// 透传」形态，对齐 #11 modAGate——关闭时 return false，行为与不注册本
+// keymap 等价）。
 import type { EditorState } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import { TABOUT_PAIRS, taboutCursorInPairedString } from './taboutAlgorithm'
@@ -82,4 +83,14 @@ export const taboutCommand = (view: EditorView): boolean => {
   if (plan === null) return false
   view.dispatch({ selection: { anchor: plan.anchor, head: plan.head } })
   return true
+}
+
+/**
+ * 设置门控包装（审查 B-F5 修复，对齐 #11 createModACommand 形态）：门控
+ * 关闭 → return false 透传（行为与不注册本 keymap 等价）；开启 → 原
+ * Command 语义。isEnabled 由 page-editor 注入（装载拉取 + 焦点回归刷新）。
+ */
+export function createTaboutCommand(options: { isEnabled: () => boolean }): (view: EditorView) => boolean {
+  const { isEnabled } = options
+  return (view) => (isEnabled() ? taboutCommand(view) : false)
 }

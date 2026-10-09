@@ -3,13 +3,13 @@
 // test/examples/input-behavior/src/page-editor.ts。
 import { defineAddonPage } from 'vsidian-addon-sdk'
 import type { VsidianAddonPageSdk } from '../types/vendor/shared/addonPage'
-import { betterBackspaceCommand } from './backspaceIntercept'
+import { createBetterBackspaceCommand } from './backspaceIntercept'
 import { buildToggleCommentCommandDefinition, createToggleCommentCommandHandler } from './commentToggle'
 import { createCollapseEnterGate, createFoldEnterCommand } from './foldEnter'
 import { createNewLineBelowCommand, createNewLineBelowGate } from './newLineBelow'
-import { taboutCommand } from './taboutIntercept'
+import { createTaboutCommand } from './taboutIntercept'
 import { pickMessages } from './i18n'
-import { debugLog } from './logging'
+import { debugLog, setDebugEnabled } from './logging'
 import {
   buildSelectBlockCommandDefinition,
   createEnhanceModAGate,
@@ -37,10 +37,34 @@ import {
 } from './ruleBehaviorIntercept'
 import { registerAutoFormatBehavior, createAutoFormatGate } from './autoFormatIntercept'
 import { registerFormattingCommands } from './formattingCommands'
-import { NOTICE_TOPIC } from './settings/store'
+import { NOTICE_TOPIC, SETTINGS_TOPIC } from './settings/store'
 
 /** 本组件声明的扩展 ID（装载器按此核对入口身份） */
 const ADDON_ID = 'ONEGAYI.vsidian-easy-typing'
+
+/**
+ * 单布尔键设置门（三键行为门控的公共形态，语义对齐 modaIntercept 的
+ * enhanceModA 门）：通道失败保持上次值（瞬时故障不翻转拦截行为）；
+ * 有效载荷仅认 boolean true。初值由调用方传上游出厂默认——通道首次
+ * 返回前不翻转默认行为（「关闭 = 不注册等价」与「默认开 = 上游恒开」
+ * 同一方向）。
+ */
+function createBooleanSettingGate(
+  channel: VsidianAddonPageSdk['channel'],
+  key: 'tabout' | 'betterBackspace' | 'smartPaste',
+  initial: boolean,
+): { enabled(): boolean; refresh(): Promise<void> } {
+  let current = initial
+  return {
+    enabled: () => current,
+    refresh: async () => {
+      const outcome = await channel.request(SETTINGS_TOPIC.get, null)
+      if (outcome.ok !== true) return
+      const effective = (outcome.result as { effective?: unknown } | null)?.effective
+      current = (effective as Record<string, unknown> | null)?.[key] === true
+    },
+  }
+}
 
 defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   // 实验 cm6 入口（清单已声明 ^1.1.0）：CM6 运行时值只经此取得——直接
@@ -66,13 +90,52 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   ruleClient.startWatch()
   sdk.onDispose(() => ruleClient.stopWatch())
 
+  // debug 日志门控接线（审查 C-P2-2 修复）：logging 模块的 debugEnabled 是
+  // bundle 内单例——宿主 extension.ts 的 setDebugEnabled 接线只改宿主
+  // bundle 那份实例，页面 IIFE 各持一份恒 false 的副本（页面侧 debugLog
+  // 全为死路径）。本页装载时经 #3 设置通道拉 effective.debug 接线本份
+  // 实例；通道失败保持上次值（装载首拉失败 = 默认关，安全方向）。
+  const refreshDebugGate = async (): Promise<void> => {
+    const outcome = await sdk.channel.request(SETTINGS_TOPIC.get, null)
+    if (outcome.ok !== true) return
+    const effective = (outcome.result as { effective?: unknown } | null)?.effective
+    setDebugEnabled((effective as { debug?: unknown } | null)?.debug === true)
+  }
+  void refreshDebugGate()
+
+  // 行为开关门控族（审查 B-F5 修复）：tabout / betterBackspace / smartPaste
+  // 三键运行时门（上游 settings.Tabout / BetterBackspace / SmartPaste，
+  // 三键出厂默认均开）。形态对齐 #11/#18「恒注册 + 设置门控透传」——
+  // 关闭时行为与不注册本组件扩展等价，运行时开关即时生效。装载拉取 +
+  // 焦点回归刷新（#18 形态：Tab/Backspace 是高频透传键，不挂按键级刷新
+  // 避免每键一次通道请求；设置页改开关后回到编辑器即按新值判定）。
+  const behaviorGates = {
+    tabout: createBooleanSettingGate(sdk.channel, 'tabout', true),
+    betterBackspace: createBooleanSettingGate(sdk.channel, 'betterBackspace', true),
+    smartPaste: createBooleanSettingGate(sdk.channel, 'smartPaste', true),
+  }
+  const refreshBehaviorGates = (): void => {
+    for (const gate of Object.values(behaviorGates)) void gate.refresh()
+  }
+  refreshBehaviorGates()
+  sdk.registerExtension(
+    cm6.view.EditorView.updateListener.of((update) => {
+      if (update.focusChanged) {
+        refreshBehaviorGates()
+        void refreshDebugGate()
+      }
+    }),
+  )
+
   // Tabout keymap（工单 #7）：**落穿层**——普通扩展槽（平台扩展数组
   // 末位），不用 Prec 抢先。平台 Tab 三段链（围栏越界 → 表格导航 →
   // 正文缩进）先处理；命中配对场景（栈匹配 / 选区包围）才接管，其余
   // return false 透传。可达性与冲突核对结论见 docs/specs/tabout.md
-  // 「平台 Tab 冲突核对」节。设置门控（上游 settings.Tabout）随本
-  // 组件设置票接线：关闭时不注册本 keymap。
-  sdk.registerExtension(cm6.view.keymap.of([{ key: 'Tab', run: taboutCommand }]))
+  // 「平台 Tab 冲突核对」节。设置门控（上游 settings.Tabout）经上方
+  // behaviorGates 接线（关闭时透传 = 不注册等价，审查 B-F5 修复）。
+  sdk.registerExtension(
+    cm6.view.keymap.of([{ key: 'Tab', run: createTaboutCommand({ isEnabled: () => behaviorGates.tabout.enabled() }) }]),
+  )
 
   // BetterBackspace keymap（工单 #8）：**抢先层**（票面评论定案，
   // Prec.high）——先于平台 Backspace 情境链（symbolAutocomplete 删空对
@@ -81,9 +144,14 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   // （联降/降级/合并）；嵌套空项与空任务项 return false 让位平台（树
   // 判 dedent / 一次清整段前缀更准，避免双重接管）。可达性与让位面
   // 核对结论见 docs/specs/backspace.md「平台 Backspace 冲突核对」节。
-  // 设置门控（上游 settings.BetterBackspace）随设置票接线。
+  // 设置门控（上游 settings.BetterBackspace）经上方 behaviorGates 接线
+  //（关闭时透传 = 不注册等价，审查 B-F5 修复）。
   sdk.registerExtension(
-    cm6.state.Prec.high(cm6.view.keymap.of([{ key: 'Backspace', run: betterBackspaceCommand }])),
+    cm6.state.Prec.high(
+      cm6.view.keymap.of([
+        { key: 'Backspace', run: createBetterBackspaceCommand({ isEnabled: () => behaviorGates.betterBackspace.enabled() }) },
+      ]),
+    ),
   )
 
   // ============================================================
@@ -188,13 +256,15 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   // 其余纯文本粘贴落穿到本层；命中列表/引用续接才 preventDefault 接管，
   // 恒等续接与未命中一律 return false 透传原生链（多光标行分配等平台语
   // 义保持）。选型理由与让位面核对见 docs/specs/smart-paste.md。设置门控
-  //（上游 settings.SmartPaste）随设置接线，当前恒开。
+  //（上游 settings.SmartPaste）经上方 behaviorGates 接线（isSmartPasteEnabled
+  // 注入位——关闭 = 不续接仍透传粘贴，审查 B-F5 修复）。
   const pasteMarker = createPasteMarker()
   sdk.registerExtension(
     cm6.view.EditorView.domEventHandlers({
       paste: createSmartPastePasteHandler({
         marker: pasteMarker,
         editableFacet: cm6.view.EditorView.editable,
+        isSmartPasteEnabled: () => behaviorGates.smartPaste.enabled(),
       }),
     }),
   )

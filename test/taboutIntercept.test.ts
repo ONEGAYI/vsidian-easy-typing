@@ -12,7 +12,7 @@
 import { describe, expect, it } from 'vitest'
 import { EditorSelection, EditorState } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
-import { planTabout, taboutCommand } from '../src/taboutIntercept'
+import { createTaboutCommand, planTabout, taboutCommand } from '../src/taboutIntercept'
 
 /** 文档 + 折叠光标构造 */
 function stateAt(doc: string, cursor: number): EditorState {
@@ -133,5 +133,32 @@ describe('keymap Command taboutCommand：接管/透传与派发形态', () => {
     const { view, calls } = fakeView(stateAt('abc', 1))
     expect(taboutCommand(view)).toBe(false)
     expect(calls).toHaveLength(0)
+  })
+})
+
+describe('createTaboutCommand：设置门控透传（审查 B-F5，#11 modAGate 形态）', () => {
+  function fakeView(state: EditorState): { view: EditorView; calls: unknown[] } {
+    const calls: unknown[] = []
+    const view = {
+      state,
+      dispatch: (spec: unknown) => {
+        calls.push(spec)
+      },
+    }
+    return { view: view as unknown as EditorView, calls }
+  }
+
+  it('门控关闭：命中场景也透传（return false 零派发——行为与不注册本 keymap 等价）', () => {
+    const command = createTaboutCommand({ isEnabled: () => false })
+    const { view, calls } = fakeView(stateAt('【x】', 2))
+    expect(command(view)).toBe(false)
+    expect(calls).toHaveLength(0)
+  })
+
+  it('门控开启：原 Command 语义（命中接管 + 派发）', () => {
+    const command = createTaboutCommand({ isEnabled: () => true })
+    const { view, calls } = fakeView(stateAt('【x】', 2))
+    expect(command(view)).toBe(true)
+    expect(calls).toHaveLength(1)
   })
 })
