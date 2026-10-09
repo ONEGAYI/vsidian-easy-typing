@@ -53,9 +53,9 @@
 
 | 上游字段 | 原因 | #14 接口 |
 | --- | --- | --- |
-| `languagePairs` | `LanguagePair[]` 是对象数组（`{a, b}`），a/b 可为 `ScriptCategory` 或自定义类名——嵌套结构超出一层边界，拆平为布尔键会丢失自定义对表达力 | 出厂默认 3 对（中英/中数/数英）在 `src/settings/defaults.ts` 的 `RICH_STRUCTURE_DEFAULTS.languagePairs` 导出，#14 以此为缺省种子持久化用户编辑 |
-| `customScriptCategories` | `CustomScriptDef[]`（`{name, pattern}` 对象数组），同上 | 同上——`RICH_STRUCTURE_DEFAULTS.customScriptCategories`（出厂空数组） |
-| `deletedBuiltinRuleIds` | `string[]` 本身可映射，但它是**规则管理状态的伴随数据**（标记哪些内置规则被用户删除），与 `builtin-rules.json`/`user-rules.json` 同生命周期，归规则数据族持久化一致性更好 | #14 规则存储快照的字段；不另设设置键 |
+| `languagePairs` | `LanguagePair[]` 是对象数组（`{a, b}`），a/b 可为 `ScriptCategory` 或自定义类名——嵌套结构超出一层边界，拆平为布尔键会丢失自定义对表达力 | 出厂默认 3 对（中英/中数/数英）在 `src/settings/defaults.ts` 的 `RICH_STRUCTURE_DEFAULTS.languagePairs` 导出，后续间距功能票以此为缺省种子持久化用户编辑（#14 落档：该数据链尚无消费方，未建文件，见 [rules-storage.md](rules-storage.md) 已知边界） |
+| `customScriptCategories` | `CustomScriptDef[]`（`{name, pattern}` 对象数组），同上 | 同上——`RICH_STRUCTURE_DEFAULTS.customScriptCategories`（出厂空数组），同样待间距功能票 |
+| `deletedBuiltinRuleIds` | `string[]` 本身可映射，但它是**规则管理状态的伴随数据**（标记哪些内置规则被用户删除），与 `builtin-rules.json`/`user-rules.json` 同生命周期，归规则数据族持久化一致性更好 | **#14 已落档**：`rule-state.json`（`{ deletedBuiltinRuleIds }`），出厂种子 `RICH_STRUCTURE_DEFAULTS.deletedBuiltinRuleIds`；不另设设置键 |
 
 ### 永不移植（3 项，AGENTS.md 清单）
 
@@ -95,6 +95,6 @@
 
 ## 八、给后续票的接口提示
 
-- **#14（规则持久化）**：`RICH_STRUCTURE_DEFAULTS`（languagePairs / customScriptCategories / deletedBuiltinRuleIds 出厂值）已从 `src/settings/defaults.ts` 导出；规则文件直接落 `ctx.storage`（`builtin-rules.json` / `user-rules.json` 文件名沿用上游），路径设置不存在（见 §三）。
+- **#14（规则持久化，已落地）**：规则文件落 `ctx.storage`（`builtin-rules.json` / `user-rules.json` / `rule-state.json`，路径设置不存在见 §三）；通道与自动重载见 [rules-storage.md](rules-storage.md)。语言对与自定义类别的持久化待间距功能票（§三）。
 - **#16（自绘设置页）**：读写经本文 §五.4 的三个 channel topic；枚举值与默认值从 `src/settings/defaults.ts` 导入，不复制第二份。
 - **#25（M1 输入规则族）及各功能票**：消费统一入口 `EasyTypingSettingsFacade.effective`（类型 `EffectiveEasyTypingSettings`，`src/settings/store.ts` 导出）；订阅变化用 `onEffectiveChange`，禁止直接调用平台 `settings.get()`。

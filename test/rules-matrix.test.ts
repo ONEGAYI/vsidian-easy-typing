@@ -8,8 +8,8 @@
 // 口径约定：
 // - docText 已含刚键入的字符（上游 transactionFilter 后置触发语义），
 //   selection 光标位于其后；坐标为 LF 偏移。
-// - $0/$1 占位符归 #14：命中断言中的 $0 均为字面标记；tabstops 恒空，
-//   cursor 取插入尾。
+// - $0/$1 占位符已随 #14 解析（上游 parseTabstops 恢复）：newText 去标记、
+//   tabstops 填充文档绝对坐标、cursor 落最小编号占位符起点；分组导航归 #15。
 // - Delete/SelectKey 用例分两档：Input 触发下「不触发」（类型门控）与
 //   kind:Delete/SelectKey 的「内核共享路径冒烟」——触发管线与端到端归 #9。
 import { describe, expect, it } from 'vitest'
@@ -68,17 +68,23 @@ describe('builtin-autopair-input（输入全角括号/引号自动补全，rF/10
   // p 含 '【'——键入 【 不自动补全，而删除类 builtin-autopair-delete 的
   // 触发类含 【。按上游数据移植，不擅自放宽。
   it.each([
-    ['a（', 2, '（$0）'],
-    ['好《', 2, '《$0》'],
-    ['「', 1, '「$0」'],
-    ['『', 1, '『$0』'],
-    ['“', 1, '“$0”'],
-    ['”', 1, '“$0”'],
-    ['‘', 1, '‘$0’'],
-    ['’', 1, '‘$0’'],
-  ])('触发：%s 光标 %i → %s', (doc, cursor, expected) => {
+    ['a（', 2, '（）'],
+    ['好《', 2, '《》'],
+    ['「', 1, '「」'],
+    ['『', 1, '『』'],
+    ['“', 1, '“”'],
+    ['”', 1, '“”'],
+    ['‘', 1, '‘’'],
+    ['’', 1, '‘’'],
+  ])('触发：%s 光标 %i → %s（$0 解析为空占位）', (doc, cursor, expected) => {
     const result = builtinEngine().process(inputCtx(doc, cursor))
     expect(result?.newText).toBe(expected)
+  })
+
+  it('触发断言（tabstop 形态）：$0 去标记后 tabstops 填空占位、cursor 落其上', () => {
+    const result = builtinEngine().process(inputCtx('a（', 2))
+    expect(result?.tabstops).toEqual([{ number: 0, from: 2, to: 2 }])
+    expect(result?.cursor).toBe(2)
   })
 
   it('不触发：半角括号与 【 不在触发类（上游触发类原样）', () => {
@@ -114,7 +120,7 @@ describe('builtin-autopair-jump（输入右配对符跳过，rF/5）', () => {
     // 左侧是 ‘’，刚键入 ”：右侧 ” 匹配右正则但不是 ‘’ 的配对端 → 函数
     // 返回 undefined；随后 autopair-input 命中（leftDoc 末字符 ’ 在触发类）
     const result = builtinEngine().process(inputCtx('‘’”', 2))
-    expect(result?.newText).toBe('‘$0’')
+    expect(result?.newText).toBe('‘’')
     expect(result?.matchRange).toEqual({ from: 1, to: 2 })
   })
 })
@@ -153,10 +159,12 @@ describe('builtin-autopair-delete（删除配对，drF/10，触发管线归 #9�
 })
 
 describe('builtin-conv-backtick（·· 转行内代码，10）', () => {
-  it('触发：a·· → `$0`（$0 为字面标记，#14 接管解析）', () => {
+  it('触发：a·· → 行内代码（$0 解析为空占位，cursor 落标记间）', () => {
     const result = builtinEngine().process(inputCtx('a··', 3))
-    expect(result?.newText).toBe('`$0`')
+    expect(result?.newText).toBe('``')
     expect(result?.matchRange).toEqual({ from: 1, to: 3 })
+    expect(result?.tabstops).toEqual([{ number: 0, from: 2, to: 2 }])
+    expect(result?.cursor).toBe(2)
   })
 
   it('不触发：单个 ·', () => {
@@ -165,7 +173,7 @@ describe('builtin-conv-backtick（·· 转行内代码，10）', () => {
 
   it('边界：三个 · 取末尾两个', () => {
     const result = builtinEngine().process(inputCtx('x···', 4))
-    expect(result?.newText).toBe('`$0`')
+    expect(result?.newText).toBe('``')
     expect(result?.matchRange).toEqual({ from: 2, to: 4 })
   })
 })
@@ -173,8 +181,9 @@ describe('builtin-conv-backtick（·· 转行内代码，10）', () => {
 describe('builtin-conv-codeblock（`·` 升级代码块，r/10）', () => {
   it('触发：行首 `·` → 代码块（[[1]] 缩进捕获为空）', () => {
     const result = builtinEngine().process(inputCtx('`·`', 2))
-    expect(result?.newText).toBe('```$0\n```')
+    expect(result?.newText).toBe('```\n```')
     expect(result?.matchRange).toEqual({ from: 0, to: 3 })
+    expect(result?.tabstops).toEqual([{ number: 0, from: 3, to: 3 }])
   })
 
   it('不触发：行中 `·`（lookbehind 行首不满足）', () => {
@@ -183,7 +192,7 @@ describe('builtin-conv-codeblock（`·` 升级代码块，r/10）', () => {
 
   it('边界：缩进捕获 [[1]] 两侧生效', () => {
     const result = builtinEngine().process(inputCtx('  `·`', 4))
-    expect(result?.newText).toBe('  ```$0\n  ```')
+    expect(result?.newText).toBe('  ```\n  ```')
   })
 })
 
@@ -193,17 +202,19 @@ describe('builtin-conv-formula（￥/$ 组合转公式，rF/10）', () => {
     ['¥¥', 2],
     ['$￥', 2],
     ['$$', 2],
-  ])('触发：%s 右侧无 $ → 行内公式字面标记 $$0$', (doc, cursor) => {
+  ])('触发：%s 右侧无 $ → 行内公式（$0 解析，tabstop 落两个 $ 之间）', (doc, cursor) => {
     const result = builtinEngine().process(inputCtx(doc, cursor))
-    expect(result?.newText).toBe('$$0$')
+    expect(result?.newText).toBe('$$')
     expect(result?.matchRange).toEqual({ from: 0, to: cursor })
+    expect(result?.tabstops).toEqual([{ number: 0, from: 1, to: 1 }])
   })
 
   it('触发：右侧恰为 $ → 块级公式（\\n 反转义为真实换行）', () => {
     // 光标在 ￥￥ 之后（右侧已存在 $，如「￥$」前再补一个 ￥）
     const result = builtinEngine().process(inputCtx('￥￥$', 2))
-    expect(result?.newText).toBe('$$\n$0\n$$')
+    expect(result?.newText).toBe('$$\n\n$$')
     expect(result?.matchRange).toEqual({ from: 0, to: 3 })
+    expect(result?.tabstops).toEqual([{ number: 0, from: 3, to: 3 }])
   })
 
   it('不触发：单个 ￥', () => {
@@ -213,9 +224,9 @@ describe('builtin-conv-formula（￥/$ 组合转公式，rF/10）', () => {
 
 describe('builtin-conv-linestart（行首 》/、 转换，rF/10）', () => {
   it.each([
-    ['\n》', '\n> $0'],
-    ['》', '> $0'],
-    ['、', '/$0'],
+    ['\n》', '\n> '],
+    ['》', '> '],
+    ['、', '/'],
   ])('触发：%j → %j（上游替换表原样：、 无尾随空格）', (doc, expected) => {
     const result = builtinEngine().process(inputCtx(doc as string, (doc as string).length))
     expect(result?.newText).toBe(expected)
@@ -231,11 +242,11 @@ describe('builtin-conv-hw2fw（CJK 后半角标点转全角，rF/15，默认关�
     expect(builtinEngine().process(inputCtx('好,', 2))).toBeNull()
   })
 
-  it('启用后触发：好, → 好， / 好. → 好。 / 好( → （$0）', () => {
+  it('启用后触发：好, → 好， / 好. → 好。 / 好( → 好配对括号', () => {
     const engine = builtinEngine()
     engine.setEnabled('builtin-conv-hw2fw', true)
     expect(engine.process(inputCtx('好,', 2))?.newText).toBe('好，')
-    expect(engine.process(inputCtx('好(', 2))?.newText).toBe('好（$0）')
+    expect(engine.process(inputCtx('好(', 2))?.newText).toBe('好（）')
     expect(engine.process(inputCtx('好.', 2))?.newText).toBe('好。')
   })
 
@@ -248,14 +259,14 @@ describe('builtin-conv-hw2fw（CJK 后半角标点转全角，rF/15，默认关�
 
 describe('builtin-fw2hw-double（连续两个全角标点转半角，rF/3）', () => {
   it.each([
-    ['。。', '.$0'],
-    ['，，', ',$0'],
-    ['！！', '!$0'],
-    ['？？', '?$0'],
-    ['《《', '<$0'],
-    ['｜｜', '|$0'],
-    ['（（', '($0)'],
-  ])('触发：%s → %s', (doc, expected) => {
+    ['。。', '.'],
+    ['，，', ','],
+    ['！！', '!'],
+    ['？？', '?'],
+    ['《《', '<'],
+    ['｜｜', '|'],
+    ['（（', '()'],
+  ])('触发：%s → %s（$0 解析为空占位）', (doc, expected) => {
     const result = builtinEngine().process(inputCtx(doc, 2))
     expect(result?.newText).toBe(expected)
   })
@@ -264,15 +275,15 @@ describe('builtin-fw2hw-double（连续两个全角标点转半角，rF/3）', (
     expect(builtinEngine().process(inputCtx('。，', 2))).toBeNull()
   })
 
-  it('边界：优先级 3 抢在行首转换与引用转换之前（》》 → >$0）', () => {
+  it('边界：优先级 3 抢在行首转换与引用转换之前（》》 → >）', () => {
     const result = builtinEngine().process(inputCtx('》》', 2))
-    expect(result?.newText).toBe('>$0')
+    expect(result?.newText).toBe('>')
   })
 
-  it('边界：右侧带配对端（（（） 光标 2 → ($0) 吃掉右端', () => {
+  it('边界：右侧带配对端（（（） 光标 2 → () 吃掉右端', () => {
     // 光标在第二个 （ 之后、） 之前（在已有 （） 前再键入一个 （）
     const result = builtinEngine().process(inputCtx('（（）', 2))
-    expect(result?.newText).toBe('($0)')
+    expect(result?.newText).toBe('()')
     expect(result?.matchRange).toEqual({ from: 0, to: 3 })
   })
 })
@@ -339,7 +350,7 @@ describe('SelectKey 类内置规则（s/sF/40，触发管线归 #9）', () => {
     expect(builtinEngine().process(inputCtx('·', 1))).toBeNull()
   })
 
-  it('共享路径冒烟：选区 abc 按 · → `${0:abc}`（${SEL} 展开、占位符归 #14）', () => {
+  it('共享路径冒烟：选区 abc 按 · → 行内代码（${SEL} 展开 + $0 占位覆盖选区文本）', () => {
     const engine = builtinEngine()
     const result = engine.process({
       kind: RuleType.SelectKey,
@@ -350,12 +361,13 @@ describe('SelectKey 类内置规则（s/sF/40，触发管线归 #9）', () => {
       scopeHint: RuleScope.All,
       key: '·',
     })
-    expect(result?.newText).toBe('`${0:abc}`')
+    expect(result?.newText).toBe('`abc`')
     expect(result?.matchRange).toEqual({ from: 1, to: 4 })
-    expect(result?.tabstops).toEqual([])
+    expect(result?.tabstops).toEqual([{ number: 0, from: 2, to: 5 }])
+    expect(result?.cursor).toBe(2)
   })
 
-  it('共享路径冒烟：选区 abc 按 ¥（sF 函数体）→ $${0:abc}$', () => {
+  it('共享路径冒烟：选区 abc 按 ¥（sF 函数体）→ $ 包裹 + $0 占位覆盖选区', () => {
     const engine = builtinEngine()
     const result = engine.process({
       kind: RuleType.SelectKey,
@@ -366,15 +378,16 @@ describe('SelectKey 类内置规则（s/sF/40，触发管线归 #9）', () => {
       scopeHint: RuleScope.All,
       key: '¥',
     })
-    expect(result?.newText).toBe('$${0:abc}$')
+    expect(result?.newText).toBe('$abc$')
+    expect(result?.tabstops).toEqual([{ number: 0, from: 2, to: 5 }])
   })
 })
 
 describe('builtin-quote-convert（> / 》 转引用标记，r/50）', () => {
   it.each([
-    ['>', '> $0'],
-    ['\n>', '\n> $0'],
-    ['>>', '>> $0'],
+    ['>', '> '],
+    ['\n>', '\n> '],
+    ['>>', '>> '],
   ])('触发：%j → %j', (doc, expected) => {
     const result = builtinEngine().process(inputCtx(doc as string, (doc as string).length))
     expect(result?.newText).toBe(expected)
@@ -384,16 +397,18 @@ describe('builtin-quote-convert（> / 》 转引用标记，r/50）', () => {
     expect(builtinEngine().process(inputCtx('a>', 2))).toBeNull()
   })
 
-  it('边界：引用中 》 续写（>》 → >> $0，[>》] 消耗 》 后插入 > ）', () => {
-    expect(builtinEngine().process(inputCtx('>》', 2))?.newText).toBe('>> $0')
+  it('边界：引用中 》 续写（>》 → >> ，[>》] 消耗 》 后插入 > ）', () => {
+    expect(builtinEngine().process(inputCtx('>》', 2))?.newText).toBe('>> ')
   })
 })
 
 describe('builtin-quote-space（引用标记后补空格，r/50）', () => {
-  it('触发：>ab → > ab$0（插入缺失空格）', () => {
+  it('触发：>ab → > ab（$0 解析为尾部空占位，cursor 落补空格后）', () => {
     const result = builtinEngine().process(inputCtx('>ab', 3))
-    expect(result?.newText).toBe('> ab$0')
+    expect(result?.newText).toBe('> ab')
     expect(result?.matchRange).toEqual({ from: 0, to: 3 })
+    expect(result?.tabstops).toEqual([{ number: 0, from: 4, to: 4 }])
+    expect(result?.cursor).toBe(4)
   })
 
   it('不触发：空格已在（> ab）', () => {
@@ -401,9 +416,9 @@ describe('builtin-quote-space（引用标记后补空格，r/50）', () => {
   })
 
   it('边界：嵌套引用 >>ab 与换行后 >ab（换行前缀不入匹配区间）', () => {
-    expect(builtinEngine().process(inputCtx('>>ab', 4))?.newText).toBe('>> ab$0')
+    expect(builtinEngine().process(inputCtx('>>ab', 4))?.newText).toBe('>> ab')
     const result = builtinEngine().process(inputCtx('a\n>ab', 5))
-    expect(result?.newText).toBe('\n> ab$0')
+    expect(result?.newText).toBe('\n> ab')
     expect(result?.matchRange).toEqual({ from: 1, to: 5 })
   })
 })
