@@ -9,6 +9,7 @@ import { mountRulesSettingsView, type RulesSettingsViewHandle } from '../src/rul
 import { RulesSettingsClient } from '../src/rules/rules-settings-client'
 import { HostRulesService, registerRulesChannels } from '../src/rulesHost'
 import { DEFAULT_BUILTIN_RULES } from '../src/rules/default-rules'
+import { IMPORT_CONTENT_MAX_LENGTH } from '../src/rules/rules-protocol'
 import { USER_RULES_FILE } from '../src/rules/rule-store'
 import { zhMessages } from '../src/i18n'
 import type { RulesChannelLike } from '../src/rules/rules-page'
@@ -503,6 +504,23 @@ describe('JSON 导入导出', () => {
     q<HTMLButtonElement>(root, `${act('export')}`).click()
     await flush()
     expect(q(root, '[data-vet-status]').textContent).toContain(zhMessages.rulesPage.status.noRulesToExport)
+  })
+
+  it('导入超大文件（>2MB）→ too-large 失败文案（审查 C-P3-4：UI 预检本地拦截，不发通道）', async () => {
+    const { request } = assemble()
+    const { root } = await mountView(request)
+
+    q<HTMLButtonElement>(root, `${act('import')}`).click()
+    await flush()
+    const fileInput = q<HTMLInputElement>(document, 'input[type="file"]')
+    const huge = 'x'.repeat(IMPORT_CONTENT_MAX_LENGTH + 1)
+    const file = new File([huge], 'rules.json', { type: 'application/json' })
+    Object.defineProperty(fileInput, 'files', { value: [file] })
+    fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    await flush(3)
+    const status = q(root, '[data-vet-status]')
+    expect(status.getAttribute('data-vet-status')).toBe('failed')
+    expect(status.textContent).toContain(zhMessages.rulesPage.status.importTooLarge)
   })
 
   it('导出触发浏览器下载（Blob URL + 锚点点击）', async () => {

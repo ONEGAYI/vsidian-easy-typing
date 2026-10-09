@@ -8,6 +8,7 @@
 // （读写拒绝不崩、写失败缓存不变）由这些语义驱动验证。
 import { describe, expect, it } from 'vitest'
 import { HostRulesService } from '../src/rulesHost'
+import { IMPORT_CONTENT_MAX_LENGTH, IMPORT_MAX_RULES } from '../src/rules/rules-protocol'
 import {
   BUILTIN_RULES_FILE,
   RULE_STATE_FILE,
@@ -204,6 +205,47 @@ describe('写拒绝下的降级（too-large / error / invalid-path 语义消费�
     const { service } = newService(mock)
     const snap = await service.ensureLoaded()
     expect(snap.builtin).toHaveLength(DEFAULT_BUILTIN_RULES.length)
+  })
+})
+
+describe('导入载荷上限（审查 C-P3-4：大载荷同步 parse 阻塞与装载后逐键遍历放大的防御）', () => {
+  it('content 超 2MB（字符数）→ JSON.parse 前拒绝 too-large：不落盘、不增 revision', async () => {
+    const mock = mockStorage()
+    const { service } = newService(mock)
+    await service.ensureLoaded()
+    // 超限载荷同时是非法 JSON：parse 前拦截证明（先进 parse 会返回 invalid-json）
+    const huge = 'x'.repeat(IMPORT_CONTENT_MAX_LENGTH + 1)
+    expect(await service.applyMutation({ op: 'importUserRules', content: huge })).toEqual({
+      ok: false,
+      reason: 'too-large',
+    })
+    expect(service.revision).toBe(0)
+    expect((await service.ensureLoaded()).user).toHaveLength(0)
+  })
+
+  it('规则条数超上限拒绝 too-many-rules；恰在上限内的批量正常受理', async () => {
+    const mock = mockStorage()
+    const { service } = newService(mock)
+    await service.ensureLoaded()
+    const rule = (i: number): { trigger: string; replacement: string } => ({
+      trigger: `t${i}`,
+      replacement: `r${i}`,
+    })
+    // 恰 5000 条：受理（全为新规则，计数 imported=5000）
+    const atLimit = JSON.stringify(Array.from({ length: IMPORT_MAX_RULES }, (_, i) => rule(i)))
+    expect(await service.applyMutation({ op: 'importUserRules', content: atLimit })).toMatchObject({
+      ok: true,
+      imported: IMPORT_MAX_RULES,
+    })
+    expect(service.revision).toBe(1)
+    // 超 1 条：拒绝、数据不变
+    const overLimit = JSON.stringify(Array.from({ length: IMPORT_MAX_RULES + 1 }, (_, i) => rule(i)))
+    expect(await service.applyMutation({ op: 'importUserRules', content: overLimit })).toEqual({
+      ok: false,
+      reason: 'too-many-rules',
+    })
+    expect(service.revision).toBe(1)
+    expect((await service.ensureLoaded()).user).toHaveLength(IMPORT_MAX_RULES)
   })
 })
 

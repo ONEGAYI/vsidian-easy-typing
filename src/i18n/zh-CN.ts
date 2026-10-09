@@ -182,6 +182,8 @@ const zhMessages = {
       actionFailed: '操作失败',
       resetSuccess: '内置规则已重置',
       importInvalidJson: '文件格式错误：不是有效的 JSON 规则数组',
+      importTooLarge: '文件过大：导入文件超过 2MB 上限，请分批导入',
+      importTooManyRules: '规则条数超限：单次导入最多 5000 条，请分批导入',
       importNoRules: '文件中没有可导入的规则',
       importSuccess: '导入了 {imported} 条规则，跳过 {skipped} 条重复规则',
       noRulesToExport: '没有可导出的用户规则',

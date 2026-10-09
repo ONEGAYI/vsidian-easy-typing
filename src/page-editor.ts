@@ -3,6 +3,7 @@
 // test/examples/input-behavior/src/page-editor.ts。
 import { defineAddonPage } from 'vsidian-addon-sdk'
 import type { VsidianAddonPageSdk } from '../types/vendor/shared/addonPage'
+import type { EditorView } from '@codemirror/view'
 import { createBetterBackspaceCommand } from './backspaceIntercept'
 import { buildToggleCommentCommandDefinition, createToggleCommentCommandHandler } from './commentToggle'
 import { createCollapseEnterGate, createFoldEnterCommand } from './foldEnter'
@@ -269,10 +270,18 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
     }),
   )
 
-  // 视图捕获（命令回调无 view 入参）：ViewPlugin 登记主正文与嵌入实例的
-  // 在场编辑器，命令按聚焦者优先取目标
+  // 视图捕获（命令回调无 view 入参）：ViewPlugin 登记挂载本组件扩展的在
+  // 场编辑器——当前平台附加组件扩展槽仅挂主正文 Live 实例（嵌入/悬停视图
+  // 不经此登记，登记面以平台装配事实为准），命令按聚焦者优先取目标。
   const viewRegistry = createEditorViewRegistry()
   sdk.registerExtension(createViewTrackerExtension(cm6.view.ViewPlugin, viewRegistry))
+  // 焦点 CM6 视图探测（findFromDOM 对嵌入/悬停实例同样命中）：供命令族做
+  // 「聚焦视图不在登记表 = 嵌入实例」的拒绝口径（审查 B-F3）——聚焦嵌入
+  // 视图时命令拒绝执行，不误写主文档兜底。
+  const getFocusedView = (): EditorView | null => {
+    const active = document.activeElement
+    return active instanceof HTMLElement ? (cm6.view.EditorView.findFromDOM(active) as EditorView | null) : null
+  }
 
   // 纯文本粘贴命令（工单 #12，**平台稳定 API**——统一快捷键管理 + 命令面
   // 板）：Mod+Shift+V（规范键序，避开 vsidian#417 形态）置纯文本标记后合
@@ -287,6 +296,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       createPlainPasteCommandHandler({
         marker: pasteMarker,
         views: viewRegistry,
+        getFocusedView,
         readClipboardText: buildPlainPasteClipboardReader({
           webReadText: defaultWebReadText(),
           channelRequest: (topic) => sdk.channel.request(topic, null),
@@ -510,6 +520,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       channel: sdk.channel,
       gate: formattingGate,
       views: viewRegistry,
+      getFocusedView,
       ...(sdk.views !== undefined ? { facetViews: sdk.views } : {}),
       notify: (request) => {
         // 尽力而为通道（上游 Notice 等价）；失败静默——通知不阻断命令语义

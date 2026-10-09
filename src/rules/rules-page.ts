@@ -68,6 +68,8 @@ export class PageRulesClient {
   private readonly startTimer: (fn: () => void, ms: number) => unknown
   private readonly stopTimer: (handle: unknown) => void
   private timerHandle: unknown = null
+  /** poll 在途标志（审查 C-P3-2：上一轮未完成时跳过本轮，防止慢通道下轮询堆积） */
+  private pollInFlight = false
 
   constructor(options: PageRulesClientOptions) {
     this.channel = options.channel
@@ -94,14 +96,27 @@ export class PageRulesClient {
     return true
   }
 
-  /** 单轮代次检查：revision 变化才整拉重装（失败容忍，下轮再试） */
+  /**
+   * 单轮代次检查：revision 变化才整拉重装（失败容忍，下轮再试）。
+   * 通道异常内部吞掉（审查 C-P3-2 修复：startWatch 的 `void this.poll()`
+   * 裸链 rejection 会成为页面 unhandledrejection）；上一轮未完成时跳过
+   * 本轮（在途防重——慢通道下不堆积并发轮询，落定后下轮恢复）。
+   */
   async poll(): Promise<void> {
-    const outcome = await this.channel.request(RULES_TOPIC.revision, null)
-    if (!outcome.ok) return
-    const result = outcome.result as { revision?: unknown } | null
-    if (typeof result !== 'object' || result === null) return
-    if (typeof result.revision !== 'number') return
-    if (result.revision !== this.revision) await this.load()
+    if (this.pollInFlight) return
+    this.pollInFlight = true
+    try {
+      const outcome = await this.channel.request(RULES_TOPIC.revision, null)
+      if (!outcome.ok) return
+      const result = outcome.result as { revision?: unknown } | null
+      if (typeof result !== 'object' || result === null) return
+      if (typeof result.revision !== 'number') return
+      if (result.revision !== this.revision) await this.load()
+    } catch {
+      // 通道传输层异常：吞掉不打断轮询周期（下轮再试；页面侧无诊断面）
+    } finally {
+      this.pollInFlight = false
+    }
   }
 
   /** 启动轮询（重复调用无害） */

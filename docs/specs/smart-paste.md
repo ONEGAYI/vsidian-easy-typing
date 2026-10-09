@@ -118,8 +118,11 @@ vsidian 内核的粘贴管线全在 **paste DOM 事件**层：富文本接管（
   `meta+shift+v` 非规范序、真实按下 Cmd+Shift+V 永不命中（默认键位存储
   不再归一，非规范序串与运行期归一序永不相等）；本命令 mac 形态写作
   `shift+meta+v` 避开该形态（测试钉住）。
-- 命令流：目标视图（`ViewPlugin` 登记主正文与嵌入实例，聚焦者优先、唯一
-  在场兜底、多视图无聚焦不猜）→ 剪贴板 text/plain（
+- 命令流：目标视图（`ViewPlugin` 登记挂载本组件扩展的编辑器——当前平台
+  附加组件扩展槽仅挂主正文 Live 实例，嵌入/悬停视图不经登记；聚焦者优先、
+  唯一在场兜底、多视图无聚焦不猜。审查 B-F3 后的口径：焦点元素属于某个
+  CM6 视图但不在登记表（嵌入实例）时**拒绝执行**并 debugLog 留痕，不走
+  兜底——不误写主文档）→ 剪贴板 text/plain（
   `navigator.clipboard.readText` 优先；缺失/权限受限经 enable scope 通道
   `easyTyping.clipboard.readText` 回退宿主 `vscode.env.clipboard`——对齐
   平台「权限受限时仅回退宿主 text/plain」口径）→ 置纯文本标记 →

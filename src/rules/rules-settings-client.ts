@@ -9,7 +9,7 @@
 // 覆盖；页面存活期内的一切变更都经本客户端（mutate 成功 → revision 返回
 // → 立即整拉），无需再付轮询成本。
 import type { SimpleRule } from './rule-engine'
-import { RULES_TOPIC } from './rules-protocol'
+import { IMPORT_CONTENT_MAX_LENGTH, IMPORT_MAX_RULES, RULES_TOPIC } from './rules-protocol'
 import type { RulesChannelLike } from './rules-page'
 
 /** 设置页持有的规则数据态（get 快照 + 装载标记） */
@@ -35,6 +35,9 @@ export interface RulesImportResult {
   imported: number
   skipped: number
 }
+
+/** 导入失败的结构化原因（审查 C-P3-4：区分「格式非法」与「超上限」的 UI 文案；null 仍表示格式非法/通道失败） */
+export type RulesImportFailure = { kind: 'too-large' } | { kind: 'too-many-rules' }
 
 function initialState(): RulesSettingsState {
   return { loaded: false, revision: -1, builtin: [], user: [], deletedBuiltinRuleIds: [] }
@@ -167,16 +170,21 @@ export class RulesSettingsClient {
 
   /**
    * 导入用户规则（content 为 JSON 字符串，解析与去重在宿主单写点）：
-   * 返回 null = 载荷非法（invalid-json / 通道失败）；否则返回计数——
+   * 返回 null = 载荷非法（invalid-json / 通道失败）；结构化失败对象 =
+   * 上限拒绝（too-large / too-many-rules，审查 C-P3-4——本地预检与宿主
+   * 权威防线共用 rules-protocol 常量，双端判定不漂移）；否则返回计数——
    * imported=0 且 skipped>0（全重复/全非法）亦是完成动作，文案区分归
    * UI 层（宿主对「写入失败」与「全部跳过」同形 {imported:0, persisted:
    * false}，按 #14 契约如实展示计数）。
    */
-  async importUserRules(content: string): Promise<RulesImportResult | null> {
-    // 本地预检：提前拦下非 JSON/非数组（宿主同样会拒，这里省一轮往返并给即时反馈）
+  async importUserRules(content: string): Promise<RulesImportResult | RulesImportFailure | null> {
+    // 本地预检：content 长度在 JSON.parse 之前拦（大文件不进同步 parse，
+    // 省一轮宿主往返并给即时反馈）
+    if (content.length > IMPORT_CONTENT_MAX_LENGTH) return { kind: 'too-large' }
     try {
       const parsed: unknown = JSON.parse(content)
       if (!Array.isArray(parsed)) return null
+      if (parsed.length > IMPORT_MAX_RULES) return { kind: 'too-many-rules' }
     } catch {
       return null
     }
@@ -190,6 +198,8 @@ export class RulesSettingsClient {
         ? (outcome.result as MutateOutcome)
         : {}
     if (result.reason === 'invalid-json') return null
+    if (result.reason === 'too-large') return { kind: 'too-large' }
+    if (result.reason === 'too-many-rules') return { kind: 'too-many-rules' }
     if (result.imported === undefined) return null // 形状防御（非 import 结果）
     if (result.persisted === true) await this.load()
     return { imported: result.imported, skipped: result.skipped ?? 0 }

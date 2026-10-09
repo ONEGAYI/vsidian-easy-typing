@@ -468,6 +468,11 @@ export function mountRulesSettingsView(
             showStatus('failed', t.status.importInvalidJson)
             return
           }
+          if ('kind' in result) {
+            // 上限拒绝（审查 C-P3-4）：与「格式非法」分开的可行动文案
+            showStatus('failed', result.kind === 'too-large' ? t.status.importTooLarge : t.status.importTooManyRules)
+            return
+          }
           if (result.imported === 0) {
             showStatus('info', t.status.importNoRules)
             return

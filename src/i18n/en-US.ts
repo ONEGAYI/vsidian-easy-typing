@@ -183,6 +183,8 @@ export const enMessages: Messages = {
       actionFailed: 'Action failed',
       resetSuccess: 'Built-in rules have been reset',
       importInvalidJson: 'Invalid file: not a valid JSON rule array',
+      importTooLarge: 'File too large: imports are limited to 2MB; please import in batches',
+      importTooManyRules: 'Too many rules: a single import is limited to 5000; please import in batches',
       importNoRules: 'No importable rules found in file',
       importSuccess: 'Imported {imported} rules, skipped {skipped} duplicates',
       noRulesToExport: 'No user rules to export',

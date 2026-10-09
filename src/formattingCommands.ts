@@ -552,6 +552,9 @@ export interface RegisterFormattingCommandsDeps {
   readonly gate: AutoFormatGate
   /** #12 视图登记表（page-editor 共享实例注入） */
   readonly views: EditorViewRegistry
+  /** 当前焦点 CM6 视图探测（page-editor 经 EditorView.findFromDOM(activeElement)
+   *  注入；审查 B-F3 嵌入视图拒绝口径用；缺省视为无焦点信息，不拦兜底路径） */
+  readonly getFocusedView?: () => EditorView | null
   /** views 面（命令面板入口的 main 回退 + docUri 解析；缺省则无回退） */
   readonly facetViews?: FormattingFacetViewsSubset
   /** 通知发送（宿主 NOTICE_TOPIC；缺省静默——纯逻辑测试） */
@@ -628,49 +631,65 @@ function dispatchPlan(
   })
 }
 
-/** 视图命令执行流：刷新设置 → 目标视图（登记表聚焦优先）→ 排除 → 计划 → 派发；
- *  无在场视图走 main 句柄回退（命令面板入口）。 */
+/** 视图命令执行流：刷新设置 → 嵌入视图口径校验 → 目标视图（登记表聚焦
+ *  优先）→ 排除 → 计划 → 派发；无在场视图走 main 句柄回退（命令面板
+ *  入口）。焦点元素属于 CM6 视图但不在登记表（嵌入/悬停实例——附加组件
+ *  扩展槽仅挂主正文 Live 实例）时拒绝执行并 debugLog 留痕（审查 B-F3
+ *  修复）：用户意图是嵌入文档，兜底目标会误写主文档。 */
 function runViewCommand(
   deps: RegisterFormattingCommandsDeps,
   planner: (text: string, anchor: number, head: number, settings: LineFormatSettings) => FormattingCommandPlan | null,
   userEvent: string,
 ): void {
-  void deps.gate.refresh().then(() => {
-    const engine = deps.gate.settings()
-    const view = deps.views.activeView()
-    if (view !== null) {
-      if (guardedSkip(view, engine, deps)) return
-      const sel = view.state.selection.main
-      const plan = planner(view.state.doc.toString(), sel.anchor, sel.head, engine.lineFormat)
-      if (plan !== null) dispatchPlan(view, plan, userEvent)
-      return
-    }
-    // 无聚焦视图（命令面板入口）：main 句柄快照 → applyEdits 单请求
-    const main = deps.facetViews?.get('main')
-    if (main === null || main === undefined || !main.info.editable) return
-    if (isDocUriExcluded(main.info.targetDocUri, engine.excludeFiles)) {
-      deps.notify?.({ kind: 'command-file-excluded' })
-      return
-    }
-    const snap = main.editor.getSnapshot()
-    if (!snap.ok) return
-    const primary = snap.snapshot.selections[0]
-    if (primary === undefined) return
-    const plan = planner(snap.snapshot.text, primary.anchor, primary.head, engine.lineFormat)
-    if (plan === null) return
-    void main.editor
-      .applyEdits({
-        revision: snap.snapshot.revision,
-        changes: plan.changes.map((c) => ({ offset: c.offset, length: c.length, text: c.text })),
-        ...(plan.selection !== undefined
-          ? { selection: { anchor: plan.selection.anchor, head: plan.selection.head } }
-          : {}),
-        history: 'atomic',
-      })
-      .then((outcome) => {
-        if (!outcome.ok) debugLog('formatting command applyEdits rejected:', outcome.reason)
-      })
-  })
+  void deps.gate
+    .refresh()
+    .then(() => {
+      const focused = deps.getFocusedView?.() ?? null
+      if (focused !== null && !deps.views.contains(focused)) {
+        debugLog('formatting command skipped: focused view not registered (embed/hover) — refuse fallback target')
+        return
+      }
+      const engine = deps.gate.settings()
+      const view = deps.views.activeView()
+      if (view !== null) {
+        if (guardedSkip(view, engine, deps)) return
+        const sel = view.state.selection.main
+        const plan = planner(view.state.doc.toString(), sel.anchor, sel.head, engine.lineFormat)
+        if (plan !== null) dispatchPlan(view, plan, userEvent)
+        return
+      }
+      // 无聚焦视图（命令面板入口）：main 句柄快照 → applyEdits 单请求
+      const main = deps.facetViews?.get('main')
+      if (main === null || main === undefined || !main.info.editable) return
+      if (isDocUriExcluded(main.info.targetDocUri, engine.excludeFiles)) {
+        deps.notify?.({ kind: 'command-file-excluded' })
+        return
+      }
+      const snap = main.editor.getSnapshot()
+      if (!snap.ok) return
+      const primary = snap.snapshot.selections[0]
+      if (primary === undefined) return
+      const plan = planner(snap.snapshot.text, primary.anchor, primary.head, engine.lineFormat)
+      if (plan === null) return
+      void main.editor
+        .applyEdits({
+          revision: snap.snapshot.revision,
+          changes: plan.changes.map((c) => ({ offset: c.offset, length: c.length, text: c.text })),
+          ...(plan.selection !== undefined
+            ? { selection: { anchor: plan.selection.anchor, head: plan.selection.head } }
+            : {}),
+          history: 'atomic',
+        })
+        .then((outcome) => {
+          if (!outcome.ok) debugLog('formatting command applyEdits rejected:', outcome.reason)
+        })
+    })
+    .catch(() => {
+      // 通道/快照链路异常静默 + debugLog 留痕（对齐同文件 runToggleAutoFormat
+      // 的 .catch 形态；审查 C-P3-2 修复——裸 then 链的 rejection 会成为
+      // 页面 unhandledrejection）
+      debugLog('formatting command pipeline failed (channel/gate) — command dropped, retryable')
+    })
 }
 
 /** 切换自动格式化：刷新读现值 → 写翻转（user 层持久）→ 通知回执 */

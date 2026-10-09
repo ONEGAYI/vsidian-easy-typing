@@ -20,6 +20,7 @@ import type { EditorView, ViewPlugin } from '@codemirror/view'
 import type { AddonChannelOutcome } from '../types/vendor/shared/addonPage'
 import type { AddonCommandDefinition } from '../types/vendor/shared/addonCommands'
 import type { PasteMarker } from './pasteMarker'
+import { debugLog } from './logging'
 import { normalizeClipboardText } from './smartPasteAlgorithm'
 
 /** 命令局部 ID（平台注入命名空间前缀成完整命令 ID） */
@@ -54,6 +55,8 @@ export interface EditorViewRegistry {
   register(view: EditorView): { dispose(): void }
   /** 活动目标：聚焦者优先；无聚焦且唯一在场视图兜底；多视图无聚焦返回 null */
   activeView(): EditorView | null
+  /** 视图是否在登记表（审查 B-F3：聚焦视图不在场 = 嵌入/悬停实例的判别面） */
+  contains(view: EditorView): boolean
 }
 
 /** 构造视图登记表 */
@@ -75,6 +78,9 @@ export function createEditorViewRegistry(): EditorViewRegistry {
       }
       // 无聚焦（如命令面板入口）：唯一在场视图兜底，多视图不猜目标
       return live.length === 1 ? live[0]! : null
+    },
+    contains(view: EditorView) {
+      return views.has(view)
     },
   }
 }
@@ -171,15 +177,27 @@ export interface PlainPasteCommandDeps {
   readonly views: EditorViewRegistry
   readonly readClipboardText: () => Promise<string>
   readonly dispatchPlainPaste: (view: EditorView, text: string) => boolean
+  /** 当前焦点 CM6 视图探测（page-editor 经 EditorView.findFromDOM(activeElement)
+   *  注入；缺省视为无焦点信息，不拦兜底路径） */
+  readonly getFocusedView?: () => EditorView | null
 }
 
 /**
  * 产出命令回调：找目标视图 → 读剪贴板 text/plain → 置纯文本标记 → 合成
  * 纯文本粘贴事件（同步重入粘贴链，标记在窗内被 #26 观察）。无视图/无文本/
  * 组合中/只读一律静默无动作（不标记不派发）。
+ *
+ * 嵌入视图口径（审查 B-F3 修复）：焦点元素属于某个 CM6 视图但不在登记表
+ * （嵌入/悬停实例——附加组件扩展槽仅挂主正文 Live 实例）时拒绝执行并
+ * debugLog 留痕——用户意图是嵌入文档，唯一在场视图兜底会误写主文档。
  */
 export function createPlainPasteCommandHandler(deps: PlainPasteCommandDeps): () => void {
   return () => {
+    const focused = deps.getFocusedView?.() ?? null
+    if (focused !== null && !deps.views.contains(focused)) {
+      debugLog('plain-paste skipped: focused view not registered (embed/hover) — refuse fallback target')
+      return
+    }
     const view = deps.views.activeView()
     if (view === null) return
     if (view.compositionStarted || view.state.readOnly) return

@@ -4,7 +4,7 @@
 // 「UI 编辑经 mutate op 走宿主单写点」的数据链约束。
 import { describe, expect, it, vi } from 'vitest'
 import { RulesSettingsClient } from '../src/rules/rules-settings-client'
-import { RULES_TOPIC } from '../src/rules/rules-protocol'
+import { IMPORT_CONTENT_MAX_LENGTH, IMPORT_MAX_RULES, RULES_TOPIC } from '../src/rules/rules-protocol'
 import type { RulesChannelLike } from '../src/rules/rules-page'
 
 type Outcome = { ok: true; result: unknown } | { ok: false; reason: string }
@@ -204,6 +204,38 @@ describe('RulesSettingsClient 导入导出', () => {
     const client = new RulesSettingsClient({ channel })
     // '[]' 过本地预检（数组形状）；宿主拒绝时折叠回 null
     expect(await client.importUserRules('[]')).toBeNull()
+  })
+
+  it('importUserRules：content 超上限本地拦截（审查 C-P3-4：不发通道不进 JSON.parse，too-large）', async () => {
+    const { channel, requests } = scriptedChannel({})
+    const client = new RulesSettingsClient({ channel })
+    // 超限载荷同时是非法 JSON：长度预检在 parse 前拦截
+    const failure = await client.importUserRules('x'.repeat(IMPORT_CONTENT_MAX_LENGTH + 1))
+    expect(failure).toEqual({ kind: 'too-large' })
+    expect(requests).toEqual([]) // 不消耗宿主往返
+  })
+
+  it('importUserRules：条数超上限本地拦截（too-many-rules 不发通道）', async () => {
+    const { channel, requests } = scriptedChannel({})
+    const client = new RulesSettingsClient({ channel })
+    const content = JSON.stringify(
+      Array.from({ length: IMPORT_MAX_RULES + 1 }, (_, i) => ({ trigger: `t${i}`, replacement: 'r' })),
+    )
+    expect(await client.importUserRules(content)).toEqual({ kind: 'too-many-rules' })
+    expect(requests).toEqual([])
+  })
+
+  it('importUserRules：宿主上限拒绝 reason 透传为结构化失败（直连通道请求方的双端一致）', async () => {
+    const { channel } = scriptedChannel({
+      [RULES_TOPIC.mutate]: [
+        { ok: true, result: { ok: false, reason: 'too-large' } },
+        { ok: true, result: { ok: false, reason: 'too-many-rules' } },
+      ],
+    })
+    const client = new RulesSettingsClient({ channel })
+    // 载荷形状过本地预检（小而合法），宿主拒绝面由 mock 控制
+    expect(await client.importUserRules('[]')).toEqual({ kind: 'too-large' })
+    expect(await client.importUserRules('[]')).toEqual({ kind: 'too-many-rules' })
   })
 
   it('exportUserRules / storageUri：读取通道结果；失败 null', async () => {

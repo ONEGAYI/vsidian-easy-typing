@@ -21,7 +21,12 @@ import type { AddonChannelRegistry } from '../types/vendor/host/addons/addonRegi
 import { RuleStore, type RuleStoreIo, type RulesSnapshot } from './rules/rule-store'
 import type { SimpleRule } from './rules/rule-engine'
 import type { RulesMutateResult } from './rules/rules-protocol'
-import { RULES_TOPIC, parseRulesMutatePayload } from './rules/rules-protocol'
+import {
+  IMPORT_CONTENT_MAX_LENGTH,
+  IMPORT_MAX_RULES,
+  RULES_TOPIC,
+  parseRulesMutatePayload,
+} from './rules/rules-protocol'
 
 /** 上游 configReloadTimer 的 1 秒去抖 */
 const RELOAD_DEBOUNCE_MS = 1000
@@ -198,6 +203,12 @@ export class HostRulesService {
       case 'resetAllBuiltinRules':
         return (await this.resetAllBuiltinRules()) ? okResult() : failResult()
       case 'importUserRules': {
+        // 载荷上限（审查 C-P3-4）：content 长度在 JSON.parse 之前判定
+        //（大载荷同步 parse 阻塞宿主线程的防线；通道载荷可来自任意页面
+        // 请求，宿主是权威防线）
+        if (parsed.content.length > IMPORT_CONTENT_MAX_LENGTH) {
+          return { ok: false, reason: 'too-large' }
+        }
         let incoming: unknown
         try {
           incoming = JSON.parse(parsed.content)
@@ -205,6 +216,11 @@ export class HostRulesService {
           return { ok: false, reason: 'invalid-json' }
         }
         if (!Array.isArray(incoming)) return { ok: false, reason: 'invalid-json' }
+        // 条数上限：拦「装载后每键遍历放大」的极端批量（引擎逐键执行的
+        // 累积开销）
+        if (incoming.length > IMPORT_MAX_RULES) {
+          return { ok: false, reason: 'too-many-rules' }
+        }
         const result = await this.importUserRules(incoming)
         return { ok: result.persisted, ...result, revision: this.revision }
       }

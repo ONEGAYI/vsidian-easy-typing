@@ -143,12 +143,56 @@ describe('PageRulesClient 轮询重装', () => {
     client.startWatch() // 重复启动无害
     timers.fire() // 轮询失败 → 容忍
     expect(calls.filter((t) => t === RULES_TOPIC.revision)).toHaveLength(1)
+    await new Promise((resolve) => setTimeout(resolve, 0)) // 上轮落定（在途防重下同步连发会被跳过）
     timers.fire() // revision 未变
     expect(calls.filter((t) => t === RULES_TOPIC.get)).toHaveLength(1)
     client.stopWatch()
     client.stopWatch() // 重复停止无害
+    await new Promise((resolve) => setTimeout(resolve, 0))
     timers.fire() // 已停止：不再轮询
     expect(calls.filter((t) => t === RULES_TOPIC.revision)).toHaveLength(2)
+  })
+
+  it('poll 通道异常（request reject）→ 吞掉不抛（审查 C-P3-2：裸 void 链不成 unhandledrejection）', async () => {
+    const calls: string[] = []
+    const channel: RulesChannelLike = {
+      request: (topic) => {
+        calls.push(topic)
+        return Promise.reject(new Error('channel transport broken'))
+      },
+    }
+    const client = new PageRulesClient({ channel, engine: new RuleEngine() })
+    // 旧形态：poll 冒泡 rejection，startWatch 的 void this.poll() 成为
+    // unhandledrejection；修复后 poll 内部吞掉
+    await expect(client.poll()).resolves.toBeUndefined()
+    expect(calls).toEqual([RULES_TOPIC.revision])
+  })
+
+  it('在途防重：上一轮 poll 未完成时跳过本轮（审查 C-P3-2），完成后恢复', async () => {
+    const calls: string[] = []
+    let release: ((result: { ok: true; result: unknown } | { ok: false; reason: string }) => void) | null = null
+    const channel: RulesChannelLike = {
+      request: (topic) => {
+        calls.push(topic)
+        if (release === null) {
+          return new Promise((resolve) => {
+            release = resolve
+          })
+        }
+        // 与初始 revision(-1) 一致：不触发整拉，让 calls 面只反映轮询节拍
+        return Promise.resolve({ ok: true as const, result: { revision: -1 } })
+      },
+    }
+    const timers = manualTimers()
+    const client = new PageRulesClient({ channel, engine: new RuleEngine(), ...timers })
+    client.startWatch()
+    timers.fire() // 第一轮挂起（revision 请求未回）
+    timers.fire() // 上一轮在途 → 本轮跳过（不新增请求）
+    expect(calls).toEqual([RULES_TOPIC.revision])
+    release!({ ok: true, result: { revision: -1 } })
+    await new Promise((resolve) => setTimeout(resolve, 0)) // 第一轮落定
+    timers.fire() // 在途标志已清 → 正常发轮
+    expect(calls).toEqual([RULES_TOPIC.revision, RULES_TOPIC.revision])
   })
 })
 

@@ -92,6 +92,14 @@ describe('createEditorViewRegistry + createViewTrackerExtension：视图捕获',
     handle.dispose()
     expect(registry.activeView()).toBeNull()
   })
+
+  it('contains：登记视图 true，未登记视图 false（审查 B-F3 嵌入视图判别面）', () => {
+    const registry = createEditorViewRegistry()
+    const main = fakeTrackedView(false, 'main')
+    registry.register(main)
+    expect(registry.contains(main)).toBe(true)
+    expect(registry.contains(fakeTrackedView(true, 'embed'))).toBe(false)
+  })
 })
 
 describe('buildPlainPasteClipboardReader：剪贴板读取与宿主回退', () => {
@@ -143,7 +151,7 @@ describe('命令执行流：标记 → 读剪贴板 → 合成纯文本粘贴事
     } as unknown as EditorView
   }
 
-  function setup(views: EditorView[], text: string) {
+  function setup(views: EditorView[], text: string, options: Partial<{ getFocusedView: () => EditorView | null }> = {}) {
     const marker = createPasteMarker({ now: () => 0 })
     const registry = createEditorViewRegistry()
     for (const view of views) registry.register(view)
@@ -151,6 +159,7 @@ describe('命令执行流：标记 → 读剪贴板 → 合成纯文本粘贴事
     const handler = createPlainPasteCommandHandler({
       marker,
       views: registry,
+      ...(options.getFocusedView !== undefined ? { getFocusedView: options.getFocusedView } : {}),
       readClipboardText: async () => text,
       dispatchPlainPaste: (view, t) => {
         dispatched.push({ view, text: t })
@@ -168,6 +177,21 @@ describe('命令执行流：标记 → 读剪贴板 → 合成纯文本粘贴事
     expect(marker.plainPasteInProgress).toBe(true)
     expect(marker.pasteDetected).toBe(true)
     expect(dispatched).toEqual([{ view, text: 'aa\nbb' }])
+  })
+
+  it('聚焦视图不在登记表（嵌入 Live 视图）→ 拒绝执行：不标记不派发、不误写主文档兜底（审查 B-F3）', async () => {
+    // 平台事实：附加组件扩展槽仅挂主正文 Live 实例，嵌入视图不经
+    // viewRegistry 登记——焦点在嵌入视图时用户意图是嵌入文档，唯一在场
+    // 视图兜底会把命令写到主文档（误目标），拒绝执行并留痕
+    const main = fakeCmdView()
+    const embed = fakeCmdView()
+    const { marker, handler, dispatched } = setup([main], 'aa', {
+      getFocusedView: () => embed,
+    })
+    handler()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(marker.plainPasteInProgress).toBe(false)
+    expect(dispatched).toHaveLength(0)
   })
 
   it('无在场视图 → 全链不动作（不标记不派发）', async () => {

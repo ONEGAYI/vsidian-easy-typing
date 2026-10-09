@@ -452,6 +452,7 @@ function harness(options: {
   engine?: Partial<AutoFormatEngineSettings>
   entries?: ReadonlyArray<{ id: string; uri: string; text: string; editable?: boolean; sel?: number }>
   views?: EditorViewRegistry
+  getFocusedView?: () => EditorView | null
 }) {
   const commands = fakeCommands()
   const channelCalls: Array<{ topic: string; payload: unknown }> = []
@@ -469,6 +470,7 @@ function harness(options: {
     },
     gate: stubGate(options.engine),
     views: options.views ?? createEditorViewRegistry(),
+    ...(options.getFocusedView !== undefined ? { getFocusedView: options.getFocusedView } : {}),
     facetViews: facet,
     notify: (request) => notices.push(request),
     messages: pickMessages('zh-CN'),
@@ -589,6 +591,58 @@ describe('视图命令执行流：聚焦视图单事务派发', () => {
       await flush()
       expect(specs).toHaveLength(0)
       expect(notices).toHaveLength(0)
+    }
+  })
+
+  it('聚焦视图不在登记表（嵌入 Live 视图）→ 拒绝执行：不派发不走 main 回退，不误写主文档（审查 B-F3）', async () => {
+    // 平台事实：附加组件扩展槽仅挂主正文 Live 实例，嵌入/悬停视图不经
+    // viewRegistry 登记——焦点在嵌入视图时用户意图是嵌入文档，登记表兜底
+    //（唯一在场视图 / main 句柄）会把命令写到主文档（误目标），拒绝执行
+    const registry = createEditorViewRegistry()
+    const { view: main, specs } = fakeCmdView({ doc: '中文a', anchor: 0 })
+    registry.register(main)
+    const embed = { state: EditorState.create({ doc: '中文b' }) } as unknown as EditorView
+    const h = harness({
+      views: registry,
+      entries: [{ id: 'main', uri: 'file:///v/free/a.md', text: '中文a' }],
+      getFocusedView: () => embed,
+    })
+    h.handlerOf(FORMAT_ARTICLE_COMMAND_ID)!()
+    await flush()
+    expect(specs).toHaveLength(0)
+    expect(h.applyEditsCalls).toHaveLength(0)
+  })
+
+  it('执行链路异常（gate.refresh reject）→ .catch 吞掉：命令可重试，不产生 unhandledrejection（审查 C-P3-2）', async () => {
+    const rejections: unknown[] = []
+    const onUnhandled = (reason: unknown): void => {
+      rejections.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const gate: AutoFormatGate = {
+        settings: () => defaultAutoFormatEngineSettings(),
+        refresh: async () => {
+          throw new Error('gate channel broken')
+        },
+      }
+      const commands = fakeCommands()
+      const { facet } = fakeFacetViews([{ id: 'main', uri: 'u', text: '中文a' }])
+      registerFormattingCommands({
+        commands: commands.facet,
+        channel: { request: () => Promise.resolve({ ok: true, result: null }) },
+        gate,
+        views: createEditorViewRegistry(),
+        facetViews: facet,
+        messages: pickMessages('zh-CN'),
+      })
+      const handler = commands.defs.find((d) => d.def.id === FORMAT_ARTICLE_COMMAND_ID)!.handler
+      handler() // 旧形态：void refresh().then(...) 无 .catch → unhandledrejection
+      await flush()
+      await flush()
+      expect(rejections).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
     }
   })
 

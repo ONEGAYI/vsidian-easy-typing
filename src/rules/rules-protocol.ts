@@ -20,6 +20,17 @@ export const RULES_TOPIC = {
   storageUri: 'easyTyping.rules.storageUri',
 } as const
 
+// ---- 导入载荷上限（审查 C-P3-4）----
+// content 上限在 JSON.parse **之前**判定（大载荷同步 parse 阻塞宿主的
+// 防线；按字符串字符数计，量级防御非精确字节预算）；条数上限拦「装载后
+// 每键遍历放大」的极端批量。宿主（applyMutation）与页面客户端
+//（importUserRules 预检）共用同一常量——双端判定不漂移。
+
+/** 导入 content 字符数上限（2MB 量级） */
+export const IMPORT_CONTENT_MAX_LENGTH = 2 * 1024 * 1024
+/** 单次导入规则条数上限 */
+export const IMPORT_MAX_RULES = 5000
+
 /** 变更载荷（rule 字段在 parseRulesMutatePayload 内经 sanitizeSimpleRule 清洗） */
 export type RulesMutatePayload =
   | { op: 'addUserRule'; rule: SimpleRule }
@@ -37,7 +48,7 @@ export type RulesMutatePayload =
 /** 变更结果（业务级拒绝；通道层自身的 rejected/timeout 由平台包裹） */
 export interface RulesMutateResult {
   ok: boolean
-  reason?: 'invalid-payload' | 'invalid-json' | 'io-failed'
+  reason?: 'invalid-payload' | 'invalid-json' | 'io-failed' | 'too-large' | 'too-many-rules'
   /** 成功时的最新代次 */
   revision?: number
   /** addUserRule 成功时的新 id */
