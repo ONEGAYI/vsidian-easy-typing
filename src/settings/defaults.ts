@@ -1,6 +1,6 @@
 // 设置默认值单一事实源（工单 #3）：docs/specs/settings-mapping.md §二 的
 // 代码侧镜像。上游 DEFAULT_SETTINGS（settings_types.ts:52-95）中 23 个可
-// 映射字段的默认值在此落位；定义构建（definitions.ts）与生效值合成
+// 映射字段的默认值在此落位（newLineBelow 为 #13 新增本仓键，非上游字段）；定义构建（definitions.ts）与生效值合成
 // （store.ts）都引用本模块，一致性由 test/settings-definitions.test.ts 钉住。
 // 注意 ExcludeFiles 上游为多行字符串，此处按映射表拆平为字符串数组；
 // SpaceState 数字枚举（none=0/soft=1/strict=2）转为字符串枚举，顺序即上游
@@ -14,7 +14,8 @@ export type SpaceMode = (typeof SPACE_MODE_VALUES)[number]
 export const STRICT_LINE_MODE_VALUES = ['enter_twice', 'two_space', 'mix_mode'] as const
 export type StrictLineModeValue = (typeof STRICT_LINE_MODE_VALUES)[number]
 
-/** 本组件经平台设置 schema 暴露的 23 键生效值形状 */
+/** 本组件经平台设置 schema 暴露的 24 键生效值形状
+ *（23 个上游映射键 + 1 个本仓新增门控键 newLineBelow，见映射表 §二） */
 export interface EffectiveEasyTypingSettings {
   tabout: boolean
   smartPaste: boolean
@@ -39,9 +40,15 @@ export interface EffectiveEasyTypingSettings {
   strictLineMode: StrictLineModeValue
   enhanceModA: boolean
   collapsePersistentEnter: boolean
+  /** 本仓新增门控键（#13，无上游字段）：上游 Mod+Enter 命令恒可用、
+   * 无设置门；实验层 keymap 不进平台统一快捷键管理，用户无法解绑，
+   * 按 #402 契约「组件内功能粒度开关由插件设置承担」补本键。默认开
+   * = 上游「命令恒可用」的等价默认；关闭时透传回平台内建 Mod+Enter
+   *（defaultKeymap insertBlankLine）。 */
+  newLineBelow: boolean
 }
 
-/** 出厂默认值（对照上游 DEFAULT_SETTINGS 逐字段） */
+/** 出厂默认值（对照上游 DEFAULT_SETTINGS 逐字段；newLineBelow 例外见接口注） */
 export const DEFAULT_EFFECTIVE_SETTINGS: EffectiveEasyTypingSettings = {
   tabout: true,
   smartPaste: true,
@@ -74,6 +81,7 @@ export const DEFAULT_EFFECTIVE_SETTINGS: EffectiveEasyTypingSettings = {
   strictLineMode: 'enter_twice',
   enhanceModA: false,
   collapsePersistentEnter: false,
+  newLineBelow: true,
 }
 
 // ---- 归 #14 storage 的富结构出厂值（映射表 §三；本票只交付种子，不建持久化） ----

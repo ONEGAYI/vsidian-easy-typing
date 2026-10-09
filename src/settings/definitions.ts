@@ -45,5 +45,7 @@ export function buildSettingDefinitions(m: Messages): AddonSettingDefinition[] {
     { key: 'strictLineMode', title: s.strictLineMode.name, description: s.strictLineMode.desc, type: 'string', enum: [...STRICT_LINE_MODE_VALUES], default: d.strictLineMode },
     { key: 'enhanceModA', title: s.enhanceModA.name, description: s.enhanceModA.desc, type: 'boolean', default: d.enhanceModA },
     { key: 'collapsePersistentEnter', title: s.collapsePersistentEnter.name, description: s.collapsePersistentEnter.desc, type: 'boolean', default: d.collapsePersistentEnter },
+    // #13 新增本仓键（非上游映射）：默认值事实源同源引用（见 defaults.ts 接口注）
+    { key: 'newLineBelow', title: s.newLineBelow.name, description: s.newLineBelow.desc, type: 'boolean', default: d.newLineBelow },
   ]
 }
