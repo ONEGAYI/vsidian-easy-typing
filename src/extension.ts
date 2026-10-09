@@ -76,9 +76,9 @@ function attachSettingsLink(setupCtx: AddonSetupContext): void {
 
 const definition: AddonDefinition = {
   setup(setupCtx) {
-    // 自有设置页入口：设置功能票（M3）前为占位空页——先落登记链路，
-    // 页面内容由 src/page-settings.ts 随设置票填充
-    setupCtx.settings.registerPage({ entry: 'dist/settings.js' })
+    // 自有设置页入口（#16 规则管理 UI）：页面产物 + 内容样式（构建拷贝
+    // src/settings.css → dist/settings.css，装载器按 css 清单注入样式表）
+    setupCtx.settings.registerPage({ entry: 'dist/settings.js', css: ['dist/settings.css'] })
     // 设置 schema 注册（工单 #3）：23 项进 Vsidian 设置页「附加组件」分页
     attachSettingsLink(setupCtx)
     registerSettingsChannels(setupCtx)

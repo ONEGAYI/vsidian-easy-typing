@@ -57,15 +57,33 @@ export class RulesSettingsClient {
 
   private readonly channel: RulesChannelLike
   private readonly notify: (state: RulesSettingsState) => void
+  /** 构造后追加的监听（视图可在自身装配完成后再订阅） */
+  private readonly listeners: Array<(state: RulesSettingsState) => void> = []
 
   constructor(options: RulesSettingsClientOptions) {
     this.channel = options.channel
     this.notify = options.onStateChange ?? (() => {})
   }
 
+  /** 追加状态监听（返回注销函数）；与构造期 onStateChange 并存 */
+  onStateChange(listener: (state: RulesSettingsState) => void): () => void {
+    this.listeners.push(listener)
+    return () => {
+      const idx = this.listeners.indexOf(listener)
+      if (idx !== -1) this.listeners.splice(idx, 1)
+    }
+  }
+
   private setState(next: RulesSettingsState): void {
     this.state = next
     this.notify(next)
+    for (const listener of [...this.listeners]) {
+      try {
+        listener(next)
+      } catch {
+        // 监听异常不阻断数据链（对齐 PageRulesClient.onReload 容忍语义）
+      }
+    }
   }
 
   /** 拉取快照（页面装载与每次写后刷新共用入口）；失败保持原状返回 false */

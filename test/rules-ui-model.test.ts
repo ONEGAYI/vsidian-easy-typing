@@ -174,7 +174,9 @@ describe('validateRuleForm（保存前校验）', () => {
     model.isRegex = true
     const error = validateRuleForm(model)
     expect(error).toMatchObject({ field: 'trigger', kind: 'invalid-regex' })
-    expect(error!.kind === 'invalid-regex' && error.detail.startsWith('trigger:')).toBe(true)
+    if (error !== null && error.kind === 'invalid-regex') {
+      expect(error.detail.startsWith('trigger:')).toBe(true)
+    }
   })
 
   it('非法右正则 → triggerRight invalid-regex；合法全字段 → null', () => {
@@ -341,7 +343,7 @@ describe('tokenizeJs（上游 tokenizeJS 移植）', () => {
   })
 
   it('转义引号不终结字符串；非关键字词不着色；空串零 token', () => {
-    expect(tokenizeJs('"a\\"b"')).toEqual([{ from: 0, to: 6, cls: 'et-hl-string' }])
+    expect(tokenizeJs('"a\\"b"')).toEqual([{ from: 0, to: 6, cls: 'string' }])
     expect(tokenizeJs('foo')).toEqual([])
     expect(tokenizeJs('')).toEqual([])
   })

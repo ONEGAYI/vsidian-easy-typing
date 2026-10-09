@@ -196,7 +196,6 @@ export interface RuleTestInput {
 export type RuleTestOutcome =
   | { kind: 'hit'; result: ApplyResult; outputText: string; cursor: number }
   | { kind: 'miss' }
-  | { kind: 'error'; message: string }
 
 /**
  * 单规则试运行：独立引擎装载单条规则后按规则类型构造 TxContext 执行。
@@ -207,6 +206,8 @@ export type RuleTestOutcome =
  * 输出文本 = 命中区间替换结果；cursor 为结果光标（用于 UI 标注插入位）。
  */
 export function testSingleRule(rule: SimpleRule, input: RuleTestInput): RuleTestOutcome {
+  // 空触发式 = 表单未完成（引擎对空 trigger 会空匹配，试运行如实视为未命中）
+  if (rule.trigger.length === 0) return { kind: 'miss' }
   const engine = new RuleEngine()
   engine.addSimpleRule(rule)
   const opts = RuleEngine.parseOptions(rule.options)
@@ -238,12 +239,13 @@ export function testSingleRule(rule: SimpleRule, input: RuleTestInput): RuleTest
   return { kind: 'hit', result, outputText, cursor: result.cursor }
 }
 
-// ===== JS 词法着色（上游 tokenizeJS 原样移植） =====
+// ===== JS 词法着色（上游 tokenizeJS 移植，输出语义类名） =====
 
 export interface JsToken {
   from: number
   to: number
-  cls: string
+  /** 语义类（comment/string/number/keyword）——视图层加 scoped 前缀后成 CSS 类 */
+  cls: 'comment' | 'string' | 'number' | 'keyword'
 }
 
 const JS_KEYWORDS = new Set([
@@ -253,7 +255,7 @@ const JS_KEYWORDS = new Set([
   'finally', 'throw', 'async', 'await',
 ])
 
-/** 轻量 JS 词法分析（关键字/注释/字符串/数字 → 着色类名区间） */
+/** 轻量 JS 词法分析（关键字/注释/字符串/数字 → 语义类区间） */
 export function tokenizeJs(text: string): JsToken[] {
   const tokens: JsToken[] = []
   let i = 0
@@ -262,7 +264,7 @@ export function tokenizeJs(text: string): JsToken[] {
     if (text[i] === '/' && text[i + 1] === '/') {
       const start = i
       while (i < text.length && text[i] !== '\n') i++
-      tokens.push({ from: start, to: i, cls: 'et-hl-comment' })
+      tokens.push({ from: start, to: i, cls: 'comment' })
       continue
     }
     // 块注释
@@ -272,7 +274,7 @@ export function tokenizeJs(text: string): JsToken[] {
       while (i < text.length - 1 && !(text[i] === '*' && text[i + 1] === '/')) i++
       if (i < text.length - 1) i += 2
       else i = text.length
-      tokens.push({ from: start, to: i, cls: 'et-hl-comment' })
+      tokens.push({ from: start, to: i, cls: 'comment' })
       continue
     }
     // 字符串
@@ -285,7 +287,7 @@ export function tokenizeJs(text: string): JsToken[] {
         i++
       }
       if (i < text.length) i++
-      tokens.push({ from: start, to: i, cls: 'et-hl-string' })
+      tokens.push({ from: start, to: i, cls: 'string' })
       continue
     }
     // 数字
@@ -301,7 +303,7 @@ export function tokenizeJs(text: string): JsToken[] {
           while (i < text.length && /\d/.test(text[i])) i++
         }
       }
-      tokens.push({ from: start, to: i, cls: 'et-hl-number' })
+      tokens.push({ from: start, to: i, cls: 'number' })
       continue
     }
     // 词（仅关键字着色）
@@ -309,7 +311,7 @@ export function tokenizeJs(text: string): JsToken[] {
       const start = i
       while (i < text.length && /[a-zA-Z0-9_$]/.test(text[i])) i++
       if (JS_KEYWORDS.has(text.slice(start, i))) {
-        tokens.push({ from: start, to: i, cls: 'et-hl-keyword' })
+        tokens.push({ from: start, to: i, cls: 'keyword' })
       }
       continue
     }
