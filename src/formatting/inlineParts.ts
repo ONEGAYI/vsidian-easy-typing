@@ -14,8 +14,9 @@
 //   只在非 code/formula/user 区段上匹配（上游等价：树已把 code/formula
 //   从 text part 摘出后才跑链接正则）；
 // - **user 分区 = #27 注入缝**：保护区区间集（行内坐标）经参数传入，
-//   附左右空格要求（上游 UserDefinedRegExp 行尾 `|xy` 旗标语义，解析归
-//   #27）；本票调用侧不传（默认无保护区）。
+//   附左右空格要求（上游 UserDefinedRegExp 行尾 `|xy` 旗标语义）；
+//   解析与匹配的默认实现在 src/userDefinedRegex.ts（#27），接入层
+//   （autoFormatIntercept）设置驱动注入，缺省无保护区。
 export enum SpaceState {
   none = 0,
   soft = 1,
@@ -61,10 +62,11 @@ function makePart(
   return { content, type, begin, end, leftSpaceRequire, rightSpaceRequire }
 }
 
-/** 上游 splitTextWithLinkAndUserDefined 的 wikilink 正则（逐字） */
-const REG_WIKILINK = /\!{0,2}\[\[[^\[\]]*?\]\]/g
-/** 上游 splitTextWithLinkAndUserDefined 的 mdlink 正则（逐字） */
-const REG_MDLINK = /\!{0,2}\[[^\[\]]*?\]\([^\s]*\)/g
+/** 上游 splitTextWithLinkAndUserDefined 的 wikilink 正则（逐字；#27 保护区
+ *  冲突基线复用——单一事实源导出，消费方用后须重置 lastIndex） */
+export const REG_WIKILINK = /\!{0,2}\[\[[^\[\]]*?\]\]/g
+/** 上游 splitTextWithLinkAndUserDefined 的 mdlink 正则（逐字；同上导出） */
+export const REG_MDLINK = /\!{0,2}\[[^\[\]]*?\]\([^\s]*\)/g
 
 /** 反引号串长（从 at 起的连续反引号个数） */
 function backtickRun(line: string, at: number): number {
