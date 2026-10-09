@@ -3,10 +3,9 @@
 // flags（i/m/u）、作用域与代码语言过滤、优先级与插入序、正则缓存、函数替换体、
 // 替换体反转义。上游对照：easy-typing-obsidian v6.0.9 src/rule_engine.ts。
 //
-// 本票边界（工单 #1 硬边界，口径见 docs/specs/rule-engine.md）：
-// - Tabstop 语法解析（$0/$1 → 占位符与光标）归 #14：替换体中的 $0 保留为
-//   字面标记，ApplyResult.tabstops 恒为空，cursor 取插入尾（上游无 tabstop
-//   分支的同款语义）。
+// 本票边界（口径见 docs/specs/rule-engine.md）：
+// - Tabstop 语法解析（$0/$1 → 占位符与光标）已随工单 #14 接入（恢复上游
+//   parseTabstops）；分组导航的执行归 #15。
 // - Delete/SelectKey 仅建模（枚举/规则形态/process 分派在位），触发管线归 #9；
 //   本文件用 kind:Delete/SelectKey 的用例只验证内核共享路径，不是端到端。
 import { describe, expect, it, vi } from 'vitest'
@@ -359,20 +358,101 @@ describe('函数替换体执行', () => {
   })
 })
 
-describe('替换体后处理（反转义 + $0 字面保留边界）', () => {
+describe('替换体后处理（反转义）', () => {
   it('替换体中的 \\n/\\t/\\\\ 反转义为真实字符', () => {
     const engine = engineWith({ trigger: 'x', replacement: 'a\\n\\t\\\\b', options: '' })
     expect(engine.process(inputCtx('x', 1))?.newText).toBe('a\n\t\\b')
   })
+})
 
-  it('$0 保留为字面标记；tabstops 恒空，cursor 取插入尾（#14 边界）', () => {
+describe('Tabstop 语法解析（工单 #14：恢复上游 parseTabstops）', () => {
+  // 上游对照：rule_engine.ts parseTabstops（L449-509）+ applyReplacement 尾段
+  // （L645-655）。$n 与 ${n:default} 展开为 TabstopSpec，newText 去标记，
+  // cursor 落 number 最小的占位符起点；无占位符时取替换区间起点 + 文本长度。
+  // 导航执行（分组跳转）归 #15，本节只钉语法解析进数据链。
+  it('$0 基本形式：newText 去标记、tabstops 填充、cursor 落占位符', () => {
     const engine = engineWith({ trigger: 'x', replacement: 'a$0b', options: '' })
     const result: ApplyResult | null = engine.process(inputCtx('-x', 2))
     expect(result).not.toBeNull()
-    expect(result!.newText).toBe('a$0b')
-    expect(result!.tabstops).toEqual([])
-    expect(result!.cursor).toBe(result!.matchRange.from + 'a$0b'.length)
+    expect(result!.newText).toBe('ab')
     expect(result!.matchRange).toEqual({ from: 1, to: 2 })
+    expect(result!.tabstops).toEqual([{ number: 0, from: 2, to: 2 }])
+    expect(result!.cursor).toBe(2)
+  })
+
+  it('$n 与 ${n:default} 形式：默认值进正文并形成占位区间', () => {
+    const engine = engineWith({ trigger: 'x', replacement: 'p$1q${2:def}r', options: '' })
+    const result = engine.process(inputCtx('-x', 2))
+    expect(result!.newText).toBe('pqdefr')
+    // 位置基于替换区间起点（from=1）：$1 在 'p' 后（from+1 空占位），
+    // ${2:def} 在 'q' 后覆盖 'def'（from+2..from+5）
+    expect(result!.tabstops).toEqual([
+      { number: 1, from: 2, to: 2 },
+      { number: 2, from: 3, to: 6 },
+    ])
+  })
+
+  it('多占位符按 number 升序排序：cursor 落最小编号（$0）而非文本首个', () => {
+    const engine = engineWith({ trigger: 'x', replacement: 'a$2b$0c', options: '' })
+    const result = engine.process(inputCtx('-x', 2))
+    expect(result!.newText).toBe('abc')
+    expect(result!.tabstops).toEqual([
+      { number: 0, from: 3, to: 3 },
+      { number: 2, from: 2, to: 2 },
+    ])
+    expect(result!.cursor).toBe(3)
+  })
+
+  it('${n} 无默认值形式：占位区间为空（from === to）', () => {
+    const engine = engineWith({ trigger: 'x', replacement: 'a${1}b', options: '' })
+    const result = engine.process(inputCtx('-x', 2))
+    expect(result!.newText).toBe('ab')
+    expect(result!.tabstops).toEqual([{ number: 1, from: 2, to: 2 }])
+  })
+
+  it('默认值内嵌套 ${SEL}/${KEY} 展开（SelectKey 路径）', () => {
+    const engine = engineWith({ trigger: '·', replacement: '${0:<${SEL}>}', options: 's' })
+    const result = engine.process({
+      kind: RuleType.SelectKey,
+      docText: 'xabcz',
+      selection: { from: 1, to: 4 },
+      inserted: '·',
+      changeType: 'input.type',
+      scopeHint: RuleScope.Text,
+      key: '·',
+    })
+    expect(result!.newText).toBe('<abc>')
+    expect(result!.tabstops).toEqual([{ number: 0, from: 1, to: 6 }])
+  })
+
+  it('未闭合 ${ 与非占位 $（后随非数字非 {）保留字面、不产生占位符', () => {
+    const unclosed = engineWith({ trigger: 'x', replacement: 'a${0bc', options: '' })
+    const r1 = unclosed.process(inputCtx('-x', 2))
+    expect(r1!.newText).toBe('a${0bc')
+    expect(r1!.tabstops).toEqual([])
+    expect(r1!.cursor).toBe(r1!.matchRange.from + 'a${0bc'.length)
+    const literal = engineWith({ trigger: 'x', replacement: 'a$ b$c', options: '' })
+    const r2 = literal.process(inputCtx('-x', 2))
+    expect(r2!.newText).toBe('a$ b$c')
+    expect(r2!.tabstops).toEqual([])
+  })
+
+  it('花括号嵌套配平：${2:a${3}b} 的内层属于默认值、不二次解析为占位符', () => {
+    const engine = engineWith({ trigger: 'x', replacement: '${2:a${3}b}', options: '' })
+    const result = engine.process(inputCtx('-x', 2))
+    // findMatchingBrace 深度配平：外层 closeIdx 覆盖 'a${3}b' 整体；默认值
+    // 只递归展开 ${SEL}/${KEY}（上游语义），内层 ${3} 保留字面进正文
+    expect(result!.newText).toBe('a${3}b')
+    expect(result!.tabstops).toEqual([{ number: 2, from: 1, to: 7 }])
+    expect(result!.cursor).toBe(1)
+  })
+
+  it('无占位符：cursor 取替换区间起点 + 文本长度（上游无 tabstop 分支）', () => {
+    const engine = engineWith({ trigger: 'x', replacement: 'abc', options: '' })
+    const result = engine.process(inputCtx('-x', 2))
+    expect(result!.newText).toBe('abc')
+    expect(result!.tabstops).toEqual([])
+    expect(result!.cursor).toBe(result!.matchRange.from + 3)
   })
 })
 

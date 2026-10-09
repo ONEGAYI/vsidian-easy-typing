@@ -10,15 +10,17 @@
 // scopeHint / scopeLanguage 由调用方注入——#25 行为链接入时传正则降级版
 // 判定，#5 语法树版就绪后换传即可，内核零改动。
 //
-// 【与上游的三处刻意偏差】（其余逐行对照）：
+// 【与上游的两处刻意偏差】（其余逐行对照）：
 // 1. Notice 剥离：上游三处 `new Notice(...)`（函数体编译失败 / 非法正则 /
 //    运行时异常节流上报）改为可注入的 reportError 回调（构造选项），
 //    #25 宿主接入时映射到 i18n 通知通道；
 // 2. TabstopSpec 就地定义：上游从 tabstop.ts 导入（该文件含 CM6 依赖），
-//    本模块只保留纯数据形状；
-// 3. Tabstop 语法解析（$0/$1 → 占位符与光标）不移植：归 #14（解析）与
-//    #15（分组导航）。applyReplacement 中占位符保留为字面标记，
-//    tabstops 恒为空，cursor 取上游「无占位符」分支语义。
+//    本模块只保留纯数据形状。
+//
+// 【#14 已接入】Tabstop 语法解析（$n / ${n:default} → TabstopSpec，含默认值
+// 内嵌套 ${SEL}/${KEY} 展开与 number 升序排序）恢复上游 parseTabstops——
+// newText 去标记、tabstops 填充、cursor 落最小编号占位符起点。分组导航的
+// 执行归 #15。
 //
 // 【数据形状为 #25 预留】TxContext 对齐平台 AddonInputContext 的映射面：
 // docText ↔ snapshot.text（LF 坐标）、selection ↔ 光标区间、changeType ↔
@@ -47,7 +49,7 @@ export enum RuleScope {
 
 // ===== 接口 =====
 
-/** 占位符规格（纯数据形状；$0 解析归 #14，分组与导航归 #15） */
+/** 占位符规格（纯数据形状；语法解析在本模块，分组导航归 #15） */
 export interface TabstopSpec {
   number: number;
   from: number;
@@ -492,6 +494,86 @@ export class RuleEngine {
     return text;
   }
 
+  // ===== 占位符解析（#14 恢复上游 parseTabstops） =====
+
+  /** 花括号深度配平：返回与 openIdx 的 `{` 配对的 `}` 下标，未闭合 -1 */
+  private findMatchingBrace(text: string, openIdx: number): number {
+    let depth = 1
+    for (let i = openIdx + 1; i < text.length; i++) {
+      if (text[i] === '{') depth++
+      else if (text[i] === '}') { depth--; if (depth === 0) return i }
+    }
+    return -1
+  }
+
+  /**
+   * 占位符语法解析：`$n` 与 `${n:default}` 展开为 TabstopSpec 并从文本去
+   * 标记。from/to 为文档绝对坐标（baseOffset + 已产出文本长度），默认值内
+   * 嵌套的 ${SEL}/${KEY} 在此展开；未闭合 ${ 与非占位 $ 保留字面。产出按
+   * number 升序排序（$0 最前——cursor 落 tabstops[0].from）。
+   */
+  private parseTabstops(
+    text: string,
+    baseOffset: number,
+    match?: MatchInfo,
+  ): [string, TabstopSpec[]] {
+    const tabstops: TabstopSpec[] = []
+    let result = ''
+    let i = 0
+
+    while (i < text.length) {
+      if (text[i] === '$') {
+        // ${n:default} 形式
+        if (i + 1 < text.length && text[i + 1] === '{') {
+          const closeIdx = this.findMatchingBrace(text, i + 1)
+          if (closeIdx === -1) { result += text[i]; i++; continue }
+
+          const inner = text.substring(i + 2, closeIdx)
+          const colonIdx = inner.indexOf(':')
+
+          let num: number
+          let defaultVal: string
+
+          if (colonIdx > -1) {
+            num = parseInt(inner.substring(0, colonIdx))
+            defaultVal = inner.substring(colonIdx + 1)
+            // 默认值内嵌套变量展开（上游同序：SEL 先于 KEY）
+            if (match?.selectionText !== undefined)
+              defaultVal = defaultVal.replace(/\$\{SEL\}/g, match.selectionText)
+            if (match?.key !== undefined)
+              defaultVal = defaultVal.replace(/\$\{KEY\}/g, match.key)
+          } else {
+            num = parseInt(inner)
+            defaultVal = ''
+          }
+
+          const from = baseOffset + result.length
+          result += defaultVal
+          const to = baseOffset + result.length
+          tabstops.push({ number: num, from, to })
+          i = closeIdx + 1
+        }
+        // $n 形式（空占位区间）
+        else if (i + 1 < text.length && /\d/.test(text[i + 1])) {
+          let numStr = ''
+          let j = i + 1
+          while (j < text.length && /\d/.test(text[j])) { numStr += text[j]; j++ }
+          const num = parseInt(numStr)
+          const pos = baseOffset + result.length
+          tabstops.push({ number: num, from: pos, to: pos })
+          i = j
+        }
+        else { result += text[i]; i++ }
+      }
+      else { result += text[i]; i++ }
+    }
+
+    // number 升序排序（$0 最前——cursor 取 tabstops[0].from）
+    tabstops.sort((a, b) => a.number - b.number)
+
+    return [result, tabstops]
+  }
+
   // ===== 规则执行 =====
 
   private notifyFunctionError(ruleId: string, error: unknown): void {
@@ -624,15 +706,13 @@ export class RuleEngine {
     // 展开 [[n]]、[[Rn]]、独立 ${SEL}、${KEY}
     text = this.expandVariables(text, match);
 
-    // —— 工单 #1 边界：$0/$1 占位符解析归 #14（分组导航归 #15）——
-    // 上游此处调用 parseTabstops 把 $0 / ${n:default} 展开为 TabstopSpec
-    // 并把 cursor 落在首个占位符；本票不移植该解析：占位符保留为字面
-    // 标记，tabstops 恒为空，cursor 取上游「无占位符」分支语义（替换
-    // 区间起点 + 文本长度）。#14 落地时恢复上游语义：newText 去标记、
-    // tabstops 填充、cursor 落 tabstops[0].from。
-    const finalText = text;
-    const tabstops: TabstopSpec[] = [];
-    const cursor = match.matchRange.from + finalText.length;
+    // 占位符解析（#14 恢复上游）：newText 去标记、tabstops 填充，
+    // cursor 落最小编号占位符起点；无占位符时取替换区间起点 + 文本长度
+    const [finalText, tabstops] = this.parseTabstops(text, match.matchRange.from, match);
+
+    const cursor = tabstops.length > 0
+      ? tabstops[0].from
+      : match.matchRange.from + finalText.length;
 
     return {
       newText: finalText,
