@@ -29,11 +29,19 @@
 // 【#9 接缝】onInput 适配器透传 ctx.replaced：Input 管线对选区替换形态
 //（replaced 非空）返回 null（上游 changedStr.length < 1 同口径），把该
 // 触发面让给 #9 的 SelectKey 族——见 ruleBehaviorPipeline.ts 头注。
+//
+// 【规则存储态接入（审查 B-F1 / C-P1-2 修复）】行为族引擎不再静态取出厂
+// DEFAULT_BUILTIN_RULES：注册方经 RuleSnapshotSource 注入动态数据源，
+// PageRulesClient 装载/重载成功后喂快照 → 族引擎同步重建——用户规则、
+// 内置停用（toggleRuleEnabled 写 enabled=false，引擎 process 门控跳过）、
+// 外部改写轮询重载对编辑行为即时生效。装载前 / 通道不可用时回落出厂数据
+//（兼容存储不可用）。用户规则归族设计（按触发类并入现有对应族）见
+// docs/specs/rule-engine.md「用户规则归族与动态重建」节。
 import type {
   AddonBehaviorRegistration,
   AddonInputContext,
 } from '../types/vendor/shared/addonBehaviors'
-import { RuleEngine, type SimpleRule } from './rules/rule-engine'
+import { RuleEngine, RuleType, type SimpleRule } from './rules/rule-engine'
 import { DEFAULT_BUILTIN_RULES } from './rules/default-rules'
 import { pickMessages, type Messages } from './i18n'
 import { debugLog } from './logging'
@@ -55,31 +63,35 @@ export { RULE_ERROR_TOPIC }
 /** 行为族 i18n 键（字典 ruleFamilies 节） */
 export type RuleFamilyI18nKey = keyof Messages['ruleFamilies']
 
-/** 族种子：localId（数值前缀编码默认链序）+ i18n 键 + 规则 id 集 */
+/** 族种子：localId（数值前缀编码默认链序）+ i18n 键 + 规则 id 集 + 归入
+ * 本族的用户规则触发类（Input 族收 Input 类用户规则、06 收 Delete、07 收
+ * SelectKey——见 resolveRuleFamilies 归族说明） */
 interface RuleFamilySeed {
   readonly localId: string
   readonly i18nKey: RuleFamilyI18nKey
   readonly ruleIds: readonly string[]
+  readonly userRuleType: RuleType
 }
 
 const RULE_FAMILY_SEEDS: readonly RuleFamilySeed[] = [
   // 上游优先级 3：连续全角标点转半角
-  { localId: '01-punct-collapse', i18nKey: 'punctCollapse', ruleIds: ['builtin-fw2hw-double'] },
+  { localId: '01-punct-collapse', i18nKey: 'punctCollapse', ruleIds: ['builtin-fw2hw-double'], userRuleType: RuleType.Input },
   // 上游优先级 5 + 10：配对跳过 + 配对补全（同族：同一触发域，族内按引擎优先级）
-  { localId: '02-autopair', i18nKey: 'autopair', ruleIds: ['builtin-autopair-jump', 'builtin-autopair-input'] },
+  { localId: '02-autopair', i18nKey: 'autopair', ruleIds: ['builtin-autopair-jump', 'builtin-autopair-input'], userRuleType: RuleType.Input },
   // 上游优先级 10：·· 转行内代码 / `· 升级代码块 / ￥$ 转公式 / 行首 》、 转换
   {
     localId: '03-symbol-convert',
     i18nKey: 'symbolConvert',
     ruleIds: ['builtin-conv-backtick', 'builtin-conv-codeblock', 'builtin-conv-formula', 'builtin-conv-linestart'],
+    userRuleType: RuleType.Input,
   },
   // 上游优先级 15：CJK 后半角标点转全角（上游数据默认关——enabled 字段留引擎数据态）
-  { localId: '04-punct-expand', i18nKey: 'punctExpand', ruleIds: ['builtin-conv-hw2fw'] },
+  { localId: '04-punct-expand', i18nKey: 'punctExpand', ruleIds: ['builtin-conv-hw2fw'], userRuleType: RuleType.Input },
   // 上游优先级 50：引用标记转换与补空格
-  { localId: '05-quote', i18nKey: 'quote', ruleIds: ['builtin-quote-convert', 'builtin-quote-space'] },
+  { localId: '05-quote', i18nKey: 'quote', ruleIds: ['builtin-quote-convert', 'builtin-quote-space'], userRuleType: RuleType.Input },
 ]
 
-/** 族定义（种子 + 解析出的规则数据） */
+/** 族定义（种子 + 解析出的规则数据；rules 含按触发类归入的用户规则） */
 export interface RuleFamilyDefinition {
   readonly localId: string
   readonly i18nKey: RuleFamilyI18nKey
@@ -93,14 +105,33 @@ export interface RuleFamilyDefinition {
  * 的上游全局首命中语义（设计核对见规格「#9 触发接入」节）。 */
 export const INPUT_RULE_EXCLUSIVE_GROUP = 'input-rules'
 
-/** 从内置规则数据解析族表（规则 id 缺失时该条不装载——完整性由契约测试钉住） */
+/**
+ * 从内置规则数据 + 用户规则解析族表：
+ * - 内置侧按 seed.ruleIds 过滤（规则 id 缺失时该条不装载——完整性由契约
+ *   测试钉住）；
+ * - 用户侧按**触发类归族**：Input 类用户规则并入全部五个 Input 族（每族
+ *   一份实例）、Delete 类并入 06、SelectKey 类并入 07。归族理由（规格
+ *   「用户规则归族与动态重建」节）：并入对应触发类的既有族让用户规则
+ *   参与族内优先级竞争，跨族链序 + 族内引擎排序合成上游全局首命中语义
+ *   （族序按内置优先级分层编码，用户规则在族内按自身 priority 插入排序
+ *   ——如 priority 1 的用户规则排入 01 族后先于内置 fw2hw(3) 试配）。
+ *   代价是同一条用户规则在多个族引擎各有一份实例（reportError 重复上报
+ *   由全局节流窗收敛；匹配开销 = 每输入事务多族各试一次，规则量级用户
+ *   自定义、可接受）。
+ * - enabled=false 的规则**保留在装载集**：引擎 process 的 `!rule.enabled`
+ *   门控跳过（toggleRuleEnabled 停用即不触发，无需装载侧过滤）。
+ */
 export function resolveRuleFamilies(
   seeds: readonly RuleFamilySeed[],
   builtin: readonly SimpleRule[] = DEFAULT_BUILTIN_RULES,
+  user: readonly SimpleRule[] = [],
 ): RuleFamilyDefinition[] {
   return seeds.map((seed) => ({
     ...seed,
-    rules: builtin.filter((r) => 'id' in r && seed.ruleIds.includes((r as { id: string }).id)),
+    rules: [
+      ...builtin.filter((r) => 'id' in r && seed.ruleIds.includes((r as { id: string }).id)),
+      ...user.filter((r) => RuleEngine.parseOptions(r.options).type === seed.userRuleType),
+    ],
   }))
 }
 
@@ -212,6 +243,37 @@ export function createRuleErrorReporter(
 
 // ===== 注册入口（page-editor 增量块消费） =====
 
+/** 动态规则源（审查 B-F1 / C-P1-2 修复）：行为族引擎的存储态数据供给面。
+ * page-editor 装配 PageRulesClient 后把本源接到 client 的 onReload——装载
+ * /重载成功即 update 喂快照，注册方经 onUpdate 同步重建族引擎。 */
+export interface RuleSnapshotSource {
+  /** 最近一次成功装载的快照（undefined = 从未装载成功，行为族用出厂数据） */
+  snapshot(): { builtin: readonly SimpleRule[]; user: readonly SimpleRule[] } | undefined
+  /** 快照变化回调（update 时同步触发；页面级一次性接线，无注销需求） */
+  onUpdate(callback: () => void): void
+}
+
+/** RuleSnapshotSource 的可写端（page-editor 持有，喂给注册函数的是只读面） */
+export interface WritableRuleSnapshotSource extends RuleSnapshotSource {
+  /** 装载/重载成功后喂快照（同步触发 onUpdate——族引擎即时重建） */
+  update(snapshot: { builtin: readonly SimpleRule[]; user: readonly SimpleRule[] }): void
+}
+
+export function createRuleSnapshotSource(): WritableRuleSnapshotSource {
+  let current: { builtin: readonly SimpleRule[]; user: readonly SimpleRule[] } | undefined
+  const listeners = new Set<() => void>()
+  return {
+    snapshot: () => current,
+    onUpdate: (callback) => {
+      listeners.add(callback)
+    },
+    update: (snapshot) => {
+      current = { builtin: [...snapshot.builtin], user: [...snapshot.user] }
+      for (const listener of [...listeners]) listener()
+    },
+  }
+}
+
 export interface RegisterRuleBehaviorsDeps {
   /** 行为注册面（sdk.behaviors） */
   readonly behaviors: RuleBehaviorsFacetSubset
@@ -221,6 +283,8 @@ export interface RegisterRuleBehaviorsDeps {
   readonly language: string
   /** 时间源（默认 Date.now；测试注入） */
   readonly now?: () => number
+  /** 动态规则源（缺省 = 出厂数据，兼容存储不可用与既有测试形态） */
+  readonly rulesSource?: RuleSnapshotSource
 }
 
 /** 注册结果（逐族；普通 API 拒绝不算故障，经 debugLog 留痕） */
@@ -238,6 +302,7 @@ export interface RuleBehaviorRuntime {
    * 读即消费（返回后清空）；无待激活时返回空数组。页面装配层在计划应用
    * 后的 docChanged 事务里调用——坐标为应用后文档绝对坐标，可直接喂
    * tabstopNav.activateTabstops。
+   *
    * 消费一致性校验（审查 B-F2 修复）：入参 doc 为消费时点的文档读取面
    *（CM6 Text 结构子集，页面侧传 view.state.doc）。暂存时同记计划变更
    *（changes）；消费时逐条核对文档在 [offset, offset + text.length) 处
@@ -291,9 +356,21 @@ export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): Rul
   // 同记计划变更，消费时按文档形态校验一致性）
   const pendingState = { pending: null as PendingTabstopEntry | null }
 
+  // 族引擎动态重建（存储态接入）：装载/重载喂快照即同步重建；装载前
+  //（source 缺省或未装载）用出厂数据——存储不可用时编辑行为不失效
+  const engines: RuleEngine[] = RULE_FAMILY_SEEDS.map(() => new RuleEngine())
+  const rebuildEngines = (): void => {
+    const snap = deps.rulesSource?.snapshot()
+    const families = resolveRuleFamilies(RULE_FAMILY_SEEDS, snap?.builtin ?? DEFAULT_BUILTIN_RULES, snap?.user ?? [])
+    for (let i = 0; i < families.length; i++) {
+      engines[i] = buildFamilyEngine(families[i]!, reportRuleError)
+    }
+  }
+  rebuildEngines()
+  deps.rulesSource?.onUpdate(rebuildEngines)
+
   const outcome: RuleBehaviorRegisterOutcome[] = []
-  for (const family of INPUT_RULE_FAMILIES) {
-    const engine = buildFamilyEngine(family, reportRuleError)
+  RULE_FAMILY_SEEDS.forEach((family, familyIndex) => {
     const i18n = messages.ruleFamilies[family.i18nKey]
     const result = deps.behaviors.register({
       id: family.localId,
@@ -304,7 +381,7 @@ export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): Rul
       history: 'atomic',
       onInput: (ctx: AddonInputContext) => {
         const withTabstops = planInputRuleWithTabstops(
-          engine,
+          engines[familyIndex]!,
           {
             userEvent: ctx.userEvent,
             inputText: ctx.inputText,
@@ -328,7 +405,7 @@ export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): Rul
         ? { localId: family.localId, ok: true }
         : { localId: family.localId, ok: false, reason: result.reason },
     )
-  }
+  })
 
   // 只读观察刷新设置缓存：设置页改 debug 后下一次输入即生效（平台 onChanged
   // 每次输入触发——与 vsidian input-behavior 样例同形态）
@@ -379,6 +456,7 @@ const DELETE_SELECTKEY_FAMILY_SEEDS: readonly RuleFamilySeed[] = [
       'builtin-del-codeblock',
       'builtin-del-wikilink',
     ],
+    userRuleType: RuleType.Delete,
   },
   // 上游优先级 40：选中文本后按键包裹
   {
@@ -390,6 +468,7 @@ const DELETE_SELECTKEY_FAMILY_SEEDS: readonly RuleFamilySeed[] = [
       'builtin-sel-wrap-quotes',
       'builtin-sel-wrap-cjk-brackets',
     ],
+    userRuleType: RuleType.SelectKey,
   },
 ]
 
@@ -405,13 +484,27 @@ export function registerRuleDeleteSelectKeyBehaviors(deps: RegisterRuleBehaviors
   void gate.refresh()
   const reportRuleError = createRuleErrorReporter(deps.channel, { now: deps.now })
 
-  // 独占组保证一次输入至多一族命中——单一暂存槽足够（B-F2 起：暂存时
-  // 同记计划变更，消费时按文档形态校验一致性）
+  // 独占组保证一次输入至多一族命中——单一暂存槽足够（B-F2 起带一致性校验）
   const pendingState = { pending: null as PendingTabstopEntry | null }
 
+  // 族引擎动态重建（存储态接入，与 #25 五族同一形态）
+  const engines: RuleEngine[] = DELETE_SELECTKEY_FAMILY_SEEDS.map(() => new RuleEngine())
+  const rebuildEngines = (): void => {
+    const snap = deps.rulesSource?.snapshot()
+    const families = resolveRuleFamilies(
+      DELETE_SELECTKEY_FAMILY_SEEDS,
+      snap?.builtin ?? DEFAULT_BUILTIN_RULES,
+      snap?.user ?? [],
+    )
+    for (let i = 0; i < families.length; i++) {
+      engines[i] = buildFamilyEngine(families[i]!, reportRuleError)
+    }
+  }
+  rebuildEngines()
+  deps.rulesSource?.onUpdate(rebuildEngines)
+
   const outcome: RuleBehaviorRegisterOutcome[] = []
-  for (const family of DELETE_SELECTKEY_RULE_FAMILIES) {
-    const engine = buildFamilyEngine(family, reportRuleError)
+  DELETE_SELECTKEY_FAMILY_SEEDS.forEach((family, familyIndex) => {
     const i18n = messages.ruleFamilies[family.i18nKey]
     const result = deps.behaviors.register({
       id: family.localId,
@@ -429,7 +522,7 @@ export function registerRuleDeleteSelectKeyBehaviors(deps: RegisterRuleBehaviors
           replaced: ctx.replaced,
           snapshot: { text: ctx.snapshot.text, selections: ctx.snapshot.selections },
         }
-        const deleteResult = planDeleteRuleModification(engine, pipelineCtx, {
+        const deleteResult = planDeleteRuleModification(engines[familyIndex]!, pipelineCtx, {
           debug: gate.debug(),
           protectedZone: gate.userRulesZone(),
         })
@@ -439,7 +532,7 @@ export function registerRuleDeleteSelectKeyBehaviors(deps: RegisterRuleBehaviors
           }
           return deleteResult.plan
         }
-        const selectKeyResult = planSelectKeyRuleModification(engine, pipelineCtx, {
+        const selectKeyResult = planSelectKeyRuleModification(engines[familyIndex]!, pipelineCtx, {
           debug: gate.debug(),
           protectedZone: gate.userRulesZone(),
         })
@@ -460,7 +553,7 @@ export function registerRuleDeleteSelectKeyBehaviors(deps: RegisterRuleBehaviors
         ? { localId: family.localId, ok: true }
         : { localId: family.localId, ok: false, reason: result.reason },
     )
-  }
+  })
 
   deps.behaviors.onChanged(() => {
     void gate.refresh()

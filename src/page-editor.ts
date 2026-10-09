@@ -33,6 +33,7 @@ import {
 import {
   registerRuleDeleteSelectKeyBehaviors,
   registerRuleInputBehaviors,
+  createRuleSnapshotSource,
 } from './ruleBehaviorIntercept'
 import { registerAutoFormatBehavior, createAutoFormatGate } from './autoFormatIntercept'
 import { registerFormattingCommands } from './formattingCommands'
@@ -52,9 +53,15 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   }
 
   // 规则引擎装载（工单 #14 数据链）：拉取宿主快照装载引擎 + revision
-  // 轮询自动重载（外部同步工具改写或 #16 UI 编辑后即时生效）。引擎的
-  // 输入触发消费（process 调用）归 #25 行为链接入。
-  const ruleClient = new PageRulesClient({ engine: new RuleEngine(), channel: sdk.channel })
+  // 轮询自动重载（外部同步工具改写或 #16 UI 编辑后即时生效）。快照同时
+  // 喂规则源（rulesSource）——#25/#9 行为族引擎经其同步重建（审查
+  // B-F1 / C-P1-2 修复），PageRulesClient.engine 保留为数据链诊断面。
+  const rulesSource = createRuleSnapshotSource()
+  const ruleClient = new PageRulesClient({
+    engine: new RuleEngine(),
+    channel: sdk.channel,
+    onReload: (snapshot) => rulesSource.update(snapshot),
+  })
   await ruleClient.load()
   ruleClient.startWatch()
   sdk.onDispose(() => ruleClient.stopWatch())
@@ -314,6 +321,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       behaviors,
       channel: sdk.channel,
       language: navigator.language,
+      rulesSource,
     })
     for (const outcome of ruleRuntime.outcomes) {
       if (!outcome.ok) {
@@ -352,6 +360,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       behaviors,
       channel: sdk.channel,
       language: navigator.language,
+      rulesSource,
     })
     for (const outcome of triggerRuntime.outcomes) {
       if (!outcome.ok) {
@@ -362,7 +371,8 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
 
     // #15×#9 接线：独立暂存槽 + 独立 docChanged 监听（与 #25 通道互不干
     // 扰——独占组保证一次输入至多一族命中）。SelectKey 包裹计划携带
-    // ${0:${SEL}} 的 $0 组（覆盖选中文本），计划应用后激活导航态。
+    // ${0:${SEL}} 的 $0 组（覆盖选中文本），计划应用后激活导航态。消费
+    // 一致性校验同 #25（B-F2：传 doc 校验替换形态，失配丢弃）。
     sdk.registerExtension(
       cm6.view.EditorView.updateListener.of((update) => {
         if (!update.docChanged) return

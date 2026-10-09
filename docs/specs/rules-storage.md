@@ -45,7 +45,7 @@
 - **文件整体缺失 = 恢复出厂全量**（上游 exists=false 分支语义）：deletedIds 只约束 merge 补种路径，不拦截「文件不存在」分支——外部删除 builtin-rules.json 会复活已删内置规则，与上游一致（`test/rule-store.test.ts`「上游语义钉子」用例钉住，防好心修复）。
 - **languagePairs / customScriptCategories 未建持久化文件**：二者是间距引擎（smart space）的富结构，数据链归对应功能票；#3 边界句「富结构归你的 JSON 持久化」在本票只消费了 deletedBuiltinRuleIds（rule-state.json）。语言对种子仍以 `RICH_STRUCTURE_DEFAULTS` 为单一事实源，届时扩展同一 rule-state 文件或平行文件。
 - **revision 非持久化**：代次是运行态计数（每次激活期从 0 起），页面装载时以 -1 起步强制首拉；同一激活期内任何数据变化都会递增，跨激活期无比较意义（页面重新装载亦从 -1 起）。
-- **页面装载链路已接线、引擎消费未接**：page-editor.ts 装载引擎 + 轮询重载；`engine.process(ctx)` 的输入触发消费归 #25 行为链。设置门控（上游 `userDefinedRegSwitch` 关闭时用户规则不参与）同样归 #25 在消费侧接线，存储层不复制开关。
+- **页面装载链路与引擎消费均已接线**（审查 B-F1 / C-P1-2 修复收口）：page-editor.ts 装载引擎 + 轮询重载；`PageRulesClient` 的 `onReload` 快照喂规则源（`createRuleSnapshotSource`，src/ruleBehaviorIntercept.ts），#25/#9 行为族引擎经其同步重建——用户规则、内置停用与删除、外部改写轮询重载对编辑行为即时生效（端到端测试：test/ruleBehaviorIntercept.test.ts「端到端：存储态 → 行为族引擎」组）。装载前 / 通道不可用时行为族回落出厂数据。设置门控（上游 `userDefinedRegSwitch` 关闭时用户规则不参与）在消费侧经 #27 探针接线，存储层不复制开关。
 - **真实 storage 联调归 #21**（宿主集成验证票）：本票 mock 承载全部 storage 语义断言。
 
 ## 给后续票的接口提示
@@ -53,4 +53,4 @@
 - **#15（Tabstop 导航）**：`ApplyResult.tabstops`（`{number, from, to}` 文档绝对坐标，number 升序）已填充，`cursor` 落 `tabstops[0].from`；分组导航把 tabstop 组转多光标选区 + Tab/Shift-Tab 跳转，引擎零改动。
 - **#16（规则管理 UI，已落地）**：读写全经 `RULES_TOPIC`（`src/rules/rules-protocol.ts`）；`get` 返回 `{ revision, builtin, user, deletedBuiltinRuleIds }`；mutate 11 op 覆盖增删改/开关/排序/触发模式/删除恢复重置/导入（content 字符串）；`exportUser` 给下载、`storageUri` 给「打开数据目录」类提示。设置页（setup 通道）与编辑器页（enable 通道）都已注册。实施落档见 [rules-ui.md](rules-ui.md)。
 - **#17（函数替换体，已落地）**：`replacement` 引用对象形态随 JSON 序列化无损往返（出厂种子 → 落盘 → 解析回读，`test/rule-store.test.ts` 钉住）；mutate 通道的 rule 载荷经 `sanitizeSimpleRule` 同一收口，UI 产出的引用对象可直传。实施落档见 [rule-engine.md](rule-engine.md) 与 ADR-0003。
-- **#25（输入行为链）**：`PageRulesClient.engine`（`src/rules/rules-page.ts`）即消费入口——规则已在引擎内、自动重载已就绪；作用域判定按 #1 设计注入 `scopeHint`。
+- **#25（输入行为链，已接线）**：消费入口不是单一的 `PageRulesClient.engine`（该引擎保留为数据链诊断面），而是行为族各自引擎经**规则源**动态装载——`page-editor.ts` 把 `createRuleSnapshotSource()` 接到 `client.onReload`，`registerRuleInputBehaviors` / `registerRuleDeleteSelectKeyBehaviors` 收到快照（`{builtin, user}`）即同步重建族引擎（归族设计见 [rule-engine.md](rule-engine.md)「用户规则归族与动态重建」节）；快照的 `builtin` 数组已不含被删内置规则（`deleteBuiltinRule` 从文件移除），`enabled=false` 保留在装载集、由引擎 process 门控跳过。作用域判定按 #1 设计注入 `scopeHint`（C-P1-1 起带 All 短路与事务级 memo）。

@@ -22,6 +22,10 @@ export interface PageRulesSnapshot {
   revision: number
   builtin: SimpleRule[]
   user: SimpleRule[]
+  /** 已删内置规则 id 清单（升级补种不再恢复；builtin 数组本身已不含这些
+   * 条目——deleteBuiltinRule 从文件移除。行为族消费 builtin/user 即可，
+   * 此字段为快照完整性保留（审查 B-F1 修复时对齐宿主 get 返回形状）） */
+  deletedBuiltinRuleIds: string[]
 }
 
 export interface PageRulesClientOptions {
@@ -43,10 +47,13 @@ function parseGetResult(result: unknown): PageRulesSnapshot | null {
   const raw = result as Record<string, unknown>
   if (typeof raw['revision'] !== 'number') return null
   if (!Array.isArray(raw['builtin']) || !Array.isArray(raw['user'])) return null
+  const deleted = raw['deletedBuiltinRuleIds']
   return {
     revision: raw['revision'],
     builtin: raw['builtin'] as SimpleRule[],
     user: raw['user'] as SimpleRule[],
+    deletedBuiltinRuleIds:
+      Array.isArray(deleted) && deleted.every((i) => typeof i === 'string') ? [...deleted] : [],
   }
 }
 

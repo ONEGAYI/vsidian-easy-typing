@@ -5,7 +5,7 @@
 // 效序 + 独占组）。分族依据与 joinPrevious 核对结论记录在
 // docs/specs/rule-engine.md「#25 行为链接入」「#9 Delete/SelectKey 触发
 // 接入」节。
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { RuleEngine, RuleScope, RuleType } from '../src/rules/rule-engine'
 import { DEFAULT_BUILTIN_RULES } from '../src/rules/default-rules'
 import { pickMessages } from '../src/i18n'
@@ -19,10 +19,21 @@ import {
   buildFamilyEngine,
   createRuleErrorReporter,
   createRulePipelineGate,
+  createRuleSnapshotSource,
   registerRuleDeleteSelectKeyBehaviors,
   registerRuleInputBehaviors,
+  resolveRuleFamilies,
   type RuleFamilyDefinition,
 } from '../src/ruleBehaviorIntercept'
+import { PageRulesClient } from '../src/rules/rules-page'
+import { HostRulesService, registerRulesChannels } from '../src/rulesHost'
+import { RULES_TOPIC } from '../src/rules/rules-protocol'
+import { USER_RULES_FILE } from '../src/rules/rule-store'
+import type { AddonChannelRegistry } from '../types/vendor/host/addons/addonRegistry'
+import type {
+  AddonStorageFacet,
+  AddonStorageWatchHandle,
+} from '../types/vendor/shared/addonStorage'
 
 /** 消费时点文档 mock（CM6 Text 结构子集——LF 字符串切片；B-F2 校验入参） */
 function docOf(text: string): { sliceString(from: number, to: number): string } {
@@ -701,7 +712,199 @@ describe('#27 用户规则尊重保护区：族级端到端', () => {
   })
 })
 
-// ===== tabstop 暂存消费一致性校验（审查 B-F2 修复） =====
+// ===== 行为族引擎接入规则存储态（审查 B-F1 / C-P1-2 修复） =====
+
+/** 归族用种子重建（INPUT_RULE_FAMILIES 是默认实例，种子不在导出面） */
+function inputSeedsForFamily() {
+  return INPUT_RULE_FAMILIES.map((f) => ({
+    localId: f.localId,
+    i18nKey: f.i18nKey,
+    ruleIds: f.ruleIds,
+    userRuleType: RuleType.Input,
+  }))
+}
+
+describe('用户规则归族：resolveRuleFamilies 三参数形态', () => {
+  const userInput = { id: 'user-a', trigger: 'zz', replacement: 'ZZ', priority: 1 }
+  const userDelete = { id: 'user-d', trigger: '【', trigger_right: '】', replacement: '', options: 'd' }
+  const userSelect = { id: 'user-s', trigger: 'x', replacement: 'X', options: 's' }
+
+  it('Input 类用户规则并入全部五个 Input 族；Delete/SelectKey 类不混入', () => {
+    const families = resolveRuleFamilies(inputSeedsForFamily(), DEFAULT_BUILTIN_RULES, [
+      userInput,
+      userDelete,
+      userSelect,
+    ])
+    expect(families).toHaveLength(5)
+    for (const family of families) {
+      expect(family.rules.some((r) => r.id === 'user-a')).toBe(true)
+      expect(family.rules.some((r) => r.id === 'user-d')).toBe(false)
+      expect(family.rules.some((r) => r.id === 'user-s')).toBe(false)
+    }
+  })
+
+  it('Delete 类入 06、SelectKey 类入 07（按触发类归对应族）', () => {
+    const families = resolveRuleFamilies(
+      DELETE_SELECTKEY_RULE_FAMILIES.map((f) => ({
+        localId: f.localId,
+        i18nKey: f.i18nKey,
+        ruleIds: f.ruleIds,
+        userRuleType: RuleType.Delete,
+      })),
+      DEFAULT_BUILTIN_RULES,
+      [userInput, userDelete, userSelect],
+    )
+    expect(families[0]!.rules.some((r) => r.id === 'user-d')).toBe(true)
+    expect(families[0]!.rules.some((r) => r.id === 'user-a')).toBe(false)
+    const selectFamilies = resolveRuleFamilies(
+      DELETE_SELECTKEY_RULE_FAMILIES.map((f) => ({
+        localId: f.localId,
+        i18nKey: f.i18nKey,
+        ruleIds: f.ruleIds,
+        userRuleType: RuleType.SelectKey,
+      })),
+      DEFAULT_BUILTIN_RULES,
+      [userInput, userDelete, userSelect],
+    )
+    expect(selectFamilies[1]!.rules.some((r) => r.id === 'user-s')).toBe(true)
+    expect(selectFamilies[0]!.rules.some((r) => r.id === 'user-d')).toBe(false)
+  })
+
+  it('enabled=false 用户规则保留在装载集（引擎 process 门控跳过，非装载侧过滤）', () => {
+    const families = resolveRuleFamilies(inputSeedsForFamily(), [], [{ ...userInput, enabled: false }])
+    const engine = buildFamilyEngine(families[0]!)
+    expect(engine.getRules().some((r) => r.id === 'user-a' && !r.enabled)).toBe(true)
+    expect(
+      engine.process({
+        kind: RuleType.Input,
+        docText: 'zz',
+        selection: { from: 2, to: 2 },
+        inserted: '',
+        changeType: 'input.type',
+        scopeHint: RuleScope.All,
+      }),
+    ).toBeNull()
+  })
+})
+
+describe('RuleSnapshotSource：装载前出厂数据、update 后快照可见', () => {
+  it('初始 snapshot 为 undefined；update 喂快照并同步触发 onUpdate', () => {
+    const source = createRuleSnapshotSource()
+    expect(source.snapshot()).toBeUndefined()
+    const seen: number[] = []
+    source.onUpdate(() => seen.push(1))
+    source.update({ builtin: [], user: [{ id: 'user-zz', trigger: 'zz', replacement: 'EXT', priority: 1 }] })
+    expect(source.snapshot()).toEqual({
+      builtin: [],
+      user: [{ id: 'user-zz', trigger: 'zz', replacement: 'EXT', priority: 1 }],
+    })
+    expect(seen).toHaveLength(1)
+  })
+})
+
+// ---- 端到端数据链 mock（精简自 rules-page.test.ts 同型设施） ----
+
+function e2eStorage(initial: Record<string, string> = {}) {
+  const files = new Map<string, string>(Object.entries(initial))
+  const listeners = new Set<(path: string, kind: 'change' | 'delete') => void>()
+  let clock = 1_000_000
+  const storage: AddonStorageFacet = {
+    uri: () => 'file:///globalStorage/vsidian/addons/ONEGAYI.vsidian-easy-typing/',
+    readFile: async (path) => {
+      const value = files.get(path)
+      return value === undefined
+        ? { ok: false as const, reason: 'error' as const, detail: 'not-found' }
+        : { ok: true as const, value }
+    },
+    writeFile: async (path, content) => {
+      files.set(path, content)
+      return { ok: true as const, value: null }
+    },
+    list: async () => ({
+      ok: true as const,
+      entries: [...files.keys()].map((path) => ({ path, kind: 'file' as const })),
+    }),
+    deleteFile: async (path) => {
+      files.delete(path)
+      return { ok: true as const, value: null }
+    },
+    onDidChangeFile: (cb): AddonStorageWatchHandle => {
+      listeners.add(cb)
+      return { dispose: () => listeners.delete(cb) }
+    },
+  }
+  return {
+    files,
+    storage,
+    tick: (d = 1) => (clock += d),
+    now: () => clock,
+    emit: (path: string) => {
+      for (const l of listeners) l(path, 'change')
+    },
+  }
+}
+
+function e2eRegistry() {
+  const handlers = new Map<string, (payload: unknown) => unknown | Promise<unknown>>()
+  const registry: AddonChannelRegistry = {
+    handle: (topic, handler) => {
+      handlers.set(topic, handler)
+      return { dispose: () => handlers.delete(topic) }
+    },
+  }
+  const request = async (topic: string, payload: unknown) => {
+    const handler = handlers.get(topic)
+    if (!handler) return { ok: false as const, reason: 'rejected' as const }
+    try {
+      return { ok: true as const, result: await handler(payload) }
+    } catch {
+      return { ok: false as const, reason: 'rejected' as const }
+    }
+  }
+  return { registry, request }
+}
+
+/** 组装「宿主存储 → 通道 → 页面客户端 → 行为族注册」全链（B-F1 修复的
+ * 端到端形态）：规则源接 client.onReload，行为族引擎随装载/重载重建 */
+function assembleBehaviorChain(initial: Record<string, string> = {}) {
+  const mock = e2eStorage(initial)
+  const service = new HostRulesService(mock.storage, {
+    now: mock.now,
+    setTimeout: (fn) => {
+      void fn()
+      return 0
+    },
+    clearTimeout: () => {},
+  })
+  const { registry, request } = e2eRegistry()
+  registerRulesChannels(registry, service)
+  const source = createRuleSnapshotSource()
+  const client = new PageRulesClient({
+    channel: { request },
+    engine: new RuleEngine(),
+    onReload: (snapshot) => source.update(snapshot),
+  })
+  const registrations: RuleBehaviorRegistrationSubset[] = []
+  const behaviors = {
+    register: (reg: AddonBehaviorRegistration) => {
+      registrations.push(reg)
+      return { ok: true as const, key: 'ONEGAYI.vsidian-easy-typing#' + reg.id }
+    },
+    onChanged: () => () => {},
+  }
+  registerRuleInputBehaviors({ behaviors, channel: { request }, language: 'zh-CN', rulesSource: source })
+  registerRuleDeleteSelectKeyBehaviors({ behaviors, channel: { request }, language: 'zh-CN', rulesSource: source })
+  /** 模拟平台行为链驱动（有效序 = 注册序；返回首个计划——各族触发面
+   * 互斥使独占组仲裁退化为首个返回计划者，与平台 runtime 语义同型） */
+  const driveChain = (ctx: Parameters<RuleBehaviorRegistrationSubset['onInput']>[0]) => {
+    for (const reg of registrations) {
+      const plan = reg.onInput(ctx)
+      if (plan !== null) return plan
+    }
+    return null
+  }
+  return { mock, service, client, request, source, registrations, driveChain }
+}
 
 const inputSnapshot = (text: string, cursor: number) => ({
   text,
@@ -709,6 +912,167 @@ const inputSnapshot = (text: string, cursor: number) => ({
   version: 1,
   revision: 1,
 })
+
+describe('端到端：存储态 → 行为族引擎（B-F1 / C-P1-2 修复）', () => {
+  it('链路一：UI 增规则 → 轮询重载 → 行为族命中新规则（优先级竞争真实生效）', async () => {
+    const chain = assembleBehaviorChain()
+    await chain.client.load()
+    expect(
+      chain.driveChain({
+        userEvent: 'input.type',
+        inputText: 'z',
+        replaced: null,
+        docUri: 'file:///a.md',
+        snapshot: inputSnapshot('zz', 2),
+      }),
+    ).toBeNull()
+
+    const add = await chain.request(RULES_TOPIC.mutate, {
+      op: 'addUserRule',
+      rule: { trigger: 'zz', replacement: 'EXT', priority: 1 },
+    })
+    expect(add).toMatchObject({ ok: true, result: { ok: true } })
+    await chain.client.poll()
+    // 用户规则 priority 1：在 01 族内先于内置 fw2hw(3) 试配 → 链首族即命中
+    expect(
+      chain.driveChain({
+        userEvent: 'input.type',
+        inputText: 'z',
+        replaced: null,
+        docUri: 'file:///a.md',
+        snapshot: inputSnapshot('zz', 2),
+      }),
+    ).toEqual({ changes: [{ offset: 0, length: 2, text: 'EXT' }], selection: { anchor: 3, head: 3 } })
+  })
+
+  it('链路二：停用内置规则（toggleRuleEnabled）→ 轮询重载 → 不再触发', async () => {
+    const chain = assembleBehaviorChain()
+    await chain.client.load()
+    expect(
+      chain.driveChain({
+        userEvent: 'input.type',
+        inputText: '。',
+        replaced: null,
+        docUri: 'file:///a.md',
+        snapshot: inputSnapshot('。。', 2),
+      }),
+    ).toEqual({ changes: [{ offset: 0, length: 2, text: '.' }], selection: { anchor: 1, head: 1 } })
+
+    const toggle = await chain.request(RULES_TOPIC.mutate, {
+      op: 'toggleRuleEnabled',
+      id: 'builtin-fw2hw-double',
+      isBuiltin: true,
+      enabled: false,
+    })
+    expect(toggle).toMatchObject({ ok: true, result: { ok: true } })
+    await chain.client.poll()
+    expect(
+      chain.driveChain({
+        userEvent: 'input.type',
+        inputText: '。',
+        replaced: null,
+        docUri: 'file:///a.md',
+        snapshot: inputSnapshot('。。', 2),
+      }),
+    ).toBeNull()
+  })
+
+  it('链路三：外部改写 user-rules.json → watcher → 轮询 → 新规则生效', async () => {
+    const chain = assembleBehaviorChain()
+    await chain.client.load()
+    expect(
+      chain.driveChain({
+        userEvent: 'input.type',
+        inputText: 'z',
+        replaced: null,
+        docUri: 'file:///a.md',
+        snapshot: inputSnapshot('zz', 2),
+      }),
+    ).toBeNull()
+
+    chain.mock.tick(2000) // 跳出自写抑制窗口
+    chain.mock.files.set(
+      USER_RULES_FILE,
+      JSON.stringify([{ id: 'user-ext', trigger: 'zz', replacement: 'EXT', priority: 1 }], null, 2),
+    )
+    chain.mock.emit(USER_RULES_FILE)
+    await vi.waitFor(() => expect(chain.service.revision).toBe(1))
+    await chain.client.poll()
+    expect(
+      chain.driveChain({
+        userEvent: 'input.type',
+        inputText: 'z',
+        replaced: null,
+        docUri: 'file:///a.md',
+        snapshot: inputSnapshot('zz', 2),
+      }),
+    ).toEqual({ changes: [{ offset: 0, length: 2, text: 'EXT' }], selection: { anchor: 3, head: 3 } })
+  })
+
+  it('内置删除（deleteBuiltinRule）→ 轮询 → 族引擎不再装载该条', async () => {
+    const chain = assembleBehaviorChain()
+    await chain.client.load()
+    const del = await chain.request(RULES_TOPIC.mutate, { op: 'deleteBuiltinRule', id: 'builtin-fw2hw-double' })
+    expect(del).toMatchObject({ ok: true, result: { ok: true } })
+    await chain.client.poll()
+    expect(
+      chain.driveChain({
+        userEvent: 'input.type',
+        inputText: '。',
+        replaced: null,
+        docUri: 'file:///a.md',
+        snapshot: inputSnapshot('。。', 2),
+      }),
+    ).toBeNull()
+  })
+
+  it('Delete 用户规则同链生效（归入 06 族，联动删除配对端）', async () => {
+    const chain = assembleBehaviorChain()
+    await chain.client.load()
+    await chain.request(RULES_TOPIC.mutate, {
+      op: 'addUserRule',
+      rule: { trigger: '@', trigger_right: '@', replacement: '', options: 'd' },
+    })
+    await chain.client.poll()
+    expect(
+      chain.driveChain({
+        userEvent: 'delete.backward',
+        inputText: '',
+        replaced: { from: 0, to: 1, text: '@' },
+        docUri: 'file:///a.md',
+        snapshot: { text: '@', selections: [{ anchor: 0, head: 0 }], version: 1, revision: 1 },
+      }),
+    ).toEqual({ changes: [{ offset: 0, length: 1, text: '' }], selection: { anchor: 0, head: 0 } })
+  })
+
+  it('装载失败回落出厂数据：source 从未 update 时行为族仍可用出厂内置规则', () => {
+    const registrations: RuleBehaviorRegistrationSubset[] = []
+    registerRuleInputBehaviors({
+      behaviors: {
+        register: (reg) => {
+          registrations.push(reg)
+          return { ok: true as const, key: reg.id }
+        },
+        onChanged: () => () => {},
+      },
+      channel: { request: async () => ({ ok: false as const, reason: 'timeout' as const }) },
+      language: 'zh-CN',
+      rulesSource: createRuleSnapshotSource(),
+    })
+    const punct = registrations.find((r) => r.id === '01-punct-collapse')!
+    expect(
+      punct.onInput({
+        userEvent: 'input.type',
+        inputText: '。',
+        replaced: null,
+        docUri: 'file:///a.md',
+        snapshot: inputSnapshot('。。', 2),
+      }),
+    ).toEqual({ changes: [{ offset: 0, length: 2, text: '.' }], selection: { anchor: 1, head: 1 } })
+  })
+})
+
+// ===== tabstop 暂存消费一致性校验（审查 B-F2 修复） =====
 
 describe('tabstop 消费一致性校验（B-F2）', () => {
   function registerInputForAutopair() {

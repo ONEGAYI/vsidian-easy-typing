@@ -142,6 +142,20 @@
 - **`$0` 字面标记**：#1 已知边界延续——替换体占位符保留为字面文本（如 `（$0）`），#14 解析落地后恢复上游语义，届时矩阵与管线断言同步更新。
 - **中英空格**：规则面零命中基线（集成测试钉住），转换本体归 #26 格式化管线消费。
 
+### 用户规则归族与动态重建（审查 B-F1 / C-P1-2 修复落档）
+
+**问题**：#25 交付时族引擎静态构造（仅出厂 `DEFAULT_BUILTIN_RULES` 过滤），`PageRulesClient` 装载的引擎无 process 消费方——用户规则、内置停用（`toggleRuleEnabled`）、外部重载对编辑行为零影响，revision 轮询白付。
+
+**修复形态**（`src/ruleBehaviorIntercept.ts` + `src/page-editor.ts` 接线）：
+
+- **动态规则源**：`createRuleSnapshotSource()`（可写端 `update` / 只读面 `snapshot + onUpdate`）；page-editor 把它接到 `PageRulesClient` 的 `onReload`——装载/重载成功即喂快照，两个注册函数（#25 五族与 #9 两族）经 `onUpdate` 同步重建族引擎（`rebuildEngines`）。装载前 / 通道失败（快照从未 update）回落出厂数据，存储不可用时编辑行为不失效。
+- **归族设计：用户规则按触发类并入现有对应族**（`resolveRuleFamilies` 三参数形态，族种子显式声明 `userRuleType`）：Input 类用户规则并入**全部五个 Input 族**（每族一份实例）、Delete 类并入 `06-delete-rules`、SelectKey 类并入 `07-selectkey-rules`。理由：
+  1. **全局首命中语义保真**——上游是单一引擎全量规则按 priority 全局排序；行为链是族序（字典序）+ 族内引擎排序的合成。族序已按内置优先级分层编码（3 < 5,10 < 10 < 15 < 50），用户规则并入对应触发类的**每个**族后参与族内 priority 竞争：如 priority 1 的用户规则在 01 族内排内置 fw2hw(3) 之前，链首族即命中并占用独占组——与上游全局序等价；上游默认用户规则 priority 100（`normalizeRule` 缺省值）在任一族内都排内置之后，同样等价。若另建独立用户族（如 `09-user-rules` 排在链尾），priority < 内置层的用户规则会被链序错堵——故弃。
+  2. **代价可接受**——同一条用户规则在多个族引擎各有一份实例：reportError 重复上报由全局 5 秒节流窗（`RULE_ERROR_NOTIFY_WINDOW_MS`）收敛；匹配开销为每输入事务多族各试一次（族链本来就要逐族驱动，用户规则量级为自定义、通常个位到几十条）。
+  3. **族开关语义**——平台行为冲突管理的族开关管「内置功能族」（含并入住的用户规则副本）；用户规则自身的逐条启停在规则管理页（#16，写 `enabled`）与 `toggleRuleEnabled` 通道，经快照重载生效。两层开关正交。
+- **装载过滤语义核对结论**：`enabled=false` 的规则**不**在装载侧过滤（保留在族引擎内，`process` 的 `!rule.enabled` 门控跳过）；被删内置规则天然不在快照 `builtin` 数组（`deleteBuiltinRule` 从文件移除），`deletedBuiltinRuleIds` 仅约束升级补种，行为族消费 `builtin + user` 即正确形状。
+- **已知边界**：T 触发模式（`options` 含 `T`）的用户 Input 规则在 onInput 驱动面永不命中（引擎对 Auto 模式规则要求 `changeType !== 'tab'`、对 Tab 模式要求 `changeType === 'tab'`，而行为链 userEvent 恒为 `input.*`/`delete.*`）——Tab 触发链路无平台承载面，属既有边界（内置无 T 规则），待平台键位面扩展再接。
+
 ### 作用域计算优化：All 短路与事务级 memo（审查 C-P1-1 修复落档）
 
 **问题**：同一输入事务被行为链逐族驱动（5 Input 族 + Delete/SelectKey 族 + autoformat），各管线对同一 `(text, pos)` 各调一次 `detectScopeFromText`——全文 O(L) 逐字符扫描重复至多 6 次；且内置 20 条规则作用域全 All 时该计算不影响命中。
