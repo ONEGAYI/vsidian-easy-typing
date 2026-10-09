@@ -18,6 +18,7 @@ import {
   RULE_ERROR_TOPIC,
   buildFamilyEngine,
   createRuleErrorReporter,
+  createRulePipelineGate,
   registerRuleDeleteSelectKeyBehaviors,
   registerRuleInputBehaviors,
   type RuleFamilyDefinition,
@@ -516,5 +517,180 @@ describe('#9 端到端链仲裁（按平台 addonBehaviors runtime 语义模拟�
     expect(plan).toBeNull()
     expect(called.every((c) => c.endsWith(':null'))).toBe(true)
     expect(called.length).toBe(7)
+  })
+})
+
+// ===== 工单 #27：「用户规则尊重保护区」开关（默认关） =====
+//
+// 语义锚点：上游 rule_processor.ts:22-29——UserDefinedRegSwitch &&
+// UserRulesRespectUserDefinedRegexBlocks 双开时，光标检查列（input 类回退
+// 一列）在用户自定义正则保护区内 → 规则不触发。上游仅 Input 类有此检查；
+// Delete/SelectKey 为本票对称扩展（见 docs/specs/protected-zones.md）。
+
+describe('#27 用户规则尊重保护区：gate 探针构造', () => {
+  function gateWith(effective: Record<string, unknown>) {
+    let response: { ok: true; result: unknown } | { ok: false; reason: string } = {
+      ok: true as const,
+      result: { effective },
+    }
+    const gate = createRulePipelineGate({ request: () => Promise.resolve(response) })
+    return {
+      gate,
+      failNext: () => {
+        response = { ok: false, reason: 'released' }
+      },
+    }
+  }
+
+  it('默认（respect 出厂 false）→ undefined；通道失败保持上次值', async () => {
+    const { gate, failNext } = gateWith({})
+    expect(gate.userRulesZone()).toBeUndefined()
+    await gate.refresh()
+    expect(gate.userRulesZone()).toBeUndefined()
+    failNext()
+    await gate.refresh() // 失败保持
+    expect(gate.userRulesZone()).toBeUndefined()
+  })
+
+  it('双开 → 探针有值且判定正确（{{}} 模板）', async () => {
+    const { gate } = gateWith({
+      userDefinedRegExp: '{{.*?}}|++',
+      userRulesRespectUserDefinedRegexBlocks: true,
+    })
+    await gate.refresh()
+    const zone = gate.userRulesZone()
+    expect(zone).toBeDefined()
+    expect(zone!.isProtected('{{。。}}', 3)).toBe(true)
+    expect(zone!.isProtected('x。。', 2)).toBe(false)
+  })
+
+  it('respect 开但 userDefinedRegSwitch 关 → undefined（上游双开条件）', async () => {
+    const { gate } = gateWith({
+      userDefinedRegSwitch: false,
+      userRulesRespectUserDefinedRegexBlocks: true,
+    })
+    await gate.refresh()
+    expect(gate.userRulesZone()).toBeUndefined()
+  })
+
+  it('值类型失配回出厂默认（switch 失配回 true、respect 失配回 false）', async () => {
+    const { gate } = gateWith({ userDefinedRegSwitch: 'on', userDefinedRegExp: 42 })
+    await gate.refresh()
+    expect(gate.userRulesZone()).toBeUndefined() // respect 缺省 false
+  })
+})
+
+describe('#27 用户规则尊重保护区：族级端到端', () => {
+  function registerInputsWith(effective: Record<string, unknown>) {
+    const registrations: RuleBehaviorRegistrationSubset[] = []
+    registerRuleInputBehaviors({
+      behaviors: {
+        register: (reg) => {
+          registrations.push(reg)
+          return { ok: true as const, key: `k#${reg.id}` }
+        },
+        onChanged: () => () => {},
+      },
+      channel: {
+        request: () => Promise.resolve({ ok: true as const, result: { effective } }),
+      },
+      language: 'zh-CN',
+    })
+    return registrations
+  }
+
+  /** `{{。。}}` 内键入第二个 。（head=4，inputText=。；检查列 3 ∈ [2,4)） */
+  const punctInZone = {
+    userEvent: 'input.type',
+    inputText: '。',
+    replaced: null,
+    docUri: 'file:///a.md',
+    snapshot: { text: '{{。。}}', selections: [{ anchor: 4, head: 4 }], version: 1, revision: 1 },
+  }
+
+  it('双开：保护区内标点折叠不触发（01-punct-collapse null）', async () => {
+    const registrations = registerInputsWith({
+      userDefinedRegExp: '{{.*?}}|++',
+      userRulesRespectUserDefinedRegexBlocks: true,
+    })
+    await Promise.resolve()
+    const punct = registrations.find((r) => r.id === '01-punct-collapse')!
+    expect(punct.onInput(punctInZone)).toBeNull()
+  })
+
+  it('respect 关（出厂）：同场景规则照常触发', async () => {
+    const registrations = registerInputsWith({
+      userDefinedRegExp: '{{.*?}}|++',
+    })
+    await Promise.resolve()
+    const punct = registrations.find((r) => r.id === '01-punct-collapse')!
+    expect(punct.onInput(punctInZone)?.changes[0]?.text).toBe('.')
+  })
+
+  it('双开但键入在保护区外：规则照常触发（x。。 → 。.）', async () => {
+    const registrations = registerInputsWith({
+      userDefinedRegExp: '{{.*?}}|++',
+      userRulesRespectUserDefinedRegexBlocks: true,
+    })
+    await Promise.resolve()
+    const punct = registrations.find((r) => r.id === '01-punct-collapse')!
+    const plan = punct.onInput({
+      userEvent: 'input.type',
+      inputText: '。',
+      replaced: null,
+      docUri: 'file:///a.md',
+      snapshot: { text: 'x。。', selections: [{ anchor: 3, head: 3 }], version: 1, revision: 1 },
+    })
+    expect(plan?.changes[0]?.text).toBe('.')
+  })
+
+  /** Delete 族注册（#9 两族），effective 可注入 */
+  function registerDeleteWith(effective: Record<string, unknown>) {
+    const registrations: RuleBehaviorRegistrationSubset[] = []
+    registerRuleDeleteSelectKeyBehaviors({
+      behaviors: {
+        register: (reg) => {
+          registrations.push(reg)
+          return { ok: true as const, key: `k#${reg.id}` }
+        },
+        onChanged: () => () => {},
+      },
+      channel: {
+        request: () => Promise.resolve({ ok: true as const, result: { effective } }),
+      },
+      language: 'zh-CN',
+    })
+    return registrations
+  }
+
+  /** 事务前 {{【】}}、光标 3 退格删 【（autopair-delete 本应命中联动删除） */
+  const deleteInZone = {
+    userEvent: 'delete.backward',
+    inputText: '',
+    replaced: { from: 2, to: 3, text: '【' },
+    docUri: 'file:///a.md',
+    snapshot: { text: '{{】}}', selections: [{ anchor: 2, head: 2 }], version: 1, revision: 1 },
+  }
+
+  it('双开：Delete 族联动删除在保护区内不触发（规则本有命中的场景）', async () => {
+    const registrations = registerDeleteWith({
+      userDefinedRegExp: '【.*?】|++',
+      userRulesRespectUserDefinedRegexBlocks: true,
+    })
+    await Promise.resolve()
+    const del = registrations.find((r) => r.id === '06-delete-rules')!
+    // 事务前 {{【】}}、虚拟光标列 3 ∈ 保护区 [2,5) → 拦截
+    expect(del.onInput(deleteInZone)).toBeNull()
+  })
+
+  it('respect 关：同场景联动删除照常（对照组，证明上例是保护区拦截）', async () => {
+    const registrations = registerDeleteWith({
+      userDefinedRegExp: '【.*?】|++',
+    })
+    await Promise.resolve()
+    const del = registrations.find((r) => r.id === '06-delete-rules')!
+    const plan = del.onInput(deleteInZone)
+    // 联动删除【】：引擎命中事务前 [2,4)，换算快照 to=4-1=3 → 删快照 '】'
+    expect(plan?.changes).toEqual([{ offset: 2, length: 1, text: '' }])
   })
 })

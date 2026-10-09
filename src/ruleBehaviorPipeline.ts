@@ -57,6 +57,41 @@ import {
 export type { TabstopSpec } from './rules/rule-engine'
 import { detectScopeFromText } from './ruleScopeFallback'
 
+// ===== 工单 #27：保护区注入（「用户规则尊重保护区」的判定位） =====
+//
+// 上游 rule_processor.ts:22-29：UserDefinedRegSwitch &&
+// UserRulesRespectUserDefinedRegexBlocks 开启时光标列在用户自定义正则
+// 保护区内 → 规则不触发。探针经 options 注入（设置消费在 intercept 层，
+// 管线保持纯函数）；检查列公式：事件类以 'input' 为前缀时回退一列（刚
+// 键入字符所在列），否则用列本身。上游仅 Input 类有此检查，Delete/
+// SelectKey 为本票对 #9 管线的对称扩展（票面范围，规格记录）。
+
+/** 保护区探针（#27 注入形态）：判定行内列是否落在用户自定义正则保护区内 */
+export interface ProtectedZoneProbe {
+  readonly isProtected: (lineText: string, column: number) => boolean
+}
+
+/** 管线 options 公共形态（#27 起三条管线共用保护区探针位） */
+interface PipelineOptions {
+  debug?: boolean
+  protectedZone?: ProtectedZoneProbe
+}
+
+/** 行定位 + 检查列换算 + 探针判定（三条管线共用） */
+function isPositionInProtectedZone(
+  text: string,
+  pos: number,
+  userEvent: string,
+  probe: ProtectedZoneProbe,
+): boolean {
+  const lineStart = text.lastIndexOf('\n', pos - 1) + 1
+  let lineEnd = text.indexOf('\n', lineStart)
+  if (lineEnd === -1) lineEnd = text.length
+  const column = pos - lineStart
+  const checkColumn = userEvent.startsWith('input') ? Math.max(0, column - 1) : column
+  return probe.isProtected(text.slice(lineStart, lineEnd), checkColumn)
+}
+
 /** 管线输入面：AddonInputContext 的结构子集（管线只消费这些字段）。
  * replaced 为 #400/#401 新增字段——Input 管线以非 null 判定选区替换形态
 //（上游 changedStr.length < 1 同口径），Delete/SelectKey 管线为重建源。 */
@@ -96,7 +131,7 @@ export function pipelineConsumesUserEvent(userEvent: string): boolean {
 export function planInputRuleModification(
   engine: RuleEngine,
   ctx: RuleInputPipelineContext,
-  options: { debug?: boolean } = {},
+  options: PipelineOptions = {},
 ): RuleInputBehaviorPlan | null {
   return planInputRuleWithTabstops(engine, ctx, options)?.plan ?? null
 }
@@ -110,7 +145,7 @@ export function planInputRuleModification(
 export function planInputRuleWithTabstops(
   engine: RuleEngine,
   ctx: RuleInputPipelineContext,
-  options: { debug?: boolean } = {},
+  options: PipelineOptions = {},
 ): { plan: RuleInputBehaviorPlan; tabstops: readonly TabstopSpec[] } | null {
   if (!pipelineConsumesUserEvent(ctx.userEvent)) return null
   // 选区替换形态（replaced 非空）不进 Input 管线：上游输入路径要求
@@ -127,6 +162,13 @@ export function planInputRuleWithTabstops(
   if (from > ctx.snapshot.text.length) return null // 防御：越界坐标不进引擎
 
   const scope = detectScopeFromText(ctx.snapshot.text, from)
+  // #27 保护区（上游 triggerCvtRule 同位判定）：检查列回退一列（input.*）
+  if (
+    options.protectedZone !== undefined &&
+    isPositionInProtectedZone(ctx.snapshot.text, from, ctx.userEvent, options.protectedZone)
+  ) {
+    return null
+  }
   const tx: TxContext = {
     kind: RuleType.Input,
     docText: ctx.snapshot.text,
@@ -230,7 +272,7 @@ function preOffsetToSnapshot(p: number, replaced: ReplacedRange): number {
 export function planDeleteRuleModification(
   engine: RuleEngine,
   ctx: RuleInputPipelineContext,
-  options: { debug?: boolean } = {},
+  options: PipelineOptions = {},
 ): RulePlanWithTabstops | null {
   if (!pipelineConsumesDeleteEvent(ctx.userEvent)) return null
   if (ctx.inputText !== '') return null // delete 事务 inputText 恒空串（平台契约，防御）
@@ -241,6 +283,13 @@ export function planDeleteRuleModification(
   if (cursor > docText.length) return null // 防御：越界坐标不进引擎
 
   const scope = detectScopeFromText(docText, cursor)
+  // #27 保护区（票面对称扩展；delete.* 检查列不回退）：事务前文档 + 虚拟光标
+  if (
+    options.protectedZone !== undefined &&
+    isPositionInProtectedZone(docText, cursor, ctx.userEvent, options.protectedZone)
+  ) {
+    return null
+  }
   const tx: TxContext = {
     kind: RuleType.Delete,
     docText,
@@ -288,7 +337,7 @@ export function planDeleteRuleModification(
 export function planSelectKeyRuleModification(
   engine: RuleEngine,
   ctx: RuleInputPipelineContext,
-  options: { debug?: boolean } = {},
+  options: PipelineOptions = {},
 ): RulePlanWithTabstops | null {
   if (ctx.userEvent !== 'input.type') return null // compose 定稿 replaced 恒 null，天然排除
   const replaced = ctx.replaced
@@ -303,6 +352,13 @@ export function planSelectKeyRuleModification(
   if (replaced.to > docText.length) return null // 防御：越界坐标不进引擎
 
   const scope = detectScopeFromText(docText, replaced.from)
+  // #27 保护区（票面对称扩展；input.type 检查列回退一列）：事务前文档 + 替换起点
+  if (
+    options.protectedZone !== undefined &&
+    isPositionInProtectedZone(docText, replaced.from, ctx.userEvent, options.protectedZone)
+  ) {
+    return null
+  }
   const tx: TxContext = {
     kind: RuleType.SelectKey,
     docText,

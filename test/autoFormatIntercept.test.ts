@@ -195,3 +195,94 @@ describe('设置门与富结构种子', () => {
     expect(gate.settings().lineFormat.inlineFormulaSpaceMode).toBe(0)
   })
 })
+
+// ===== 工单 #27：格式化管线的保护区接入（设置驱动内置计算） =====
+//
+// 语义锚点：上游 core.ts:181-183——UserDefinedRegSwitch 开 → UserDefinedRegExp
+// 进分区解析（user 分区生效）；关 → 不带。内置计算为 #26 注入缝
+// protectedRangesFor 的默认实现，外部注入仍优先。
+
+describe('#27 保护区：设置驱动内置计算', () => {
+  /** 计划的变更分段应用到快照文本 → 最终行（变更表形态断言的可读化） */
+  function applyPlan(text: string, plan: { changes: Array<{ offset: number; length: number; text: string }> } | null): string {
+    expect(plan).not.toBeNull()
+    let out = text
+    for (const c of [...plan!.changes].sort((a, b) => b.offset - a.offset)) {
+      out = out.slice(0, c.offset) + c.text + out.slice(c.offset + c.length)
+    }
+    return out
+  }
+
+  async function registerWithEffective(effective: Record<string, unknown>) {
+    const registrations: AddonBehaviorRegistration[] = []
+    registerAutoFormatBehavior({
+      behaviors: {
+        register: (reg) => {
+          registrations.push(reg)
+          return { ok: true as const, key: 'k' }
+        },
+        onChanged: () => () => {},
+      },
+      channel: {
+        request: () => Promise.resolve({ ok: true as const, result: { effective } }),
+      },
+      language: 'zh-CN',
+      marker: createPasteMarker(),
+    })
+    await Promise.resolve() // gate refresh 微任务
+    return registrations[0]!
+  }
+
+  it('默认生效（switch 出厂 true + 出厂模板）：{{}} 内键入 → 全行保护区无格式化', async () => {
+    const reg = await registerWithEffective({})
+    // 快照 {{中文a}}（head=5，inputText=a）：{{.*?}} 命中 [0,7) 覆盖整行
+    expect(reg.onInput(inputCtx('{{中文a}}', 5, 'a'))).toBeNull()
+  })
+
+  it('userDefinedRegSwitch 关闭 → 同场景恢复格式化（上游开关语义）', async () => {
+    const reg = await registerWithEffective({ userDefinedRegSwitch: false })
+    expect(applyPlan('{{中文a}}', reg.onInput(inputCtx('{{中文a}}', 5, 'a')))).toBe('{{中文 a}}')
+  })
+
+  it('行内混合：保护区外边界照常格式化，{{}} 区间内容不动', async () => {
+    const reg = await registerWithEffective({})
+    // 快照 中文a{{x}}中文（head=3，inputText=a）：中|a 边界插空格；
+    // {{x}} 为 user 分区（|++ 严格空格两侧）——边界空格由分区策略驱动
+    expect(applyPlan('中文a{{x}}中文', reg.onInput(inputCtx('中文a{{x}}中文', 3, 'a')))).toBe(
+      '中文 a {{x}} 中文',
+    )
+  })
+
+  it('用户自定义模板经设置生效（\\d+|--：数字保护区邻接不插空格）', async () => {
+    const reg = await registerWithEffective({ userDefinedRegExp: '\\d+|--' })
+    // 快照 文1文（head=2，inputText=1）：chinese-digit 语言对想加空格，
+    // 数字在保护区且旗标 none/none → 无变更
+    expect(reg.onInput(inputCtx('文1文', 2, '1'))).toBeNull()
+  })
+
+  it('外部 protectedRangesFor 注入优先于内置计算（#26 注入缝保留）', async () => {
+    const registrations: AddonBehaviorRegistration[] = []
+    registerAutoFormatBehavior({
+      behaviors: {
+        register: (reg) => {
+          registrations.push(reg)
+          return { ok: true as const, key: 'k' }
+        },
+        onChanged: () => () => {},
+      },
+      channel: {
+        request: () => Promise.resolve({ ok: true as const, result: { effective: {} } }),
+      },
+      language: 'zh-CN',
+      marker: createPasteMarker(),
+      // 外部只保护 [0,3)（{{中）：a 与 }} 仍在区外，格式化可发生
+      protectedRangesFor: (line) =>
+        line.startsWith('{{中')
+          ? [{ begin: 0, end: 3, leftSpaceRequire: 'none', rightSpaceRequire: 'none' }]
+          : [],
+    })
+    const reg = registrations[0]!
+    // 快照 {{中文a}}：外部区间 [0,3)，a 与 }} 区间外——中文|a 边界照常格式化
+    expect(applyPlan('{{中文a}}', reg.onInput(inputCtx('{{中文a}}', 5, 'a')))).toBe('{{中文 a}}')
+  })
+})

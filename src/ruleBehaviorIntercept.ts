@@ -37,13 +37,16 @@ import { RuleEngine, type SimpleRule } from './rules/rule-engine'
 import { DEFAULT_BUILTIN_RULES } from './rules/default-rules'
 import { pickMessages, type Messages } from './i18n'
 import { debugLog } from './logging'
+import { DEFAULT_EFFECTIVE_SETTINGS } from './settings/defaults'
 import { RULE_ERROR_TOPIC, SETTINGS_TOPIC } from './settings/store'
 import {
   planDeleteRuleModification,
   planInputRuleWithTabstops,
   planSelectKeyRuleModification,
+  type ProtectedZoneProbe,
   type TabstopSpec,
 } from './ruleBehaviorPipeline'
+import { isPositionProtected, parseUserDefinedRegExp, type UserDefinedRegexRule } from './userDefinedRegex'
 
 // 规则错误通知通道 topic（宿主 extension.ts 挂 handler 显示 i18n 警告；
 // 定义在 settings/store.ts 的共享常量区，此处 re-export 供页面侧同一来源消费）
@@ -130,19 +133,49 @@ export interface RulePipelineChannelSubset {
 export interface RulePipelineGate {
   /** 引擎 debug 日志门（通道失败保持上次值；首次返回前为 false） */
   readonly debug: () => boolean
+  /** #27「用户规则尊重保护区」探针：UserDefinedRegSwitch 与
+   *  UserRulesRespectUserDefinedRegexBlocks 双开时有值（默认关 = undefined）；
+   *  通道失败保持上次值 */
+  readonly userRulesZone: () => ProtectedZoneProbe | undefined
   /** 拉新生效值（装载时与每次输入观察时调用） */
   readonly refresh: () => Promise<void>
 }
 
+/** effective 中 #27 三键的读取面（类型失配回出厂默认） */
+interface UserDefinedRegSubset {
+  userDefinedRegSwitch?: unknown
+  userDefinedRegExp?: unknown
+  userRulesRespectUserDefinedRegexBlocks?: unknown
+}
+
+/** 双开关 + 规则表 → 探针（undefined = 不启用；上游 rule_processor.ts:22） */
+function buildUserRulesZone(effective: UserDefinedRegSubset | null | undefined): ProtectedZoneProbe | undefined {
+  const regSwitch =
+    typeof effective?.userDefinedRegSwitch === 'boolean'
+      ? effective.userDefinedRegSwitch
+      : DEFAULT_EFFECTIVE_SETTINGS.userDefinedRegSwitch
+  const respect = effective?.userRulesRespectUserDefinedRegexBlocks === true
+  if (!regSwitch || !respect) return undefined
+  const regExpStr =
+    typeof effective?.userDefinedRegExp === 'string'
+      ? effective.userDefinedRegExp
+      : DEFAULT_EFFECTIVE_SETTINGS.userDefinedRegExp
+  const rules: readonly UserDefinedRegexRule[] = parseUserDefinedRegExp(regExpStr)
+  return { isProtected: (line, column) => isPositionProtected(line, column, rules) }
+}
+
 export function createRulePipelineGate(channel: RulePipelineChannelSubset): RulePipelineGate {
   let debugFlag = false
+  let zone: ProtectedZoneProbe | undefined = undefined
   return {
     debug: () => debugFlag,
+    userRulesZone: () => zone,
     refresh: async () => {
       const outcome = await channel.request(SETTINGS_TOPIC.get, null)
       if (outcome.ok !== true) return
       const effective = (outcome.result as { effective?: unknown } | null)?.effective
       debugFlag = (effective as { debug?: unknown } | null)?.debug === true
+      zone = buildUserRulesZone(effective as UserDefinedRegSubset | null | undefined)
     },
   }
 }
@@ -237,7 +270,7 @@ export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): Rul
             replaced: ctx.replaced,
             snapshot: { text: ctx.snapshot.text, selections: ctx.snapshot.selections },
           },
-          { debug: gate.debug() },
+          { debug: gate.debug(), protectedZone: gate.userRulesZone() },
         )
         if (withTabstops === null) return null
         if (withTabstops.tabstops.length > 0) {
@@ -358,12 +391,18 @@ export function registerRuleDeleteSelectKeyBehaviors(deps: RegisterRuleBehaviors
           replaced: ctx.replaced,
           snapshot: { text: ctx.snapshot.text, selections: ctx.snapshot.selections },
         }
-        const deleteResult = planDeleteRuleModification(engine, pipelineCtx, { debug: gate.debug() })
+        const deleteResult = planDeleteRuleModification(engine, pipelineCtx, {
+          debug: gate.debug(),
+          protectedZone: gate.userRulesZone(),
+        })
         if (deleteResult !== null) {
           if (deleteResult.tabstops.length > 0) pendingTabstops = deleteResult.tabstops
           return deleteResult.plan
         }
-        const selectKeyResult = planSelectKeyRuleModification(engine, pipelineCtx, { debug: gate.debug() })
+        const selectKeyResult = planSelectKeyRuleModification(engine, pipelineCtx, {
+          debug: gate.debug(),
+          protectedZone: gate.userRulesZone(),
+        })
         if (selectKeyResult !== null) {
           if (selectKeyResult.tabstops.length > 0) pendingTabstops = selectKeyResult.tabstops
           return selectKeyResult.plan

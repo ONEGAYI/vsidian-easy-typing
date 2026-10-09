@@ -42,16 +42,25 @@ import {
 } from './ruleBehaviorIntercept'
 import { planAutoFormatLineModification } from './autoFormatPipeline'
 import { SpaceState } from './formatting/inlineParts'
+import {
+  matchProtectedRanges,
+  parseUserDefinedRegExp,
+  type UserDefinedRegexRule,
+} from './userDefinedRegex'
 import type { LineFormatSettings } from './formatting/lineFormatter'
 import type { PasteMarker } from './pasteMarker'
 
 /** 行为族 localId（#25 五族 01-05 之后的默认链序位） */
 export const AUTO_FORMAT_LOCAL_ID = '06-autoformat'
 
-/** 间距引擎配置：行格式化设置 + 上游 AutoFormat 总门（族回调内判定） */
+/** 间距引擎配置：行格式化设置 + 上游 AutoFormat 总门（族回调内判定）+
+ * #27 保护区两键（上游 UserDefinedRegSwitch / UserDefinedRegExp——规则表
+ * 为解析缓存形态，refresh 时重建） */
 export interface AutoFormatEngineSettings {
   readonly autoFormat: boolean
   readonly lineFormat: LineFormatSettings
+  readonly userDefinedRegSwitch: boolean
+  readonly userDefinedRegexRules: readonly UserDefinedRegexRule[]
 }
 
 /** SpaceMode（字符串枚举）→ SpaceState（数字枚举；顺序同构，越界回退） */
@@ -70,6 +79,8 @@ interface AutoFormatEffectiveSubset {
   inlineFormulaSpaceMode: SpaceMode
   inlineLinkSpaceMode: SpaceMode
   inlineLinkSmartSpace: boolean
+  userDefinedRegSwitch: boolean
+  userDefinedRegExp: string
 }
 
 /** 默认引擎配置（出厂默认值 + 富结构种子；通道不可用时的兜底） */
@@ -92,6 +103,8 @@ export function defaultAutoFormatEngineSettings(): AutoFormatEngineSettings {
       inlineLinkSpaceMode: spaceModeToState(d.inlineLinkSpaceMode),
       inlineLinkSmartSpace: d.inlineLinkSmartSpace,
     },
+    userDefinedRegSwitch: d.userDefinedRegSwitch,
+    userDefinedRegexRules: parseUserDefinedRegExp(d.userDefinedRegExp),
   }
 }
 
@@ -117,6 +130,10 @@ function readEngineSettings(effective: unknown): AutoFormatEngineSettings {
       inlineLinkSpaceMode: spaceModeToState(pickOfSameType('soft' as SpaceMode, e.inlineLinkSpaceMode)),
       inlineLinkSmartSpace: pickOfSameType(base.lineFormat.inlineLinkSmartSpace, e.inlineLinkSmartSpace),
     },
+    userDefinedRegSwitch: pickOfSameType(base.userDefinedRegSwitch, e.userDefinedRegSwitch),
+    userDefinedRegexRules: parseUserDefinedRegExp(
+      pickOfSameType(DEFAULT_EFFECTIVE_SETTINGS.userDefinedRegExp, e.userDefinedRegExp),
+    ),
   }
 }
 
@@ -171,6 +188,21 @@ const SPACE_STATE_BY_NAME: Record<ProtectedRangeSeed['leftSpaceRequire'], SpaceS
   strict: SpaceState.strict,
 }
 
+/** 种子形态（字符串枚举档）→ 数字档区间（#26 注入缝的映射原样） */
+function seedToRange(seed: ProtectedRangeSeed): {
+  begin: number
+  end: number
+  leftSpaceRequire: SpaceState
+  rightSpaceRequire: SpaceState
+} {
+  return {
+    begin: seed.begin,
+    end: seed.end,
+    leftSpaceRequire: SPACE_STATE_BY_NAME[seed.leftSpaceRequire],
+    rightSpaceRequire: SPACE_STATE_BY_NAME[seed.rightSpaceRequire],
+  }
+}
+
 export function registerAutoFormatBehavior(deps: RegisterAutoFormatDeps): RuleBehaviorRegisterOutcome[] {
   const messages = pickMessages(deps.language)
   const gate = createAutoFormatGate(deps.channel)
@@ -187,6 +219,17 @@ export function registerAutoFormatBehavior(deps: RegisterAutoFormatDeps): RuleBe
     onInput: (ctx: AddonInputContext) => {
       const engine = gate.settings()
       if (!engine.autoFormat) return null // 上游 AutoFormat 总门（规则五族不受影响）
+      // #27 保护区：外部注入（#26 注入缝）优先；缺省用设置驱动的内置计算
+      //（上游 core.ts:181-183——UserDefinedRegSwitch 开才带 UserDefinedRegExp
+      // 进分区解析，关 = 无 user 分区）
+      const line = lineOf(ctx)
+      const injected = deps.protectedRangesFor?.(line)
+      const protectedRanges =
+        injected !== undefined
+          ? injected.map(seedToRange)
+          : engine.userDefinedRegSwitch
+            ? matchProtectedRanges(line, engine.userDefinedRegexRules)
+            : []
       return planAutoFormatLineModification(
         {
           userEvent: ctx.userEvent,
@@ -200,16 +243,7 @@ export function registerAutoFormatBehavior(deps: RegisterAutoFormatDeps): RuleBe
         {
           settings: engine.lineFormat,
           marker: deps.marker,
-          ...(deps.protectedRangesFor !== undefined
-            ? {
-                protectedRanges: deps.protectedRangesFor(lineOf(ctx)).map((r) => ({
-                  begin: r.begin,
-                  end: r.end,
-                  leftSpaceRequire: SPACE_STATE_BY_NAME[r.leftSpaceRequire],
-                  rightSpaceRequire: SPACE_STATE_BY_NAME[r.rightSpaceRequire],
-                })),
-              }
-            : {}),
+          protectedRanges,
         },
       )
     },

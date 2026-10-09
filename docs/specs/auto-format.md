@@ -47,10 +47,10 @@
 - **已知近似**（继承 #25）：行内公式 `$x$` 内光标 → 误判 Formula 跳过整行（上游树版仍格式化该行其他 text 分区）；货币写法 `$100` 同源误判；围栏标记行本身不算代码内容（与 detectScopeFromText 口径一致）。语法树版归 #5 换传，管线零改动。
 - **行内代码/公式的天然保护区**：不靠行级跳过，由 `splitLineIntoParts` 文本扫描切成 code/formula 分区（形态学：反引号等长配对、`\$` 转义、`$$` 成对优先、代码先于公式、链接正则只在非 code/formula/user 区段上跑——上游正则逐字）。切分形态学是本移植自有降级（上游走语法树），由 `test/inlineParts.test.ts` 形态断言钉住；分区间格式化等价性由上游验证矩阵承载。
 
-### #27 注入缝（保护区）
+### #27 注入缝（保护区）——已由 #27 落地为内置默认计算
 
-- **管线层**：`planAutoFormatLineModification(ctx, { protectedRanges })`——行内坐标 `[begin, end)` + 左右空格要求（SpaceState 三档）；本票调用侧不传（无保护区）。
-- **接入层**：`registerAutoFormatBehavior({ protectedRangesFor?: (line) => ranges })`——#27 按当前驱动行原文计算区间（上游 UserDefinedRegExp 的 `|xy` 行尾旗标解析与匹配归 #27，字符串枚举形态经接入层映射为数字档）。
+- **管线层**：`planAutoFormatLineModification(ctx, { protectedRanges })`——行内坐标 `[begin, end)` + 左右空格要求（SpaceState 三档）；管线保持纯函数，区间集由接入层注入。
+- **接入层**：`registerAutoFormatBehavior({ protectedRangesFor?: (line) => ranges })`——外部注入保留且优先（测试/后续票覆盖位）；缺省时内置计算（`userDefinedRegSwitch` 开 → 出厂/用户模板 `matchProtectedRanges`，关 → 空），解析与匹配语义见 [protected-zones.md](protected-zones.md)（上游 UserDefinedRegExp 的 `|xy` 行尾旗标解析与逐行匹配的移植）。
 - **重叠语义**：user 区间与 code/formula 天然保护区重叠时**剪除重叠段**（天然保护区优先——上游树版中 code/formula 由语法树先行摘出，用户正则区块只在剩余 text 上匹配，语义等价；`test/inlineParts.test.ts` 钉住）。
 
 ### #12 粘贴联动（smart-paste.md「给 #26 的接口提示」的消费）
@@ -72,6 +72,6 @@
 
 ## 给后续票的提示
 
-- **#27（保护区接入）**：注入缝两处——管线 `protectedRanges`（行内坐标 + SpaceState）与接入 `protectedRangesFor(line)`（种子形态：行内坐标 + 'none'|'soft'|'strict'）；上游 `UserDefinedRegExp` 行尾 `|xy` 旗标解析（core.ts `str2SpaceState`）与逐行匹配归 #27；`userDefinedRegSwitch` 开关同时是 #25 用户规则跳过检查的依赖。注意接入层默认 effective 不含该两键（23 键 schema 有 userDefinedRegSwitch/userDefinedRegExp——#27 接线时从同通道拉取）。
+- **#27（保护区接入）——已落地**：解析与匹配纯逻辑在 `src/userDefinedRegex.ts`，格式化侧内置计算 + 「用户规则尊重保护区」规则管线接入的完整语义见 [protected-zones.md](protected-zones.md)。注入缝两处（管线 `protectedRanges` 与接入 `protectedRangesFor`）形态不变，外部注入优先于内置计算。
 - **#28（格式化命令复用）**：`formatLine(line, curCh, prevCh=undefined, settings, { protectedRanges })` 即上游 formatLine 的命令重排入口形态（prevCh undefined = 整行重排不认前缀抑制）；多行/选区重排按行循环调用 + 行首偏移换算（参照 autoFormatPipeline 的坐标换算）。粘贴格式化（AutoFormatPaste 主动侧）与「格式化文章」都可经此承载，不经行为链。
 - **#21（真实 webview 人工验证）**：本族验证点——中文后键入半角字母出空格且光标在词尾；`n8n`/`b站` 词典词条内部无空格、越词后延迟边界补插；规则族命中输入（如 `。。`）本次不格式化（独占组链序）；折叠/展开与 IME 定稿路径；多光标不格式化；Ctrl+Z 两步撤回（键入与格式化分离，平台撤销管线结构性边界）；CSP 无涉（纯算法，无 new Function）。真实 `experimental.cm6.language.syntaxTree` 未解析（vsidian#406）不影响本族——分区走文本降级。
