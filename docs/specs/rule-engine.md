@@ -78,7 +78,7 @@
 - **上游数据怪癖原样保留**（不擅自放宽）：`builtin-autopair-input` 触发类 `[（《「『“”‘’《]` 不含 `【`（替换表却含 `【` 的映射）；`builtin-conv-linestart` 的 `、` 分支替换体无尾随空格（`[[1]]/$0`）；`builtin-quote-convert` 连续 `>` 的归一形态为 `>> $0`（贪婪回溯后 `[[1]]` 只含首个 `>`）。
 - **正则引擎差异**：未发现——内置规则用到的 lookbehind（chrome62+ / node9+）、反向引用、`\u` 范围类在 chrome114（页面产物下界）与 node18（宿主 / vitest）均一致支持。后续 #14 用户规则引入任意正则时如有差异，在测试注释记录。
 - **函数替换体不再有动态代码路径**（#17 落地，取代 #1 时代的 `new Function` 边界）：预注册表是函数替换体的唯一装载形态，vitest 与真实 webview 行为一致（都是查表注入，无环境分支）。#25 报告的「6 条 Input 函数体规则 CSP 静默降级」场景已根治；动态代码禁令由 scaffold 扫描钉住（src 禁 `new Function`/`eval` 调用）。遗留字符串函数体（F 旗标 + 字符串，#17 前序列化数据或上游导入）装载期拒绝并通知，存储侧原样保留（数据不丢）。
-- **description 字段 i18n**：`default-rules.ts` 的中文描述为上游数据原样；展示层本地化沿用上游模式（规则 id → 语言包 `builtinRuleDescriptions` 映射），归 #19（i18n 完整化）。
+- **description 字段 i18n**（#19 已落地）：`default-rules.ts` 的中文描述保持上游数据原样；展示层本地化沿用上游模式——规则 id → 语言包 `builtinRuleDescriptions` 映射（`src/i18n/` 两字典各 20 条），消费点在规则管理页列表预览（`previewRuleText` 查表优先），存储数据不随语言改写。
 
 ## #25 行为链接入（onInput 驱动规则引擎）
 

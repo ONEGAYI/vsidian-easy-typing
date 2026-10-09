@@ -296,6 +296,26 @@ describe('previewRuleText（无 description 时的触发 → 替换形态）', (
     expect(previewRuleText({ trigger: 'x', replacement: 'y', description: '首' })).toBe('首')
   })
 
+  it('内置规则 id 命中映射时本地化描述优先于数据态 description（#19，上游 builtinRuleDescriptions 模式）', () => {
+    const table = { 'builtin-conv-backtick': 'EN desc' }
+    // id 命中：映射优先（英文界面下覆盖中文数据态 description）
+    expect(
+      previewRuleText(
+        { id: 'builtin-conv-backtick', trigger: 'x', replacement: 'y', description: '数据态' },
+        table,
+      ),
+    ).toBe('EN desc')
+    // 用户规则 id 不在映射内 → 回落自身 description
+    expect(
+      previewRuleText({ id: 'user-1', trigger: 'x', replacement: 'y', description: '用户描述' }, table),
+    ).toBe('用户描述')
+    // 无 id / 未传映射表 → 原行为不变
+    expect(previewRuleText({ trigger: 'x', replacement: 'y', description: '首' }, table)).toBe('首')
+    expect(
+      previewRuleText({ id: 'builtin-conv-backtick', trigger: 'x', replacement: 'y', description: '数据态' }),
+    ).toBe('数据态')
+  })
+
   it('非正则触发式转义展示；F 旗标函数体原样展示（上游 repl 分支同语义）；右侧触发式拼接', () => {
     expect(previewRuleText({ trigger: 'a\n', replacement: 'b', options: '' })).toBe('a\\n → b')
     // 上游 repl = typeof replacement === 'string' ? replacement : '(fn)'——

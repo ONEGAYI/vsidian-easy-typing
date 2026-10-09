@@ -158,7 +158,7 @@ export function mountRulesSettingsView(
     if (opts.isFunctionReplacement) {
       row.append(el('span', classes(`${CLS}-tag`, `${CLS}-tag-fn`), t.ruleItem.fnTag))
     }
-    row.append(el('span', `${CLS}-rule-preview`, previewRuleText(rule)))
+    row.append(el('span', `${CLS}-rule-preview`, previewRuleText(rule, m.builtinRuleDescriptions)))
     return row
   }
 

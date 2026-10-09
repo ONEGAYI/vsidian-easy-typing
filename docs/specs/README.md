@@ -25,4 +25,4 @@
 - [comment-toggle.md](comment-toggle.md)——注释切换命令（工单 #2）：语言注释符表（上游 26 键逐条）与行/块切换、Markdown `%%` 切换、围栏语言感知复用 #25 降级版（#5 升级点）、平台键位冲突核对（与内建 htmlComment 同弦并存）与视图登记表共享决策（供 #28 对照）。
 - [formatting-commands.md](formatting-commands.md)——格式化命令族（工单 #28）：格式化全文/选区、删除空行（strictLineBreaks 恒 true 的 CommonMark 映射）、切换自动格式化、选区转代码块五命令（平台稳定 commands API + 键位冲突核对：Mod+Shift+L 与内置 findAllOccurrences 同弦、Ctrl+Tab 被 Tab 固定链拒绝）；文件排除（ExcludeFiles × #407 docUri 的段边界后缀映射，行为族与命令双侧消费）；#26 规格 prevCh=undefined 注记的勘误（命令重排实为 prevCh=0）。
 
-里程碑与工单总览见 [README](../../README.md) 与 [Issues](https://github.com/ONEGAYI/vsidian-easy-typing/issues)。
+里程碑与工单总览见 [README](../../README.md) 与 [Issues](https://github.com/ONEGAYI/vsidian-easy-typing/issues)。面向用户的操作手册在 [docs/guides/](../guides/)（#19 移植上游三篇专题 Doc——自定义规则 / 自动格式化 / 编辑增强，与本目录的实施规格互为表里：规格面向开发者记边界与对照，指南面向用户讲用法与差异）。
