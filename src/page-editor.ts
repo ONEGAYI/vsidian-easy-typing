@@ -28,7 +28,11 @@ import {
   defaultWebReadText,
   dispatchPlainPasteEvent,
 } from './plainPasteCommand'
-import { registerRuleDeleteSelectKeyBehaviors, registerRuleInputBehaviors } from './ruleBehaviorIntercept'
+import {
+  registerRuleDeleteSelectKeyBehaviors,
+  registerRuleInputBehaviors,
+} from './ruleBehaviorIntercept'
+import { registerAutoFormatBehavior } from './autoFormatIntercept'
 
 /** 本组件声明的扩展 ID（装载器按此核对入口身份） */
 const ADDON_ID = 'ONEGAYI.vsidian-easy-typing'
@@ -323,5 +327,27 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
         if (pending.length > 0) tabstopNav.activateTabstops(update.view, pending)
       }),
     )
+  }
+
+  // ============================================================
+  // 工单 #26 增量块：自动格式化行为族（06-autoformat）——语言对间距/
+  // 前缀词典/自动大写/软空格符号的行级算法（src/formatting/）经
+  // src/autoFormatPipeline.ts 接入。与 #25 五族共用 input-rules 独占组
+  //（复刻上游「规则命中即短路格式化」链序）；设置经 #3 门面 effective
+  //（autoFormat 总门在族回调内判定）；#12 粘贴联动消费 pasteMarker
+  //（粘贴窗内跳过 + 纯文本意图一次性消费）。见 docs/specs/auto-format.md。
+  // ============================================================
+
+  if (behaviors !== undefined) {
+    const [autoFormatOutcome] = registerAutoFormatBehavior({
+      behaviors,
+      channel: sdk.channel,
+      language: navigator.language,
+      marker: pasteMarker,
+    })
+    if (autoFormatOutcome !== undefined && !autoFormatOutcome.ok) {
+      // 普通 API 拒绝不算故障：经 debugLog 留痕（logging.ts 约定）
+      debugLog('autoformat behavior register rejected:', autoFormatOutcome.reason)
+    }
   }
 })

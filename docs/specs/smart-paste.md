@@ -197,6 +197,16 @@ vsidian 内核的粘贴管线全在 **paste DOM 事件**层：富文本接管（
 
 ## 给 #26（格式化管线）的接口提示
 
+> **#26 已消费（2026-10 落地）**：本节接口已按约定接入——粘贴识别与
+> consumePlainPaste 语义见 [auto-format.md](auto-format.md)「#12 粘贴
+> 联动」节；pasteMarker 单例经 `registerAutoFormatBehavior({ marker })`
+> 参数注入。两处口径差异在此记录：其一，`autoFormatPaste`（粘贴时格式化
+> 的主动侧）经行为链**结构性不可达**（平台对 paste·drop·undo 事务不驱动
+> 行为，#25 记录），#26 只落地跳过侧，主动侧归 #28 命令承载；其二，
+> 「经平台 pastePlain 的粘贴标记不置」边界下按「未标记 = 格式化」处理，
+> 但纯文本粘贴命令自置标记（markPaste(true)），本组件自身的纯文本粘贴
+> 仍被正确跳过。以下原文保留供对照。
+
 - **标记消费面**：`PasteMarker`（`src/pasteMarker.ts`）——粘贴识别 =
   `事务 userEvent 含 'input.paste' || marker.pasteDetected`（上游
   cm_extensions.ts:556 同构；透传粘贴事务自带 input.paste，接管事务同样
