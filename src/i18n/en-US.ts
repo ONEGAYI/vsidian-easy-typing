@@ -225,6 +225,7 @@ export const enMessages: Messages = {
       fieldTriggerMode: 'Trigger Mode',
       triggerModeAuto: 'Auto',
       triggerModeTab: 'Tab',
+      triggerModeTabPending: 'Tab trigger awaits the platform key surface and is currently unavailable (rule will never match)',
       groupMatch: 'Match',
       fieldIsRegex: 'Use Regex Matching',
       fieldTrigger: 'Match Before Cursor',

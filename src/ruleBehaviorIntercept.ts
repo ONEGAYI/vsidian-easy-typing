@@ -55,6 +55,7 @@ import {
   type TabstopSpec,
 } from './ruleBehaviorPipeline'
 import { isPositionProtected, parseUserDefinedRegExp, type UserDefinedRegexRule } from './userDefinedRegex'
+import { createThrottledRefresh } from './throttle'
 
 // 规则错误通知通道 topic（宿主 extension.ts 挂 handler 显示 i18n 警告；
 // 定义在 settings/store.ts 的共享常量区，此处 re-export 供页面侧同一来源消费）
@@ -409,9 +410,7 @@ export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): Rul
 
   // 只读观察刷新设置缓存：设置页改 debug 后下一次输入即生效（平台 onChanged
   // 每次输入触发——与 vsidian input-behavior 样例同形态）
-  deps.behaviors.onChanged(() => {
-    void gate.refresh()
-  })
+  deps.behaviors.onChanged(createThrottledRefresh(() => gate.refresh()))
   return {
     outcomes: outcome,
     consumePendingTabstops: (doc: PendingDocText) => consumePendingEntry(pendingState, doc),
@@ -555,9 +554,7 @@ export function registerRuleDeleteSelectKeyBehaviors(deps: RegisterRuleBehaviors
     )
   })
 
-  deps.behaviors.onChanged(() => {
-    void gate.refresh()
-  })
+  deps.behaviors.onChanged(createThrottledRefresh(() => gate.refresh()))
   return {
     outcomes: outcome,
     consumePendingTabstops: (doc: PendingDocText) => consumePendingEntry(pendingState, doc),

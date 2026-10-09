@@ -615,14 +615,22 @@ export function mountRulesSettingsView(
     modeSection.setAttribute('data-vet-field', 'triggerModeSection')
     modeSection.append(el('span', `${CLS}-pill-label`, f.fieldTriggerMode))
     const modeOptions = el('div', `${CLS}-pill-options`)
-    for (const { value, label } of [
-      { value: RuleTriggerMode.Auto, label: f.triggerModeAuto },
-      { value: RuleTriggerMode.Tab, label: f.triggerModeTab },
+    for (const { value, label, pending } of [
+      { value: RuleTriggerMode.Auto, label: f.triggerModeAuto, pending: false },
+      { value: RuleTriggerMode.Tab, label: f.triggerModeTab, pending: true },
     ]) {
       const pill = el('button', `${CLS}-pill`, label)
       pill.type = 'button'
       pill.dataset.pillGroup = 'triggerMode'
       pill.dataset.pillValue = value
+      if (pending) {
+        // 平台行为链事件形态恒不含 tab changeType（引擎要求 changeType ===
+        // 'tab' 才命中）——驱动面到达前 Tab 触发永不生效，禁用选项并给出
+        // 提示，防用户创建完全无效的规则（审查 A-R4-2；存量 Tab 规则如实
+        // 往返不受影响）
+        pill.disabled = true
+        pill.title = f.triggerModeTabPending
+      }
       pill.addEventListener('click', () => {
         context.model.triggerMode = value
         refreshFormVisibility()

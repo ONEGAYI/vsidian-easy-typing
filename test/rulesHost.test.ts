@@ -199,12 +199,12 @@ describe('写拒绝下的降级（too-large / error / invalid-path 语义消费�
     expect(service.revision).toBe(1)
   })
 
-  it('readFile 拒绝（error）：装载按「不存在」降级——内置文件重写出厂', async () => {
+  it('readFile 拒绝（error）且文件在场：装载拒绝不降级种写（C-R4-1 语义升级——旧「按不存在重写出厂」正是被消灭的覆盖面）', async () => {
     const mock = mockStorage({ [BUILTIN_RULES_FILE]: '[]' })
     mock.failReads.add(BUILTIN_RULES_FILE)
     const { service } = newService(mock)
-    const snap = await service.ensureLoaded()
-    expect(snap.builtin).toHaveLength(DEFAULT_BUILTIN_RULES.length)
+    await expect(service.ensureLoaded()).rejects.toThrow('rules-storage-unreadable')
+    expect(mock.files.get(BUILTIN_RULES_FILE)).toBe('[]')
   })
 })
 
@@ -339,5 +339,54 @@ describe('停用与释放（停用不删数据）', () => {
     await scheduler.firePending()
     expect(service.revision).toBe(1)
     service.dispose() // 重复 dispose 无害
+  })
+})
+
+describe('存储读失败防护与 init 自愈（审查第 4 轮 C-R4-1 / C-R4-5）', () => {
+  it('读失败但在场：ensureLoaded 拒绝且不覆盖文件；故障解除后下次调用自愈重试', async () => {
+    const original = JSON.stringify([{ trigger: 'x', replacement: 'X', id: 'user-keep' }], null, 2)
+    const mock = mockStorage({ [USER_RULES_FILE]: original })
+    mock.failReads.add(USER_RULES_FILE)
+    const { service } = newService(mock)
+
+    // 在场读失败 → 装载拒绝，磁盘原样（旧实现会把 user-rules.json 覆盖写为 []）
+    await expect(service.ensureLoaded()).rejects.toThrow('rules-storage-unreadable')
+    expect(mock.files.get(USER_RULES_FILE)).toBe(original)
+
+    // 故障解除：initPromise 不滞留 rejected 态，下次调用重新装载成功
+    mock.failReads.delete(USER_RULES_FILE)
+    const snapshot = await service.ensureLoaded()
+    expect(snapshot.user).toHaveLength(1)
+    expect(snapshot.user[0]).toMatchObject({ id: 'user-keep' })
+  })
+
+  it('真不在场（fresh 目录）：正常种写出厂与空用户规则', async () => {
+    const mock = mockStorage()
+    const { service } = newService(mock)
+    const snapshot = await service.ensureLoaded()
+    expect(snapshot.builtin).toHaveLength(DEFAULT_BUILTIN_RULES.length)
+    expect(snapshot.user).toEqual([])
+    expect(mock.files.has(USER_RULES_FILE)).toBe(true)
+  })
+
+  it('并发 mutate 串行化（审查 B-R4-6）：两条并发 addUserRule 都持久化，无读-改-写丢更新', async () => {
+    const mock = mockStorage()
+    // 写加一拍宏任务延迟——确定复现旧竞争窗口：B 在 A 的写 await 间隙基于
+    // 旧缓存构造数组，旧实现 A 的结果被 B 覆盖（只存一条）
+    const delayedStorage: typeof mock.storage = {
+      ...mock.storage,
+      writeFile: async (path, content) => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        return mock.storage.writeFile(path, content)
+      },
+    }
+    const { service } = newService({ ...mock, storage: delayedStorage })
+    await service.ensureLoaded()
+    await Promise.all([
+      service.applyMutation({ op: 'addUserRule', rule: { trigger: 'a', replacement: 'A' } }),
+      service.applyMutation({ op: 'addUserRule', rule: { trigger: 'b', replacement: 'B' } }),
+    ])
+    const snapshot = await service.ensureLoaded()
+    expect(snapshot.user.map((r) => r.trigger).sort()).toEqual(['a', 'b'])
   })
 })

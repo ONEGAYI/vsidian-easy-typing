@@ -94,6 +94,9 @@ function registerSettingsChannels(setupCtx: AddonSetupContext): void {
 
 /** 设置链路装配：定义注册 + 门面挂接 + debug 日志门控实时刷新 */
 function attachSettingsLink(setupCtx: AddonSetupContext): void {
+  // 代次重注册时先释放旧门面（审查 B-R4-4：与 rulesService?.dispose() 收尾对齐，
+  // 不依赖平台「组件设置生命周期」兜底清理旧订阅）
+  settingsFacade?.dispose()
   const messages = pickMessages(vscode.env.language)
   setupCtx.settings.registerDefinitions(buildSettingDefinitions(messages))
   const facade = attachSettings(setupCtx.settings)

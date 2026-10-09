@@ -34,6 +34,8 @@ export interface RuleStoreIo {
   readText(path: string): Promise<string | null>
   /** 覆盖写 UTF-8 文本；返回是否成功（8MB 上限等拒绝 → false） */
   writeText(path: string, content: string): Promise<boolean>
+  /** 列数据目录一层文件路径；失败返回 null——种子写入前判别「不在场」与「读失败」用 */
+  list(): Promise<readonly string[] | null>
 }
 
 // ===== 校验管线 =====
@@ -192,11 +194,22 @@ export class RuleStore {
   /**
    * 装载/重载（上游 initRuleEngine 数据面；外部文件变化后重跑同入口）：
    * state → builtin（不存在写出厂；存在则按出厂补种，尊重已删清单）→
-   * user（不存在写空）。写失败全部容忍（缓存回空，不抛错——fail-safe）。
+   * user（不存在写空）。写失败全部容忍（缓存回空，不抛错——fail-safe）；
+   * 读失败且文件在场（list 判别）则抛错不动盘——防 IO 瞬时失败把种子
+   * 写当清空写覆盖用户数据（审查第 4 轮 C-R4-1）。
    */
   async init(): Promise<void> {
+    const present = await this.io.list()
+    const filePresent = (path: string): boolean =>
+      present === null ? true : present.includes(path) // list 失败按在场保守处理
+    const requireAbsent = async (path: string): Promise<boolean> => {
+      if (filePresent(path)) throw new Error(`rules-storage-unreadable: ${path}`)
+      return true
+    }
+
     const stateContent = await this.io.readText(RULE_STATE_FILE)
     if (stateContent === null) {
+      await requireAbsent(RULE_STATE_FILE)
       this.deletedBuiltinRuleIds = []
       await this.saveState() // 空目录伴随落盘（停用重装后数据可观测）
     } else {
@@ -214,6 +227,7 @@ export class RuleStore {
 
     const builtinContent = await this.io.readText(BUILTIN_RULES_FILE)
     if (builtinContent === null) {
+      await requireAbsent(BUILTIN_RULES_FILE)
       await this.saveBuiltinRules(this.defaults.map((r) => ({ ...r })))
     } else {
       const current = this.parseFile(builtinContent)
@@ -230,6 +244,7 @@ export class RuleStore {
 
     const userContent = await this.io.readText(USER_RULES_FILE)
     if (userContent === null) {
+      await requireAbsent(USER_RULES_FILE)
       await this.saveUserRules([])
     } else {
       this.cachedUserRules = this.parseFile(userContent)
@@ -312,8 +327,13 @@ export class RuleStore {
     if (!this.cachedBuiltinRules.some((r) => r.id === id)) return false
     const ok = await this.saveBuiltinRules(this.cachedBuiltinRules.filter((r) => r.id !== id))
     if (!ok) return false
+    // state 写失败回滚内存（与「写成功才替换缓存」同原则——审查第 4 轮 C-R4-4：
+    // builtin 与 state 是两次独立写，失败时内存回到与磁盘一致，下次成功写不残留）
+    const prevDeleted = this.deletedBuiltinRuleIds
     this.deletedBuiltinRuleIds = [...this.deletedBuiltinRuleIds, id]
-    return this.saveState()
+    const stateOk = await this.saveState()
+    if (!stateOk) this.deletedBuiltinRuleIds = prevDeleted
+    return stateOk
   }
 
   /**
@@ -331,8 +351,12 @@ export class RuleStore {
       if (!ok) return false
     }
     if (this.deletedBuiltinRuleIds.includes(id)) {
+      // state 写失败回滚内存（C-R4-4 同款：内存与磁盘 state 保持一致）
+      const prevDeleted = this.deletedBuiltinRuleIds
       this.deletedBuiltinRuleIds = this.deletedBuiltinRuleIds.filter((i) => i !== id)
-      return this.saveState()
+      const stateOk = await this.saveState()
+      if (!stateOk) this.deletedBuiltinRuleIds = prevDeleted
+      return stateOk
     }
     return true
   }
@@ -341,8 +365,12 @@ export class RuleStore {
   async resetAllBuiltinRules(): Promise<boolean> {
     const ok = await this.saveBuiltinRules(this.defaults.map((r) => ({ ...r })))
     if (!ok) return false
+    // state 写失败回滚内存（C-R4-4 同款）
+    const prevDeleted = this.deletedBuiltinRuleIds
     this.deletedBuiltinRuleIds = []
-    return this.saveState()
+    const stateOk = await this.saveState()
+    if (!stateOk) this.deletedBuiltinRuleIds = prevDeleted
+    return stateOk
   }
 
   async updateBuiltinRule(id: string, rule: SimpleRule): Promise<boolean> {

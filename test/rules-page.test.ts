@@ -153,6 +153,22 @@ describe('PageRulesClient 轮询重装', () => {
     expect(calls.filter((t) => t === RULES_TOPIC.revision)).toHaveLength(2)
   })
 
+  it('代次终结先于启动：stopWatch 在 load 在途时到达 → load 后 startWatch 被拒（审查 B-R4-1 竞态）', async () => {
+    const { channel, calls } = scriptedChannel({
+      [RULES_TOPIC.get]: [{ ok: true, result: snap(1) }],
+      [RULES_TOPIC.revision]: [{ ok: true, result: { revision: 1 } }],
+    })
+    const timers = manualTimers()
+    const client = new PageRulesClient({ channel, engine: new RuleEngine(), ...timers })
+    const loading = client.load() // 在途（代次 dispose 的竞态窗口）
+    client.stopWatch() // timerHandle 为 null：旧实现 no-op 且无终态记忆
+    await loading
+    client.startWatch() // 旧实现照常启动 interval → 泄漏；新实现拒绝
+    const callsAfter = calls.length
+    timers.fire()
+    expect(calls.length).toBe(callsAfter) // 无轮询请求发出
+  })
+
   it('poll 通道异常（request reject）→ 吞掉不抛（审查 C-P3-2：裸 void 链不成 unhandledrejection）', async () => {
     const calls: string[] = []
     const channel: RulesChannelLike = {

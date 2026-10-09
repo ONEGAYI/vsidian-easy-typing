@@ -70,6 +70,11 @@ export class PageRulesClient {
   private timerHandle: unknown = null
   /** poll 在途标志（审查 C-P3-2：上一轮未完成时跳过本轮，防止慢通道下轮询堆积） */
   private pollInFlight = false
+  /** 终态标志（审查 B-R4-1）：代次 dispose 先于 startWatch 到达（load 在途
+   *  窗口）时，stopWatch 对未启动状态曾是 no-op 且无记忆——load 返回后
+   *  startWatch 照常启动 interval，而 disposeCallbacks 已被平台消费清空，
+   *  无人再停 → 已终结代次每 2s 空转一次通道请求 */
+  private terminated = false
 
   constructor(options: PageRulesClientOptions) {
     this.channel = options.channel
@@ -119,16 +124,17 @@ export class PageRulesClient {
     }
   }
 
-  /** 启动轮询（重复调用无害） */
+  /** 启动轮询（重复调用无害；代次已终结则拒绝启动——B-R4-1） */
   startWatch(): void {
-    if (this.timerHandle !== null) return
+    if (this.terminated || this.timerHandle !== null) return
     this.timerHandle = this.startTimer(() => {
       void this.poll()
     }, this.pollIntervalMs)
   }
 
-  /** 停止轮询（sdk.onDispose 时调用；重复调用无害） */
+  /** 停止轮询（sdk.onDispose 时调用；重复调用无害）；置终态——此后不再可启动 */
   stopWatch(): void {
+    this.terminated = true
     if (this.timerHandle === null) return
     this.stopTimer(this.timerHandle)
     this.timerHandle = null

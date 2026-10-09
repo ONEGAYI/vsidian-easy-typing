@@ -561,7 +561,10 @@ export class RuleEngine {
     try {
       const cached: CachedRegex = {
         left: leftPattern ? new RegExp('(?:' + leftPattern + ')(?![\\s\\S])', regexFlags) : null,
-        right: rightPattern ? new RegExp('(?:' + rightPattern + ')', regexFlags) : null,
+        // 右正则 sticky 锚定串首：matchAtStart 只要 index===0 的匹配，y 标志
+        // 免去非锚定 exec 的全文线性扫描（审查第 4 轮 C-R4-3；m 标志下
+        // ^ 会错放宽到行首，y 与「仅串首」严格等价）
+        right: rightPattern ? new RegExp('(?:' + rightPattern + ')', regexFlags + 'y') : null,
       };
       this.regexCache.set(rule.id, cached);
       return cached;
@@ -693,6 +696,9 @@ export class RuleEngine {
   }
 
   process(ctx: TxContext): ApplyResult | null {
+    // 左右文惰性单次预切（审查第 4 轮 C-R4-3）：同一事务所有规则共享同一份
+    // 切片——替代循环内每规则重复 slice 的 O(规则数 × 文档长) 复制
+    const sliced: { left?: string; right?: string } = {};
     for (const rule of this.sortedRules) {
       if (!rule.enabled) continue;
       if (rule.type !== ctx.kind) continue;
@@ -722,7 +728,7 @@ export class RuleEngine {
         }
         default: {
           // Input 与 Delete 共用左右匹配路径（Delete 触发管线归 #9）
-          const result = this.matchAndApplyTextRule(rule, ctx);
+          const result = this.matchAndApplyTextRule(rule, ctx, sliced);
           if (result) {
             if (ctx.debug) console.log('[RuleEngine] hit:', rule.id, rule.description);
             return result;
@@ -734,10 +740,15 @@ export class RuleEngine {
     return null;
   }
 
-  private matchAndApplyTextRule(rule: ConvertRule, ctx: TxContext): ApplyResult | null {
+  private matchAndApplyTextRule(
+    rule: ConvertRule,
+    ctx: TxContext,
+    sliced: { left?: string; right?: string },
+  ): ApplyResult | null {
     const { from, to } = ctx.selection;
-    const leftDoc = ctx.docText.slice(0, from);
-    const rightDoc = ctx.docText.slice(to);
+    // 事务级共享切片（C-R4-3）：首个到达的规则付一次 O(L)，其余规则复用
+    const leftDoc = (sliced.left ??= ctx.docText.slice(0, from));
+    const rightDoc = (sliced.right ??= ctx.docText.slice(to));
 
     const cached = this.getCachedRegex(rule);
     if (!cached) return null; // 非法正则，跳过

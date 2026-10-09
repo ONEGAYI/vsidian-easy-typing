@@ -224,6 +224,7 @@ const zhMessages = {
       fieldTriggerMode: '触发方式',
       triggerModeAuto: '自动',
       triggerModeTab: 'Tab 键',
+      triggerModeTabPending: 'Tab 触发等待平台键位面开放，当前不可用（规则不会命中）',
       groupMatch: '匹配条件',
       fieldIsRegex: '使用正则表达式匹配',
       fieldTrigger: '光标前匹配',

@@ -52,6 +52,12 @@ function adaptStorageIo(storage: AddonStorageFacet): RuleStoreIo {
       const result = await storage.writeFile(path, content)
       return result.ok
     },
+    list: async () => {
+      const result = await storage.list()
+      return result.ok
+        ? result.entries.filter((e) => e.kind === 'file').map((e) => e.path)
+        : null
+    },
   }
 }
 
@@ -80,9 +86,16 @@ export class HostRulesService {
 
   // ===== 装载 =====
 
-  /** 惰性装载（并发共享同一次 init）；返回三份数据快照 + 当前代次 */
+  /** 惰性装载（并发共享同一次 init）；返回三份数据快照 + 当前代次。
+   * init 失败不留滞 rejected 态——下次调用重新装载（审查第 4 轮 C-R4-5） */
   async ensureLoaded(): Promise<RulesSnapshot & { revision: number }> {
-    if (!this.initPromise) this.initPromise = this.store.init()
+    if (!this.initPromise) {
+      const attempt = this.store.init()
+      this.initPromise = attempt.catch((err: unknown) => {
+        this.initPromise = null
+        throw err
+      })
+    }
     await this.initPromise
     return { ...this.store.getSnapshot(), revision: this.revision }
   }
@@ -168,9 +181,25 @@ export class HostRulesService {
 
   // ===== mutate 分发（channel handler 的业务体） =====
 
+  /** mutate 串行队列（审查 B-R4-6）：UI 连点开关/连续拖拽下两次 mutate 的
+   * 通道往返重叠时，宿主 async handler 会在 store 写的 await 间隙基于旧缓存
+   * 处理下一个请求（读-改-写竞争，先完成的写被后写覆盖）。队列化逐笔串行，
+   * 单次失败不断链。 */
+  private mutateQueue: Promise<unknown> = Promise.resolve()
+
   async applyMutation(payload: unknown): Promise<RulesMutateResult> {
     const parsed = parseRulesMutatePayload(payload)
     if (!parsed) return { ok: false, reason: 'invalid-payload' }
+    const run = this.mutateQueue.then(() => this.runMutation(parsed))
+    this.mutateQueue = run.catch(() => {
+      /* 队列只保顺序不传播失败——单笔结果经 run 返回给调用方 */
+    })
+    return run
+  }
+
+  private async runMutation(
+    parsed: NonNullable<ReturnType<typeof parseRulesMutatePayload>>,
+  ): Promise<RulesMutateResult> {
     const okResult = (): RulesMutateResult => ({ ok: true, revision: this.revision })
     const failResult = (): RulesMutateResult => ({ ok: false, reason: 'io-failed' })
     switch (parsed.op) {

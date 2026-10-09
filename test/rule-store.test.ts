@@ -32,6 +32,7 @@ function memoryIo(initial: Record<string, string> = {}) {
       files.set(path, content)
       return true
     },
+    list: async () => [...files.keys()],
   }
   return { files, io }
 }
@@ -42,6 +43,7 @@ function failingWriteIo(initial: Record<string, string> = {}) {
   const io: RuleStoreIo = {
     readText: base.io.readText,
     writeText: async () => false,
+    list: base.io.list,
   }
   return { files: base.files, io }
 }
@@ -215,6 +217,73 @@ describe('parseRulesFileContent / sanitizeSimpleRule（校验管线）', () => {
     if ('error' in reparsed) throw new Error('出厂规则 JSON 不应解析失败')
     const refRules = reparsed.rules.filter((r) => typeof r.replacement !== 'string')
     expect(refRules).toHaveLength(10)
+  })
+})
+
+describe('init：读失败与文件不在场的判别（审查第 4 轮 C-R4-1——防 IO 瞬时失败清空用户数据）', () => {
+  it('user 文件读失败但在场 → init 抛错、原文件原样未被覆盖', async () => {
+    const original = builtinJson([{ trigger: 'x', replacement: 'X', id: 'user-keep' }])
+    const { files, io } = memoryIo({ [USER_RULES_FILE]: original })
+    const unreadable: RuleStoreIo = {
+      ...io,
+      readText: async (path) => (path === USER_RULES_FILE ? null : io.readText(path)),
+    }
+    await expect(newStore(unreadable).init()).rejects.toThrow('rules-storage-unreadable')
+    expect(files.get(USER_RULES_FILE)).toBe(original)
+  })
+
+  it('builtin 文件读失败但在场 → init 抛错（出厂种子不覆盖用户定制）', async () => {
+    const customized = builtinJson([{ trigger: 'c', replacement: 'C', id: 'builtin-x' }])
+    const { files, io } = memoryIo({ [BUILTIN_RULES_FILE]: customized })
+    const unreadable: RuleStoreIo = {
+      ...io,
+      readText: async (path) => (path === BUILTIN_RULES_FILE ? null : io.readText(path)),
+    }
+    await expect(newStore(unreadable).init()).rejects.toThrow('rules-storage-unreadable')
+    expect(files.get(BUILTIN_RULES_FILE)).toBe(customized)
+  })
+
+  it('list 失败（无法判别在场）→ 同样保守抛错不动盘', async () => {
+    const original = builtinJson([{ trigger: 'x', replacement: 'X', id: 'user-keep' }])
+    const { files, io } = memoryIo({ [USER_RULES_FILE]: original })
+    const unreadable: RuleStoreIo = {
+      ...io,
+      readText: async (path) => (path === USER_RULES_FILE ? null : io.readText(path)),
+      list: async () => null,
+    }
+    await expect(newStore(unreadable).init()).rejects.toThrow('rules-storage-unreadable')
+    expect(files.get(USER_RULES_FILE)).toBe(original)
+  })
+
+  it('确认不在场（list 不含）→ 正常种写不抛错（空目录语义回归）', async () => {
+    const { files, io } = memoryIo()
+    await newStore(io).init()
+    expect(JSON.parse(files.get(BUILTIN_RULES_FILE)!)).toHaveLength(DEFAULT_BUILTIN_RULES.length)
+    expect(JSON.parse(files.get(USER_RULES_FILE)!)).toEqual([])
+  })
+
+  it('saveState 失败回滚内存停用清单：下次成功落盘不含未确认项（审查第 4 轮 C-R4-4）', async () => {
+    // state 文件预置合法内容——避免 init 的空 state 伴随写消费故障注入计数
+    const { files, io } = memoryIo({
+      [BUILTIN_RULES_FILE]: builtinJson(DEFAULT_BUILTIN_RULES),
+      [RULE_STATE_FILE]: JSON.stringify({ deletedBuiltinRuleIds: [] }, null, 2),
+    })
+    let stateWriteCount = 0
+    const flakyState: RuleStoreIo = {
+      ...io,
+      writeText: async (path, content) => {
+        if (path === RULE_STATE_FILE && stateWriteCount++ === 0) return false
+        return io.writeText(path, content)
+      },
+    }
+    const store = newStore(flakyState)
+    await store.init()
+    const id1 = DEFAULT_BUILTIN_RULES[0]!.id
+    const id2 = DEFAULT_BUILTIN_RULES[1]!.id
+    await expect(store.deleteBuiltinRule(id1)).resolves.toBe(false) // state 写失败
+    await expect(store.deleteBuiltinRule(id2)).resolves.toBe(true)
+    // 回滚后：成功的 state 写只含 id2（未回滚则残留 id1）
+    expect(JSON.parse(files.get(RULE_STATE_FILE)!).deletedBuiltinRuleIds).toEqual([id2])
   })
 })
 

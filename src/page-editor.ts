@@ -249,6 +249,9 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
     if (!registered.ok) {
       // 普通 API 拒绝不算故障：经 debugLog 留痕便于诊断（logging.ts 约定）
       debugLog('select-block command register rejected:', registered.reason)
+    } else {
+      // 与其余三命令族同款显式闭环（审查 B-R4-2：平台随代次回收，此处防御性闭环）
+      sdk.onDispose(() => registered.dispose())
     }
   }
 

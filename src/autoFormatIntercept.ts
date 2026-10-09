@@ -42,6 +42,7 @@ import {
 } from './ruleBehaviorIntercept'
 import { planAutoFormatLineModification } from './autoFormatPipeline'
 import { isDocUriExcluded } from './fileExclusion'
+import { createThrottledRefresh } from './throttle'
 import { SpaceState } from './formatting/inlineParts'
 import {
   matchProtectedRanges,
@@ -270,9 +271,7 @@ export function registerAutoFormatBehavior(deps: RegisterAutoFormatDeps): RuleBe
   }
 
   // 只读观察刷新设置缓存（平台 onChanged 每次输入触发——设置页改动下一次键入生效）
-  deps.behaviors.onChanged(() => {
-    void gate.refresh()
-  })
+  deps.behaviors.onChanged(createThrottledRefresh(() => gate.refresh()))
   return [
     result.ok
       ? { localId: AUTO_FORMAT_LOCAL_ID, ok: true }

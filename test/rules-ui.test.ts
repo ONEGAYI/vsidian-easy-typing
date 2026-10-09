@@ -245,6 +245,13 @@ describe('用户规则全生命周期（建/改/启停/删）', () => {
     expect(hidden('[data-vet-field="regexFlags"]')).toBe(true)
     expect(hidden('[data-vet-field="scopeLanguage"]')).toBe(true)
 
+    // Tab 触发选项禁用（审查 A-R4-2：驱动面未到前该模式永不命中，禁用 + 提示）
+    const tabPill = q<HTMLButtonElement>(modal, '[data-pill-group="triggerMode"][data-pill-value="tab"]')
+    expect(tabPill.disabled).toBe(true)
+    expect(tabPill.title).toBe(zhMessages.rulesPage.form.triggerModeTabPending)
+    const autoPill = q<HTMLButtonElement>(modal, '[data-pill-group="triggerMode"][data-pill-value="auto"]')
+    expect(autoPill.disabled).toBe(false)
+
     // 切到 SelectKey：右侧匹配、flags、正则 chip、触发方式区隐藏；触发式改名
     q<HTMLButtonElement>(modal, '[data-pill-group="ruleType"][data-pill-value="selectKey"]').click()
     await flush()

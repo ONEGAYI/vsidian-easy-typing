@@ -221,6 +221,15 @@ describe('注册形状契约（AddonBehaviorRegistration）', () => {
     onChangedCallbacks.forEach((cb) => cb())
     expect(requestedTopics.filter((t) => t === SETTINGS_TOPIC.get).length).toBeGreaterThanOrEqual(2)
   })
+
+  it('onChanged 刷新节流（C-R4-2）：节流窗内连续触发不叠加通道请求', () => {
+    const { requestedTopics, onChangedCallbacks } = registerAll('zh-CN')
+    onChangedCallbacks.forEach((cb) => cb()) // 窗口起点（各 gate 首次触发刷一次）
+    const afterFirst = requestedTopics.filter((t) => t === SETTINGS_TOPIC.get).length
+    // 同一 3s 窗口内模拟连续键入：onChanged 反复触发，通道请求不随之增长
+    for (let i = 0; i < 5; i++) onChangedCallbacks.forEach((cb) => cb())
+    expect(requestedTopics.filter((t) => t === SETTINGS_TOPIC.get).length).toBe(afterFirst)
+  })
 })
 
 describe('族引擎装载（buildFamilyEngine）', () => {
