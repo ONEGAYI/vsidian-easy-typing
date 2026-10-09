@@ -1,0 +1,644 @@
+// 规则引擎内核（工单 #1）——纯逻辑模块，零平台依赖。
+//
+// 移植自 easy-typing-obsidian v6.0.9（MIT，Yaozhuwa）src/rule_engine.ts，
+// 匹配 / 替换 / 捕获组引用 / 作用域 / 优先级 / 正则缓存语义逐条对照移植。
+//
+// 【设计决策：作用域判定可注入】上游作用域限定依赖语法树（syntax.ts
+// detectRuleScope 经 syntaxTree 判行类型）；vsidian live 编辑器的
+// experimental.cm6.language.syntaxTree 恒为未解析空树（平台已知边界，见
+// vsidian#406 诚实边界）。因此本内核不做任何语法树判定：TxContext 的
+// scopeHint / scopeLanguage 由调用方注入——#25 行为链接入时传正则降级版
+// 判定，#5 语法树版就绪后换传即可，内核零改动。
+//
+// 【与上游的三处刻意偏差】（其余逐行对照）：
+// 1. Notice 剥离：上游三处 `new Notice(...)`（函数体编译失败 / 非法正则 /
+//    运行时异常节流上报）改为可注入的 reportError 回调（构造选项），
+//    #25 宿主接入时映射到 i18n 通知通道；
+// 2. TabstopSpec 就地定义：上游从 tabstop.ts 导入（该文件含 CM6 依赖），
+//    本模块只保留纯数据形状；
+// 3. Tabstop 语法解析（$0/$1 → 占位符与光标）不移植：归 #14（解析）与
+//    #15（分组导航）。applyReplacement 中占位符保留为字面标记，
+//    tabstops 恒为空，cursor 取上游「无占位符」分支语义。
+//
+// 【数据形状为 #25 预留】TxContext 对齐平台 AddonInputContext 的映射面：
+// docText ↔ snapshot.text（LF 坐标）、selection ↔ 光标区间、changeType ↔
+// userEvent、scopeHint/scopeLanguage ↔ 注入的行类型判定；ApplyResult 的
+// matchRange/newText/cursor/tabstops 对齐行为链计划（changes + selection）。
+
+// ===== 枚举 =====
+
+export enum RuleType {
+  Input = 'input',
+  Delete = 'delete',
+  SelectKey = 'selectKey',
+}
+
+export enum RuleTriggerMode {
+  Auto = 'auto',
+  Tab = 'tab',
+}
+
+export enum RuleScope {
+  Text = 'text',
+  Formula = 'formula',
+  Code = 'code',
+  All = 'all',
+}
+
+// ===== 接口 =====
+
+/** 占位符规格（纯数据形状；$0 解析归 #14，分组与导航归 #15） */
+export interface TabstopSpec {
+  number: number;
+  from: number;
+  to: number;
+}
+
+/** 规则的完整执行形态（由 SimpleRule 归一而来） */
+export interface ConvertRule {
+  id: string;
+  description: string;
+  enabled: boolean;
+  type: RuleType;
+  triggerMode: RuleTriggerMode;
+  triggerKeys?: string[];
+  scope: RuleScope[];
+  scopeLanguage?: string;
+  regexFlags?: string;
+  priority: number;
+  match: {
+    left: string;
+    right: string;
+    isRegex: boolean;
+  };
+  replacement: string |
+  ((leftMatches: string[], rightMatches: string[]) => string | void) |
+  ((selectionText: string, key: string) => string | void);
+}
+
+/** 规则的存储/序列化形态（内置数据与 #14 用户规则 JSON 的载体） */
+export interface SimpleRule {
+  id?: string;
+  trigger: string;
+  trigger_right?: string;
+  replacement: string |
+  ((leftMatches: string[], rightMatches: string[]) => string | void) |
+  ((selectionText: string, key: string) => string | void);
+  /** 旗标串：d=Delete 类 s=SelectKey 类 T=Tab 触发 r=正则 F=函数体 t/f/c=作用域 a=全部 */
+  options?: string;
+  enabled?: boolean;
+  description?: string;
+  priority?: number;
+  scope_language?: string;
+  regex_flags?: string;
+}
+
+/** 触发上下文：由调用方组装（#25 行为链 / #9 删除与选中管线） */
+export interface TxContext {
+  kind: RuleType;
+  docText: string;
+  selection: { from: number; to: number };
+  inserted: string;
+  changeType: string;
+  /** 光标处作用域判定（注入面——内核不做语法树判定，见模块头注） */
+  scopeHint: RuleScope;
+  scopeLanguage?: string;
+  debug?: boolean;
+  key?: string;
+}
+
+/** 命中结果：matchRange 为 LF 坐标的替换区间，对齐行为链计划 */
+export interface ApplyResult {
+  newText: string;
+  cursor: number;
+  tabstops: TabstopSpec[];
+  matchRange: { from: number; to: number };
+}
+
+interface MatchInfo {
+  leftMatches: string[];
+  rightMatches: string[];
+  matchRange: { from: number; to: number };
+  selectionText?: string;
+  key?: string;
+}
+
+interface CachedRegex {
+  left: RegExp | null;
+  right: RegExp | null;
+}
+
+/** 构造选项 */
+export interface RuleEngineOptions {
+  /**
+   * 规则错误上报通道（上游为 Obsidian Notice）。收到即意味着该条规则被
+   * 跳过或替换体不可用；#25 宿主接入时映射到 i18n 通知。
+   */
+  reportError?: (ruleId: string, message: string) => void;
+}
+
+// ===== 工具 =====
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// ===== RuleEngine =====
+
+export class RuleEngine {
+  private rulesById: Map<string, ConvertRule> = new Map();
+  private sortedRules: ConvertRule[] = [];
+  private ruleIdCounter: number = 0;
+  private fnErrorLastNotify: Map<string, number> = new Map();
+  private readonly reportError: ((ruleId: string, message: string) => void) | undefined;
+
+  /** 编译后正则缓存：key 为 rule.id（含 null = 已知非法，避免反复编译） */
+  private regexCache: Map<string, CachedRegex | null> = new Map();
+
+  constructor(options: RuleEngineOptions = {}) {
+    this.reportError = options.reportError;
+  }
+
+  // ===== 静态工具 =====
+
+  static parseOptions(options: string = ''): {
+    type: RuleType;
+    triggerMode: RuleTriggerMode;
+    isRegex: boolean;
+    isFunctionReplacement: boolean;
+    scope: RuleScope[];
+  } {
+    const type = options.includes('d') ? RuleType.Delete
+      : options.includes('s') ? RuleType.SelectKey
+        : RuleType.Input;
+
+    const triggerMode = options.includes('T') ? RuleTriggerMode.Tab
+      : RuleTriggerMode.Auto;
+
+    const isRegex = options.includes('r');
+
+    const isFunctionReplacement = options.includes('F');
+
+    const scope: RuleScope[] = [];
+    if (options.includes('a') || (!options.includes('t') && !options.includes('f') && !options.includes('c'))) {
+      scope.push(RuleScope.All);
+    } else {
+      if (options.includes('t')) scope.push(RuleScope.Text);
+      if (options.includes('f')) scope.push(RuleScope.Formula);
+      if (options.includes('c')) scope.push(RuleScope.Code);
+    }
+
+    return { type, triggerMode, isRegex, isFunctionReplacement, scope };
+  }
+
+  static normalizeRegexFlags(flags: string = ''): string {
+    const normalized = flags.toLowerCase().replace(/[^imu]/g, '');
+    return Array.from(new Set(normalized.split(''))).sort((a, b) => 'imu'.indexOf(a) - 'imu'.indexOf(b)).join('');
+  }
+
+  /**
+   * 保存 SimpleRule 前校验正则：合法返回 null，非法返回错误信息。
+   * （#14 用户规则编辑链路消费）
+   */
+  static validateRegex(rule: SimpleRule): string | null {
+    const opts = RuleEngine.parseOptions(rule.options);
+    if (!opts.isRegex) return null;
+    const regexFlags = RuleEngine.normalizeRegexFlags(rule.regex_flags);
+
+    const leftPattern = rule.trigger;
+    const rightPattern = rule.trigger_right ?? '';
+
+    if (leftPattern) {
+      try {
+        new RegExp('(?:' + leftPattern + ')', regexFlags);
+      } catch (e) {
+        return `trigger: ${(e as Error).message}`;
+      }
+    }
+    if (rightPattern) {
+      try {
+        new RegExp('(?:' + rightPattern + ')', regexFlags);
+      } catch (e) {
+        return `trigger_right: ${(e as Error).message}`;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 真实控制字符转可见转义序列（UI 展示用，escapeText 的逆）。
+   */
+  static escapeText(text: string, preserveBackslashes: boolean = false): string {
+    let result = text;
+    if (!preserveBackslashes) {
+      result = result.replace(/\\/g, '\\\\');
+    }
+    return result
+      .replace(/\n/g, '\\n')
+      .replace(/\t/g, '\\t')
+      .replace(/\r/g, '\\r');
+  }
+
+  /**
+   * 替换体中的转义序列还原：\n → 换行、\t → 制表、\r → CR、\\\\ → 反斜杠。
+   * TS 源码里已是真实换行的字符串不受影响。
+   */
+  static unescapeText(text: string): string {
+    let result = '';
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] === '\\' && i + 1 < text.length) {
+        switch (text[i + 1]) {
+          case 'n': result += '\n'; i++; break;
+          case 't': result += '\t'; i++; break;
+          case 'r': result += '\r'; i++; break;
+          case '\\': result += '\\'; i++; break;
+          default: result += text[i]; break;
+        }
+      } else {
+        result += text[i];
+      }
+    }
+    return result;
+  }
+
+  /** SelectKey 规则触发键序列解析：逐字符切分，反斜杠转义还原 */
+  static parseSelectKeyRuleTriggerKeys(pattern: string): string[] {
+    const keys: string[] = [];
+    for (let i = 0; i < pattern.length; i++) {
+      if (pattern[i] === '\\' && i + 1 < pattern.length) {
+        keys.push(pattern[i + 1]);
+        i++;
+      } else {
+        keys.push(pattern[i]);
+      }
+    }
+    return keys;
+  }
+
+  static normalizeRule(
+    simple: SimpleRule,
+    reportError?: (ruleId: string, message: string) => void,
+  ): Omit<ConvertRule, 'id'> {
+    const opts = RuleEngine.parseOptions(simple.options);
+
+    // F 旗标：函数体字符串经 new Function 编译（用户自定义规则的序列化
+    // 载体，上游同形态；执行沙箱边界归 #14 实施票评估）
+    let replacement: ConvertRule['replacement'] = simple.replacement;
+    if (opts.isFunctionReplacement && typeof simple.replacement === 'string') {
+      try {
+        if (opts.type === RuleType.SelectKey) {
+          replacement = new Function('selectionText', 'key', simple.replacement) as
+            (selectionText: string, key: string) => string | void;
+        } else {
+          replacement = new Function('leftMatches', 'rightMatches', simple.replacement) as
+            (leftMatches: string[], rightMatches: string[]) => string | void;
+        }
+      } catch (e) {
+        console.error(`[RuleEngine] Failed to compile function for rule "${simple.id ?? '?'}":`, e);
+        replacement = (): undefined => undefined;
+        reportError?.(simple.id ?? '?', `invalid function body: ${(e as Error).message}`);
+      }
+    }
+
+    if (opts.type === RuleType.SelectKey) {
+      return {
+        description: simple.description ?? '',
+        enabled: simple.enabled ?? true,
+        type: RuleType.SelectKey,
+        triggerMode: RuleTriggerMode.Auto,
+        triggerKeys: RuleEngine.parseSelectKeyRuleTriggerKeys(simple.trigger),
+        scope: opts.scope,
+        scopeLanguage: simple.scope_language,
+        regexFlags: undefined,
+        priority: simple.priority ?? 100,
+        match: { left: '', right: '', isRegex: false },
+        replacement,
+      };
+    }
+
+    // T 触发模式仅对 Input 类有意义；Delete 类强制 Auto
+    const triggerMode = opts.type === RuleType.Input
+      ? opts.triggerMode
+      : RuleTriggerMode.Auto;
+
+    return {
+      description: simple.description ?? '',
+      enabled: simple.enabled ?? true,
+      type: opts.type,
+      triggerMode,
+      triggerKeys: undefined,
+      scope: opts.scope,
+      scopeLanguage: simple.scope_language,
+      regexFlags: opts.isRegex ? RuleEngine.normalizeRegexFlags(simple.regex_flags) : undefined,
+      priority: simple.priority ?? 100,
+      match: {
+        left: simple.trigger,
+        right: simple.trigger_right ?? '',
+        isRegex: opts.isRegex,
+      },
+      replacement,
+    };
+  }
+
+  // ===== 规则管理 =====
+
+  private generateId(): string {
+    return `rule-${++this.ruleIdCounter}`;
+  }
+
+  private insertSorted(rule: ConvertRule): void {
+    let lo = 0, hi = this.sortedRules.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      // priority <= rule.priority：同优先级排在既有规则之后（注册序）
+      if (this.sortedRules[mid].priority <= rule.priority) lo = mid + 1;
+      else hi = mid;
+    }
+    this.sortedRules.splice(lo, 0, rule);
+  }
+
+  addRule(rule: Omit<ConvertRule, 'id'> & { id?: string }): string {
+    const id = rule.id ?? this.generateId();
+    const fullRule: ConvertRule = { ...rule, id };
+    this.rulesById.set(id, fullRule);
+    this.insertSorted(fullRule);
+    return id;
+  }
+
+  addSimpleRule(simple: SimpleRule): string {
+    const normalized = RuleEngine.normalizeRule(simple, this.reportError);
+    return this.addRule({ ...normalized, id: simple.id });
+  }
+
+  addSimpleRules(rules: SimpleRule[]): string[] {
+    return rules.map(r => this.addSimpleRule(r));
+  }
+
+  removeRule(id: string): boolean {
+    if (!this.rulesById.has(id)) return false;
+    this.rulesById.delete(id);
+    this.regexCache.delete(id);
+    const idx = this.sortedRules.findIndex(r => r.id === id);
+    if (idx !== -1) this.sortedRules.splice(idx, 1);
+    return true;
+  }
+
+  updateRule(id: string, patch: Partial<Omit<ConvertRule, 'id'>>): boolean {
+    const existing = this.rulesById.get(id);
+    if (!existing) return false;
+
+    // 匹配面 / 类型 / flags 变化 → 正则缓存失效
+    if (patch.match !== undefined || patch.type !== undefined || patch.regexFlags !== undefined) {
+      this.regexCache.delete(id);
+    }
+
+    const priorityChanged = patch.priority !== undefined && patch.priority !== existing.priority;
+    Object.assign(existing, patch);
+
+    if (priorityChanged) {
+      const idx = this.sortedRules.findIndex(r => r.id === id);
+      if (idx !== -1) this.sortedRules.splice(idx, 1);
+      this.insertSorted(existing);
+    }
+    return true;
+  }
+
+  setEnabled(id: string, enabled: boolean): void {
+    const rule = this.rulesById.get(id);
+    if (rule) rule.enabled = enabled;
+  }
+
+  getRules(): readonly ConvertRule[] {
+    return this.sortedRules;
+  }
+
+  getRulesByType(type: RuleType): ConvertRule[] {
+    return this.sortedRules.filter(r => r.type === type);
+  }
+
+  getRule(id: string): ConvertRule | undefined {
+    return this.rulesById.get(id);
+  }
+
+  clear(): void {
+    this.rulesById.clear();
+    this.sortedRules = [];
+    this.regexCache.clear();
+  }
+
+  loadFromFiles(builtinRules: SimpleRule[], userRules: SimpleRule[]): void {
+    this.clear();
+    this.addSimpleRules(builtinRules);
+    this.addSimpleRules(userRules);
+  }
+
+  // ===== 正则缓存 =====
+
+  /**
+   * 取或编译规则的缓存正则，避免每次输入重新编译。
+   * 左正则尾部拼接 (?![\s\S])：命中必须延伸到左文末尾（刚键入的字符在
+   * 匹配范围内）；编译失败缓存 null 并上报，规则视为不可用。
+   */
+  private getCachedRegex(rule: ConvertRule): CachedRegex | null {
+    const existing = this.regexCache.get(rule.id);
+    if (existing !== undefined) return existing;
+
+    const leftPattern = rule.match.isRegex
+      ? rule.match.left
+      : escapeRegex(rule.match.left);
+    const rightPattern = rule.match.isRegex
+      ? rule.match.right
+      : escapeRegex(rule.match.right);
+
+    const regexFlags = rule.match.isRegex ? RuleEngine.normalizeRegexFlags(rule.regexFlags) : '';
+    try {
+      const cached: CachedRegex = {
+        left: leftPattern ? new RegExp('(?:' + leftPattern + ')(?![\\s\\S])', regexFlags) : null,
+        right: rightPattern ? new RegExp('(?:' + rightPattern + ')', regexFlags) : null,
+      };
+      this.regexCache.set(rule.id, cached);
+      return cached;
+    } catch (e) {
+      console.error(`[RuleEngine] Invalid regex in rule "${rule.id}":`, e);
+      this.reportError?.(rule.id, `invalid regex: ${(e as Error).message}`);
+      this.regexCache.set(rule.id, null);
+      return null;
+    }
+  }
+
+  // ===== 模板展开 =====
+
+  private expandVariables(text: string, match: MatchInfo): string {
+    // [[Rn]] → 右正则捕获组（须先于 [[n]] 处理，避免 [[R1]] 被 [[n]] 吞掉）
+    text = text.replace(/\[\[R(\d+)\]\]/g, (_, n) => {
+      const idx = parseInt(n);
+      return match.rightMatches[idx] ?? '';
+    });
+
+    // [[n]] → 左正则捕获组，缺省回退右组
+    text = text.replace(/\[\[(\d+)\]\]/g, (_, n) => {
+      const idx = parseInt(n);
+      return match.leftMatches[idx] ?? match.rightMatches[idx] ?? '';
+    });
+
+    // 独立 ${SEL} 与 ${KEY}（SelectKey 类）
+    if (match.selectionText !== undefined) {
+      text = text.replace(/\$\{SEL\}/g, match.selectionText);
+    }
+    if (match.key !== undefined) {
+      text = text.replace(/\$\{KEY\}/g, match.key);
+    }
+
+    return text;
+  }
+
+  // ===== 规则执行 =====
+
+  private notifyFunctionError(ruleId: string, error: unknown): void {
+    const now = Date.now();
+    const last = this.fnErrorLastNotify.get(ruleId) ?? 0;
+    if (now - last > 5000) {
+      this.fnErrorLastNotify.set(ruleId, now);
+      const msg = error instanceof Error ? error.message : String(error);
+      this.reportError?.(ruleId, `runtime error: ${msg}`);
+    }
+    console.error(`[RuleEngine] Runtime error in rule "${ruleId}":`, error);
+  }
+
+  process(ctx: TxContext): ApplyResult | null {
+    for (const rule of this.sortedRules) {
+      if (!rule.enabled) continue;
+      if (rule.type !== ctx.kind) continue;
+      if (rule.triggerMode === RuleTriggerMode.Tab && ctx.changeType !== 'tab') continue;
+      if (rule.triggerMode === RuleTriggerMode.Auto && ctx.changeType === 'tab') continue;
+
+      // 作用域检查：任一侧 All 即「不限制」
+      if (ctx.scopeHint !== RuleScope.All && !rule.scope.includes(RuleScope.All) && !rule.scope.includes(ctx.scopeHint)) continue;
+      // 语言过滤仅在代码作用域内生效：Text+Code(py) 混合作用域仍可匹配
+      // 普通文本，进入 Code 作用域才要求配置语言
+      if (
+        rule.scopeLanguage &&
+        ctx.scopeHint === RuleScope.Code &&
+        rule.scope.includes(RuleScope.Code) &&
+        ctx.scopeLanguage !== rule.scopeLanguage
+      ) continue;
+
+      switch (ctx.kind) {
+        case RuleType.SelectKey: {
+          if (!rule.triggerKeys?.includes(ctx.key!)) continue;
+          const result = this.applySelectKeyRule(rule, ctx);
+          if (result) {
+            if (ctx.debug) console.log('[RuleEngine] hit:', rule.id, rule.description);
+            return result;
+          }
+          break;
+        }
+        default: {
+          // Input 与 Delete 共用左右匹配路径（Delete 触发管线归 #9）
+          const result = this.matchAndApplyTextRule(rule, ctx);
+          if (result) {
+            if (ctx.debug) console.log('[RuleEngine] hit:', rule.id, rule.description);
+            return result;
+          }
+          break;
+        }
+      }
+    }
+    return null;
+  }
+
+  private matchAndApplyTextRule(rule: ConvertRule, ctx: TxContext): ApplyResult | null {
+    const { from, to } = ctx.selection;
+    const leftDoc = ctx.docText.slice(0, from);
+    const rightDoc = ctx.docText.slice(to);
+
+    const cached = this.getCachedRegex(rule);
+    if (!cached) return null; // 非法正则，跳过
+    const leftRegex = cached.left;
+    const rightRegex = cached.right;
+
+    const leftMatch = leftRegex ? leftRegex.exec(leftDoc) : [''];
+    const rightMatch = rightRegex ? this.matchAtStart(rightDoc, rightRegex) : [''];
+    if (!leftMatch || !rightMatch) return null;
+
+    const matchFrom = from - leftMatch[0].length;
+    const matchTo = to + rightMatch[0].length;
+
+    return this.applyReplacement(rule, {
+      leftMatches: [...leftMatch],
+      rightMatches: [...rightMatch],
+      matchRange: { from: matchFrom, to: matchTo },
+    }, ctx);
+  }
+
+  private matchAtStart(doc: string, regex: RegExp): RegExpMatchArray | null {
+    regex.lastIndex = 0;
+    const match = regex.exec(doc);
+    if (!match || match.index !== 0) return null;
+    return match;
+  }
+
+  private applySelectKeyRule(rule: ConvertRule, ctx: TxContext): ApplyResult | null {
+    const selectionText = ctx.docText.slice(ctx.selection.from, ctx.selection.to);
+
+    return this.applyReplacement(rule, {
+      leftMatches: [],
+      rightMatches: [],
+      matchRange: ctx.selection,
+      selectionText,
+      key: ctx.key!,
+    }, ctx);
+  }
+
+  private applyReplacement(
+    rule: ConvertRule,
+    match: MatchInfo,
+    _ctx: TxContext,
+  ): ApplyResult | null {
+    let text: string;
+
+    if (typeof rule.replacement === 'function') {
+      try {
+        if (rule.type === RuleType.SelectKey) {
+          const fn = rule.replacement as (sel: string, key: string) => string | void;
+          const result = fn(match.selectionText!, match.key!);
+          if (result === undefined) return null;
+          text = result as string;
+        } else {
+          const fn = rule.replacement as (l: string[], r: string[]) => string | void;
+          const result = fn(match.leftMatches, match.rightMatches);
+          if (result === undefined) return null;
+          text = result as string;
+        }
+      } catch (e) {
+        this.notifyFunctionError(rule.id, e);
+        return null;
+      }
+    } else {
+      text = rule.replacement;
+    }
+
+    // 替换体反转义 \n / \t / \r / \\
+    text = RuleEngine.unescapeText(text);
+
+    // 展开 [[n]]、[[Rn]]、独立 ${SEL}、${KEY}
+    text = this.expandVariables(text, match);
+
+    // —— 工单 #1 边界：$0/$1 占位符解析归 #14（分组导航归 #15）——
+    // 上游此处调用 parseTabstops 把 $0 / ${n:default} 展开为 TabstopSpec
+    // 并把 cursor 落在首个占位符；本票不移植该解析：占位符保留为字面
+    // 标记，tabstops 恒为空，cursor 取上游「无占位符」分支语义（替换
+    // 区间起点 + 文本长度）。#14 落地时恢复上游语义：newText 去标记、
+    // tabstops 填充、cursor 落 tabstops[0].from。
+    const finalText = text;
+    const tabstops: TabstopSpec[] = [];
+    const cursor = match.matchRange.from + finalText.length;
+
+    return {
+      newText: finalText,
+      cursor,
+      tabstops,
+      matchRange: match.matchRange,
+    };
+  }
+}
