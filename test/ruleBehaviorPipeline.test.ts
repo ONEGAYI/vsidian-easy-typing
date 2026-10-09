@@ -1,17 +1,21 @@
-// onInput → 规则引擎触发管线测试（工单 #25）：AddonInputContext（结构
-// 子集，userEvent 原样保留）→ TxContext → RuleEngine.process（Input 类）
-// → {changes, selection} 计划。票面三场景（标点转换 / 括号补全 / 中英
-// 空格基线）以真实内置规则数据（DEFAULT_BUILTIN_RULES）驱动——「真实
-// 引擎 + 模拟 AddonInputContext」的集成级承载（真实 webview 端到端归
-// #21 人工验证）。上游对照 rule_processor.ts triggerCvtRule 与
-// cm_extensions.ts tryProcessInput 的规则触发段。
+// onInput → 规则引擎触发管线测试（工单 #25 Input 类 + 工单 #9 Delete/
+// SelectKey 类）：AddonInputContext（结构子集，userEvent 原样保留）→
+// TxContext → RuleEngine.process → {changes, selection} 计划。票面场景以
+// 真实内置规则数据（DEFAULT_BUILTIN_RULES）驱动——「真实引擎 + 模拟
+// AddonInputContext」的集成级承载（真实 webview 端到端归 #21 人工验证）。
+// 上游对照 rule_processor.ts triggerCvtRule 与 cm_extensions.ts
+// tryProcessInput 的规则触发段、delete.backward 分支与 Selection Replace
+// 分支。
 import { describe, expect, it } from 'vitest'
 import { RuleEngine, type SimpleRule } from '../src/rules/rule-engine'
 import { DEFAULT_BUILTIN_RULES } from '../src/rules/default-rules'
 import {
   applyResultToPlan,
+  pipelineConsumesDeleteEvent,
   pipelineConsumesUserEvent,
+  planDeleteRuleModification,
   planInputRuleModification,
+  planSelectKeyRuleModification,
   type RuleInputPipelineContext,
 } from '../src/ruleBehaviorPipeline'
 
@@ -24,6 +28,24 @@ function engineOf(ruleIds: readonly string[]): RuleEngine {
   return engine
 }
 
+/** 全部 6 条 Delete 类内置规则 */
+const DELETE_RULE_IDS = [
+  'builtin-autopair-delete',
+  'builtin-del-inline-formula',
+  'builtin-del-highlight',
+  'builtin-del-block-formula',
+  'builtin-del-codeblock',
+  'builtin-del-wikilink',
+]
+
+/** 全部 4 条 SelectKey 类内置规则 */
+const SELECTKEY_RULE_IDS = [
+  'builtin-sel-wrap-backtick',
+  'builtin-sel-wrap-symbols',
+  'builtin-sel-wrap-quotes',
+  'builtin-sel-wrap-cjk-brackets',
+]
+
 /** 模拟 AddonInputContext（快照已含本次输入；LF 坐标） */
 function inputCtx(
   text: string,
@@ -31,8 +53,9 @@ function inputCtx(
   userEvent = 'input.type',
   inputText = '',
   selections: Array<{ anchor: number; head: number }> = [{ anchor: cursor, head: cursor }],
+  replaced: RuleInputPipelineContext['replaced'] = null,
 ): RuleInputPipelineContext {
-  return { userEvent, inputText, snapshot: { text, selections } }
+  return { userEvent, inputText, replaced, snapshot: { text, selections } }
 }
 
 // ===== 票面场景 1：标点转换（fw2hw-double，真实内置规则） =====
@@ -155,6 +178,15 @@ describe('选区语义', () => {
     ).toBeNull()
   })
 
+  it('选区替换形态（replaced 非空）→ null：上游 changedStr.length < 1 同口径（#9 接缝）', () => {
+    // 选中 hello 键入（：快照 （、光标塌缩——autopair 若放行会基于残缺
+    // 上下文命中并把被替换内容丢失；上游该事务只走 SelectKey 分支
+    const autopair = engineOf(['builtin-autopair-input'])
+    expect(
+      planInputRuleModification(autopair, inputCtx('（', 1, 'input.type', '（', [{ anchor: 1, head: 1 }], { from: 0, to: 5, text: 'hello' })),
+    ).toBeNull()
+  })
+
   it('无选区（空数组，防御）→ null', () => {
     expect(planInputRuleModification(engine, inputCtx('。。', 2, 'input.type', '。', []))).toBeNull()
   })
@@ -188,5 +220,237 @@ describe('applyResultToPlan：matchRange/newText/cursor → changes/selection', 
       changes: [{ offset: 2, length: 2, text: 'AB' }],
       selection: { anchor: 5, head: 5 },
     })
+  })
+})
+
+// ===== 工单 #9：Delete 触发管线（联动删除计划） =====
+//
+// 语境约定：快照 text 为**事务后**文档（原生删除已发生）、replaced 为被
+// 删文本（事务前 LF 坐标）、selections 为删除后残留光标。期望计划的
+// changes 相对快照坐标。
+
+describe('Delete 管线：内置规则联动删除矩阵（真实数据端到端）', () => {
+  const engine = engineOf(DELETE_RULE_IDS)
+
+  it('$|$ 退格 → 联动删除两侧 $（del-inline-formula，上游 toA 同口径）', () => {
+    // 事务前 $$、光标 1；退格删 [0,1) 的 $ → 快照 $、replaced {0,1,'$'}
+    const r = planDeleteRuleModification(engine, inputCtx('$', 0, 'delete.backward', '', [{ anchor: 0, head: 0 }], { from: 0, to: 1, text: '$' }))
+    expect(r?.plan).toEqual({
+      changes: [{ offset: 0, length: 1, text: '' }],
+      selection: { anchor: 0, head: 0 },
+    })
+  })
+
+  it('==|== 退格（删第二个 =）→ 联动删除整对高亮标记（del-highlight）', () => {
+    // 事务前 ====（空高亮 ==|==）、光标 2；退格删 [1,2) 的 = → 快照 ===、光标 1
+    const r = planDeleteRuleModification(engine, inputCtx('===', 1, 'delete.backward', '', [{ anchor: 1, head: 1 }], { from: 1, to: 2, text: '=' }))
+    // 引擎命中 [0,4) 替换 ''；换算回快照：to 4-1=3 → 快照 [0,3) 全删
+    expect(r?.plan).toEqual({
+      changes: [{ offset: 0, length: 3, text: '' }],
+      selection: { anchor: 0, head: 0 },
+    })
+  })
+
+  it('【|】 退格 → 联动删除配对括号（autopair-delete，函数体规则）', () => {
+    // 事务前 【】、光标 1；退格删 [0,1) 的 【 → 快照 】
+    const r = planDeleteRuleModification(engine, inputCtx('】', 0, 'delete.backward', '', [{ anchor: 0, head: 0 }], { from: 0, to: 1, text: '【' }))
+    expect(r?.plan).toEqual({
+      changes: [{ offset: 0, length: 1, text: '' }],
+      selection: { anchor: 0, head: 0 },
+    })
+  })
+
+  it('【|】 Delete 键（forward，删 】）→ 同样联动删除（光标取区间左端）', () => {
+    // 事务前 【】、光标 1；Delete 删 [1,2) 的 】 → 快照 【
+    const r = planDeleteRuleModification(engine, inputCtx('【', 1, 'delete.forward', '', [{ anchor: 1, head: 1 }], { from: 1, to: 2, text: '】' }))
+    expect(r?.plan).toEqual({
+      changes: [{ offset: 0, length: 1, text: '' }],
+      selection: { anchor: 0, head: 0 },
+    })
+  })
+
+  it('空块级公式中间行退格 → 整块删除（del-block-formula）', () => {
+    // 事务前 $$\n\n$$、光标 3（中间空行行首）；退格删 [2,3) 的 \n
+    const r = planDeleteRuleModification(engine, inputCtx('$$\n$$', 2, 'delete.backward', '', [{ anchor: 2, head: 2 }], { from: 2, to: 3, text: '\n' }))
+    expect(r?.plan).toEqual({
+      changes: [{ offset: 0, length: 5, text: '' }],
+      selection: { anchor: 0, head: 0 },
+    })
+  })
+
+  it('空代码块退格（删开栏末个 `）→ 整块删除且保留缩进（del-codeblock）', () => {
+    // 事务前 "  ```\n  ```"、光标 5；退格删 [4,5) 的 ` → 快照 "  ``\n  ```"
+    const r = planDeleteRuleModification(engine, inputCtx('  ``\n  ```', 4, 'delete.backward', '', [{ anchor: 4, head: 4 }], { from: 4, to: 5, text: '`' }))
+    // 引擎命中 [0,11) 替换 [[1]]="  "；换算：to 11-1=10 → 快照 [0,10) → "  "
+    expect(r?.plan).toEqual({
+      changes: [{ offset: 0, length: 10, text: '  ' }],
+      selection: { anchor: 2, head: 2 },
+    })
+  })
+
+  it('双链末尾退格（删 ]）→ 联动删除整个 ![[...]]（del-wikilink）', () => {
+    // 事务前 ![[img.png]]、光标 12；退格删 [11,12) 的 ] → 快照 ![[img.png]
+    const r = planDeleteRuleModification(engine, inputCtx('![[img.png]', 11, 'delete.backward', '', [{ anchor: 11, head: 11 }], { from: 11, to: 12, text: ']' }))
+    expect(r?.plan).toEqual({
+      changes: [{ offset: 0, length: 11, text: '' }],
+      selection: { anchor: 0, head: 0 },
+    })
+  })
+
+  it('有内容的 $a$ 删闭合 $ 不触发（上游语义：仅空对联动）', () => {
+    // 事务前 $a$、光标 3；退格删 [2,3) 的 $：右侧无 $ 可配
+    const r = planDeleteRuleModification(engine, inputCtx('$a', 2, 'delete.backward', '', [{ anchor: 2, head: 2 }], { from: 2, to: 3, text: '$' }))
+    expect(r).toBeNull()
+  })
+
+  it('delete.cut 删整对（如剪切整个 ![[img.png]]）→ 换算后空操作返回 null（原生即终态）', () => {
+    const r = planDeleteRuleModification(engine, inputCtx('', 0, 'delete.cut', '', [{ anchor: 0, head: 0 }], { from: 0, to: 12, text: '![[img.png]]' }))
+    expect(r).toBeNull()
+  })
+})
+
+describe('Delete 管线：触发面门控与边界', () => {
+  const engine = engineOf(DELETE_RULE_IDS)
+  /** $|$ 退格场景的合法 delete 上下文（事件名可覆写） */
+  const deleteCtx = (userEvent: string, extra: Partial<RuleInputPipelineContext> = {}): RuleInputPipelineContext => ({
+    ...inputCtx('$', 0, userEvent, '', [{ anchor: 0, head: 0 }], { from: 0, to: 1, text: '$' }),
+    ...extra,
+  })
+
+  it('白名单五类可消费，dedent 与非 delete 事件不响应', () => {
+    expect(pipelineConsumesDeleteEvent('delete.backward')).toBe(true)
+    expect(pipelineConsumesDeleteEvent('delete.forward')).toBe(true)
+    expect(pipelineConsumesDeleteEvent('delete.selection')).toBe(true)
+    expect(pipelineConsumesDeleteEvent('delete.cut')).toBe(true)
+    expect(pipelineConsumesDeleteEvent('delete.line')).toBe(true)
+    expect(pipelineConsumesDeleteEvent('delete.dedent')).toBe(false)
+    expect(pipelineConsumesDeleteEvent('input.type')).toBe(false)
+    expect(pipelineConsumesDeleteEvent('undo')).toBe(false)
+  })
+
+  it('白名单外 delete.* 不产出计划', () => {
+    expect(planDeleteRuleModification(engine, deleteCtx('delete.dedent'))).toBeNull()
+    expect(planDeleteRuleModification(engine, deleteCtx('input.type'))).toBeNull()
+  })
+
+  it('inputText 非空（违背平台契约）不消费；replaced 为 null 不消费', () => {
+    expect(planDeleteRuleModification(engine, deleteCtx('delete.backward', { inputText: 'x' }))).toBeNull()
+    expect(planDeleteRuleModification(engine, deleteCtx('delete.backward', { replaced: null }))).toBeNull()
+    expect(planDeleteRuleModification(engine, deleteCtx('delete.backward', { replaced: { from: 0, to: 0, text: '' } }))).toBeNull()
+  })
+
+  it('多选区（多区间 replaced 最小包围 + 拼接语义）→ null：事务前重建不可信，不猜', () => {
+    // 双光标各自退格删 $：快照 "x" 残留双光标，replaced 为两区间拼接
+    const r = planDeleteRuleModification(
+      engine,
+      inputCtx('x', 0, 'delete.backward', '', [
+        { anchor: 0, head: 0 },
+        { anchor: 1, head: 1 },
+      ], { from: 0, to: 2, text: '$$' }),
+    )
+    expect(r).toBeNull()
+  })
+})
+
+// ===== 工单 #9：SelectKey 触发管线（选中包裹计划） =====
+//
+// 语境约定：快照 text 为键入后文档（选区已被键入字符替换）、replaced
+// 为被替换的选区内容（包裹目标）、inputText 为触发键。
+
+describe('SelectKey 管线：内置规则选中包裹矩阵（真实数据端到端）', () => {
+  const engine = engineOf(SELECTKEY_RULE_IDS)
+
+  /** 选中 hello（[0,5)）后键入触发键的上下文 */
+  const wrapCtx = (key: string): RuleInputPipelineContext =>
+    inputCtx(key, 1, 'input.type', key, [{ anchor: 1, head: 1 }], { from: 0, to: 5, text: 'hello' })
+
+  it('选中后键 · → 行内代码包裹，$0 tabstop 覆盖选中文本（sel-wrap-backtick）', () => {
+    const r = planSelectKeyRuleModification(engine, wrapCtx('·'))
+    expect(r?.plan).toEqual({
+      changes: [{ offset: 0, length: 1, text: '`hello`' }],
+      selection: { anchor: 1, head: 1 },
+    })
+    // ${0:${SEL}} → $0 组覆盖 hello（光标落组首）
+    expect(r?.tabstops).toEqual([{ number: 0, from: 1, to: 6 }])
+  })
+
+  it('选中后键 【 → [ ] 半角方括号包裹（sel-wrap-symbols，函数体规则）', () => {
+    const r = planSelectKeyRuleModification(engine, wrapCtx('【'))
+    expect(r?.plan).toEqual({
+      changes: [{ offset: 0, length: 1, text: '[hello]' }],
+      selection: { anchor: 1, head: 1 },
+    })
+  })
+
+  it('选中后键 ¥ → $ $ 包裹（sel-wrap-symbols）', () => {
+    const r = planSelectKeyRuleModification(engine, wrapCtx('¥'))
+    expect(r?.plan?.changes[0]?.text).toBe('$hello$')
+  })
+
+  it('选中后键 “ → 全角引号配对包裹（sel-wrap-quotes，函数体规则）', () => {
+    const r = planSelectKeyRuleModification(engine, wrapCtx('“'))
+    expect(r?.plan?.changes[0]?.text).toBe('“hello”')
+  })
+
+  it('选中后键 （ → 全角括号配对包裹（sel-wrap-cjk-brackets，函数体规则）', () => {
+    const r = planSelectKeyRuleModification(engine, wrapCtx('（'))
+    expect(r?.plan?.changes[0]?.text).toBe('（hello）')
+  })
+
+  it('非触发键（x）→ null：包裹目标保留在 replaced 但无规则命中', () => {
+    expect(planSelectKeyRuleModification(engine, wrapCtx('x'))).toBeNull()
+  })
+
+  it('选中后键 】（无对应规则）→ null', () => {
+    expect(planSelectKeyRuleModification(engine, wrapCtx('】'))).toBeNull()
+  })
+})
+
+describe('SelectKey 管线：触发面门控与边界', () => {
+  const engine = engineOf(SELECTKEY_RULE_IDS)
+
+  it('纯插入（replaced null）→ null（Input 管线领地）', () => {
+    const r = planSelectKeyRuleModification(
+      engine,
+      inputCtx('·', 1, 'input.type', '·', [{ anchor: 1, head: 1 }], null),
+    )
+    expect(r).toBeNull()
+  })
+
+  it('IME 定稿（input.type.compose）不适用 SelectKey：replaced 恒 null（平台 #399 边界）', () => {
+    // 即便组合输入在视觉上替换了选区，平台对 compose 补驱动恒报 null——
+    // 组合事务先于 compositionend，替换侧无法归因
+    const r = planSelectKeyRuleModification(
+      engine,
+      inputCtx('·', 1, 'input.type.compose', '·', [{ anchor: 1, head: 1 }], null),
+    )
+    expect(r).toBeNull()
+  })
+
+  it('delete.* 事件不进 SelectKey 管线（replaced 语义为被删文本）', () => {
+    const r = planSelectKeyRuleModification(
+      engine,
+      inputCtx('', 0, 'delete.selection', '', [{ anchor: 0, head: 0 }], { from: 0, to: 5, text: 'hello' }),
+    )
+    expect(r).toBeNull()
+  })
+
+  it('多选区替换（多区间 replaced 拼接语义）→ null：单计划无法忠实表达多区间', () => {
+    const r = planSelectKeyRuleModification(
+      engine,
+      inputCtx('··', 1, 'input.type', '··', [
+        { anchor: 1, head: 1 },
+        { anchor: 2, head: 2 },
+      ], { from: 0, to: 11, text: 'hello world' }),
+    )
+    expect(r).toBeNull()
+  })
+
+  it('多字符键入（—— 形态）不命中：引擎 triggerKeys 逐字符解析，多字符键必然不中', () => {
+    const r = planSelectKeyRuleModification(
+      engine,
+      inputCtx('——', 2, 'input.type', '——', [{ anchor: 2, head: 2 }], { from: 0, to: 5, text: 'hello' }),
+    )
+    expect(r).toBeNull()
   })
 })
