@@ -1,0 +1,21 @@
+// 类型检查配置（tsc --noEmit，esbuild 不查类型）。形态对齐 vsidian
+// test/examples 独立样例工程：Bundler 解析 + strict 全开。
+// include 覆盖 src（三入口）、types（vendor SDK 类型快照）、test（冒烟）。
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "types": ["node", "vscode"]
+  },
+  "include": ["src", "types", "test"]
+}

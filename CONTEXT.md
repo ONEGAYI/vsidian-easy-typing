@@ -1,0 +1,78 @@
+# 领域词汇（CONTEXT）
+
+本文件是本项目领域语言的单一事实源。移植语义以上游 [easy-typing-obsidian](https://github.com/Yaozhuwa/easy-typing-obsidian)（v6.0.9）文档与源码为准；平台侧概念以 vsidian 仓 `docs/addons/` 与 `types/vendor/` 快照为准。新术语首次进入工单或规格时，先在此登记再使用。
+
+## 移植域（上游语义）
+
+### 规则三触发类（RuleType）
+
+上游规则引擎对变换规则的触发分类（`src/rule_engine.ts`）：
+
+- **Input**：输入字符触发——刚键入的文本匹配规则左侧时施加变换（配对补全、全角转换等）；
+- **Delete**：删除触发——删除动作发生后按剩余上下文判定（联动删除配对端等）；
+- **SelectKey**：选区按键触发——存在选区时按键发生包裹类变换（选中后按 `*` 包成斜体等；触发键序列由规则声明）。
+
+映射到平台侧：Input ≈ `userEvent: 'input.type'`，Delete ≈ `delete.*` 白名单事务，SelectKey 的包裹判定依据 `AddonInputContext.replaced`（被替换的选区内容）。
+
+### 插入后变换
+
+输入事件发生后，对刚插入的文本及其左右上下文施加的**即时**文本变换——上游规则引擎的执行结果（`TxContext` / `ApplyResult`）。区别于全量格式化（命令族触发的批量重排）。
+
+### 触发模式与作用域（规则属性）
+
+- **触发模式**（RuleTriggerMode）：`Auto`（键入即生效）/ `Tab`（键入后按 Tab 确认，用于占位符类规则）；
+- **作用域**（RuleScope）：规则生效的正文区域——`Text`（普通文本）/ `Formula`（公式内）/ `Code`（行内代码内，可指定语言）/ `All`。
+
+### 保护区
+
+自动格式化不得触碰的正文区域，由**自定义正则区块**（上游 README「用正则表达式保护特定文本不被格式化」）圈定；行内代码与公式天然是保护区。本项目语境统一称「保护区」，落档上游措辞为「自定义正则区块」。
+
+### 前缀词典（PrefixDictionary）
+
+输入过程中**抑制过早空格插入**的词典（上游 `src/formatting/prefix_dictionary.ts`）：词典中的前缀（如 `Fig.`、`e.g.`）后跟输入时不立即补空格，避免半角句点后误判句末。用于自动格式化的空格决策。
+
+### 行为链（平台侧，消费面）
+
+vsidian behaviors 模型：同一次输入事务按**有效序**被多个已注册行为依次修饰，后续行为的快照读到前序修饰结果；默认序按完整键（`<addonId>#<行为局部ID>`）字典序，用户可在 Vsidian 设置页逐项关闭或调序。每段修饰按自己的 `history` 声明（`atomic` / `joinPrevious`）提交撤销项。上游多条规则在移植时可能合并为少量行为链节点。
+
+### Tabout（Tab 跳出配对符）
+
+配对符号内部按 Tab 跳出到右侧闭合符之外（上游 `tabPairStringTabout` 分支，22 对配符）。光标场景经**栈匹配**（`taboutCursorInPairedString`，行内限定）找光标右侧第一个能闭合未闭配对的符号——紧贴则跳到闭合符之后，不贴则先跳到闭合符之前（两步越出）；选区场景只认「两侧紧贴同一对配对符」的直接包围（不做栈匹配），命中后光标折叠到右闭合符之后。实施口径见[规格](docs/specs/tabout.md)。
+
+### Tabstop（占位符导航态）
+
+规则替换体 `$0` / `$1` / `${1:默认}` 占位符的逐组跳转态（上游 `tabstops_state_field.ts`）：替换插入后激活——同号占位符并为组（多光标同步编辑单元），跳转顺序 **$0 → $1 → $2**（上游口径，$0 是首个编辑点非终点），Tab 前进、Shift-Tab 后退（后者为移植新增），跳至最大编号组即收尾；当前组 mark 高亮（复用平台 find「当前命中」变量），选区移出当前组或撤销替换自动退出。Tab 拦截走抢先层（Prec.high），优先于平台 Tab 情境链与 Tabout 落穿层。实施口径见[规格](docs/specs/tabstop.md)。
+
+### BetterBackspace（空列表/引用智能退格）
+
+空列表项/空引用行上按退格一键清除结构前缀（上游 `handleBackspace` 分支），而非逐字符删除：顶级空列表项**删除整行合并到上一行末尾**（上一行是列表项时）或清空行内容，有序空项删除后**同层后续连续项自动重编号**（各减一，跳号/缩进不同/非有序即停）；空引用行按层级**降级**（多级 `>>` → `> `，上一行是相同空引用行时两行**联降**）、合并或清空。嵌套空项（行首缩进）与空任务项让位平台处理（树判升级/一次清整段更准）。实施口径见[规格](docs/specs/backspace.md)。
+
+### 渐进选择（EnhanceModA）
+
+连续 Mod+A 的层级推进选择（上游 `handleModA`）：文本行「行 → 段块」、引用行「引用行内容 → 引用块」、列表行「内容 → 当前行及子列表 → 整列表 → 全文」；序列末档透传由平台原生全选补完。**无外部状态**——每次按键从当前选区与档位区间的包含/等值关系推断层级，「连续性断开」即选区不再匹配任何档位，自然回落首档。实施口径见[规格](docs/specs/enhance-moda.md)。
+
+### 段块（paragraph block）
+
+「选择当前块」与渐进选择中「行」之上的扩展单位：以当前行为起点向上下收纳**连续的普通文本行**（非空、非 `^#+ ` 标题、非列表/引用/围栏/公式/frontmatter——正则降级口径）构成的行级区间；上游 `getBlockLinesInPos`。
+
+### SmartPaste（智能粘贴续接）
+
+光标在列表/引用行尾粘贴时，按粘贴内容**自身形态**决定续接方式（上游 `cm_extensions.ts` SmartPaste 分支）：先剥非空行公共缩进，再判定内容是否为**列表形态**（每行为列表项/空行，或缩进 ≥ 公共缩进+2 的续行）——列表目标 × 列表内容 → 首项剥标记并入当前项、其余项保留自身标记（不重编号）；否则首行原样、其余行加目标前缀（引用目标 × 列表内容 → 引用内列表）。恒等续接（结果与原文相同，如单行纯文本）透传原生粘贴。实施口径见[规格](docs/specs/smart-paste.md)。
+
+### 纯文本粘贴标记（plainPasteInProgress）
+
+「本次粘贴跳过自动格式化」的一次性意图信号（上游 `main.ts` markPaste 双标志）：纯文本粘贴入口（Mod+Shift+V）置位，500ms 窗口内格式化管线消费即清（`consumePlainPaste`）；窗口内普通粘贴事件不清除该意图。与 `pasteDetected`（粘贴正在发生，普通/纯文本都置）成对。消费面是 #26 格式化管线，本标记是其联动缝。
+
+### NewLineBelow（下方新建行）
+
+Mod+Enter 在**当前行行尾**插入新行并延续结构前缀（上游 `goNewLineAfterCurLine`）：列表续标记（有序递增、任务项重置 `[ ]`）、引用续 `>` 串；**不保持原光标列**——光标固定落新行前缀末尾。接管面为平台 defaultKeymap `Mod-Enter → insertBlankLine` 的净增量（前缀延续）；关闭设置或多选区时透传回平台内建行为。实施口径见[规格](docs/specs/new-line-below.md)。
+
+### 严格换行（StrictModeEnter，已决策：C 先行）
+
+上游对 Obsidian `strictLineBreaks: true`（严格渲染，单换行阅读视图不可见）的**编辑侧补偿**：Enter 时按三模式（`enter_twice` 双回车分段 / `two_space` 行尾两空格硬换行 / `mix_mode` 混合）改写插入文本使换行在严格渲染下可见。Vsidian 阅读管线 markdown-it `breaks: false` 恒为严格语义——补偿前提原生恒成立；2026-10-09 决策走 C 先行路线——平台渲染设置（vsidian#423）先行，编辑侧三模式补偿转 [#30](https://github.com/ONEGAYI/vsidian-easy-typing/issues/30) 等待平台落地后含渲染态门控实施，决策记录见 [ADR-0002](docs/adr/0002-strict-line-break-mapping.md) §四。
+
+## 移植口径备忘
+
+- 永不移植清单与三标签口径见 [AGENTS.md](AGENTS.md)，不在此重复。
+- 上游行号锚点以上游克隆 `D:\CODE\Project\_ForExplore\easy-typing-obsidian`（v6.0.9）为准；按内容锚点（函数名 / 规则 id）优先对照。
+- 平台 API 消费面速查见 vsidian 仓 `docs/addons/api-reference.md`（生成物）与 `docs/addons/developer-guide.md`。

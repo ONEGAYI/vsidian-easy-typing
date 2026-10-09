@@ -1,0 +1,69 @@
+# CI：push(main)、PR 与手动触发的持续集成（工单 #23）。
+# 单 job 串行五链路——构建与类型检查（esbuild 三产物 + tsc --noEmit，
+# 即 npm run compile）、vitest 单测、vendor 快照防漂移、VSIX 打包上传。
+# 对齐 vsidian 主仓风格：node 22 + setup-node@v5 + cache npm + npm ci，
+# concurrency 按 ref 分组并取消旧跑；报告无论成败均从原生日志复核，
+# 测试 JSON 报告在失败时上传留证（attempt 号防 rerun 覆盖）。
+# vendor:check 需要读 vsidian 源仓的 git 对象（快照锚定 commit），CI 上
+# 无本地源仓路径，故先 partial clone 再以 VSIDIAN_SOURCE_REPO 指向——
+# 锚定 commit 不可达时必须失败而非降级（fail-closed，防漂移检查的意义
+# 就在与源对比）。VSIX 体积红线归 #24 发布脚本，本工作流只构建与上传。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: 安装依赖
+        run: npm ci
+      - name: 构建与类型检查
+        run: npm run compile
+      - name: 单元测试
+        # 双 reporter：default 写终端（原生日志即复核入口），json 写文件
+        # 供失败时上传留证
+        run: npm test -- --reporter=default --reporter=json --outputFile=out/test/vitest-report.json
+      - name: 拉取 vsidian 源仓（vendor 快照锚定对象）
+        # --filter=blob:none：commit/tree 随 clone 到场，blob 由 git show
+        # 按需取——快照闭包仅几十个文件，全量 blob 无必要
+        run: git clone --filter=blob:none https://github.com/ONEGAYI/vsidian.git /tmp/vsidian
+      - name: vendor 快照防漂移检查
+        run: npm run vendor:check
+        env:
+          VSIDIAN_SOURCE_REPO: /tmp/vsidian
+      - name: VSIX 打包
+        # 与本地 npm run package（#24，scripts/release.mjs）同款 vsce 命令；
+        # 前面 compile 已产 dist/，vsce 另经 vscode:prepublish 自动重建（双保险）。
+        # 体积红线与内容检查归 #24 发布脚本，本工作流只构建与上传。
+        run: npx @vscode/vsce package --no-dependencies
+      - name: 上传 VSIX 产物
+        uses: actions/upload-artifact@v4
+        with:
+          # 名称带 attempt 号：rerun 后新 attempt 同名上传会覆盖旧报告
+          # （vsidian #164 先例）
+          name: vsix-a${{ github.run_attempt }}
+          path: '*.vsix'
+          if-no-files-found: error
+      - name: 保存测试报告（失败现场）
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-a${{ github.run_attempt }}
+          path: out/test/vitest-report.json
+          if-no-files-found: warn
