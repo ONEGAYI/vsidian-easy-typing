@@ -34,7 +34,7 @@ import { DEFAULT_BUILTIN_RULES } from './rules/default-rules'
 import { pickMessages, type Messages } from './i18n'
 import { debugLog } from './logging'
 import { RULE_ERROR_TOPIC, SETTINGS_TOPIC } from './settings/store'
-import { planInputRuleModification } from './ruleBehaviorPipeline'
+import { planInputRuleWithTabstops, type TabstopSpec } from './ruleBehaviorPipeline'
 
 // 规则错误通知通道 topic（宿主 extension.ts 挂 handler 显示 i18n 警告；
 // 定义在 settings/store.ts 的共享常量区，此处 re-export 供页面侧同一来源消费）
@@ -183,11 +183,26 @@ export interface RuleBehaviorRegisterOutcome {
   readonly reason?: string
 }
 
-export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): RuleBehaviorRegisterOutcome[] {
+/** registerRuleInputBehaviors 的返回：注册结果 + tabstop 暂存通道 */
+export interface RuleBehaviorRuntime {
+  readonly outcomes: readonly RuleBehaviorRegisterOutcome[]
+  /**
+   * 取走最近一次命中计划携带的 tabstop 组（#15 导航态激活的数据源）。
+   * 读即消费（返回后清空）；无待激活时返回空数组。页面装配层在计划应用
+   * 后的 docChanged 事务里调用——坐标为应用后文档绝对坐标，可直接喂
+   * tabstopNav.activateTabstops。
+   */
+  readonly consumePendingTabstops: () => readonly TabstopSpec[]
+}
+
+export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): RuleBehaviorRuntime {
   const messages = pickMessages(deps.language)
   const gate = createRulePipelineGate(deps.channel)
   void gate.refresh()
   const reportRuleError = createRuleErrorReporter(deps.channel, { now: deps.now })
+
+  // 独占组保证一次输入至多一族命中——单一暂存槽足够
+  let pendingTabstops: readonly TabstopSpec[] = []
 
   const outcome: RuleBehaviorRegisterOutcome[] = []
   for (const family of INPUT_RULE_FAMILIES) {
@@ -200,8 +215,8 @@ export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): Rul
       examples: [...i18n.examples],
       exclusiveGroup: INPUT_RULE_EXCLUSIVE_GROUP,
       history: 'atomic',
-      onInput: (ctx: AddonInputContext) =>
-        planInputRuleModification(
+      onInput: (ctx: AddonInputContext) => {
+        const withTabstops = planInputRuleWithTabstops(
           engine,
           {
             userEvent: ctx.userEvent,
@@ -209,7 +224,13 @@ export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): Rul
             snapshot: { text: ctx.snapshot.text, selections: ctx.snapshot.selections },
           },
           { debug: gate.debug() },
-        ),
+        )
+        if (withTabstops === null) return null
+        if (withTabstops.tabstops.length > 0) {
+          pendingTabstops = withTabstops.tabstops
+        }
+        return withTabstops.plan
+      },
     })
     if (!result.ok) {
       debugLog('rule behavior register rejected:', family.localId, result.reason)
@@ -226,5 +247,12 @@ export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): Rul
   deps.behaviors.onChanged(() => {
     void gate.refresh()
   })
-  return outcome
+  return {
+    outcomes: outcome,
+    consumePendingTabstops: () => {
+      const pending = pendingTabstops
+      pendingTabstops = []
+      return pending
+    },
+  }
 }

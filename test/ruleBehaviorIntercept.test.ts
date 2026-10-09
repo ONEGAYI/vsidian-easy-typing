@@ -85,11 +85,12 @@ describe('注册形状契约（AddonBehaviorRegistration）', () => {
     registrations: RuleBehaviorRegistrationSubset[]
     requestedTopics: string[]
     onChangedCallbacks: Array<() => void>
+    runtime: ReturnType<typeof registerRuleInputBehaviors>
   } {
     const registrations: RuleBehaviorRegistrationSubset[] = []
     const requestedTopics: string[] = []
     const onChangedCallbacks: Array<() => void> = []
-    registerRuleInputBehaviors({
+    const runtime = registerRuleInputBehaviors({
       behaviors: {
         register: (reg) => {
           registrations.push(reg)
@@ -108,7 +109,7 @@ describe('注册形状契约（AddonBehaviorRegistration）', () => {
       },
       language,
     })
-    return { registrations, requestedTopics, onChangedCallbacks }
+    return { registrations, requestedTopics, onChangedCallbacks, runtime }
   }
 
   it('五族各注册一条：名称/说明走字典、history 一律 atomic、同一独占组', () => {
@@ -152,8 +153,28 @@ describe('注册形状契约（AddonBehaviorRegistration）', () => {
     expect(onDelete).toBeNull()
   })
 
+  it('tabstop 暂存通道（#15×#25 接线）：命中含占位符的计划后可取、读即消费', () => {
+    const { registrations, runtime } = registerAll('zh-CN')
+    // 基线：无命中后为空
+    expect(runtime.consumePendingTabstops()).toEqual([])
+    const autopair = registrations.find((r) => r.id === '02-autopair')!
+    autopair.onInput({
+      userEvent: 'input.type',
+      inputText: '（',
+      replaced: null,
+      docUri: 'file:///a.md',
+      snapshot: { text: '（', selections: [{ anchor: 1, head: 1 }], version: 1, revision: 1 },
+    })
+    // 命中计划（（）补全）携带 $0 → tabstop 组暂存待取
+    const pending = runtime.consumePendingTabstops()
+    expect(pending.length).toBeGreaterThan(0)
+    expect(pending[0]).toMatchObject({ number: 0 })
+    // 读即消费：再取为空
+    expect(runtime.consumePendingTabstops()).toEqual([])
+  })
+
   it('注册拒绝（duplicate-id）不是故障：结果记录 ok:false，不抛错', () => {
-    const outcome = registerRuleInputBehaviors({
+    const { outcomes } = registerRuleInputBehaviors({
       behaviors: {
         register: () => ({ ok: false as const, reason: 'duplicate-id' }),
         onChanged: () => () => {},
@@ -161,8 +182,8 @@ describe('注册形状契约（AddonBehaviorRegistration）', () => {
       channel: neverResolvingChannel(),
       language: 'en',
     })
-    expect(outcome.length).toBe(INPUT_RULE_FAMILIES.length)
-    expect(outcome.every((r) => !r.ok)).toBe(true)
+    expect(outcomes.length).toBe(INPUT_RULE_FAMILIES.length)
+    expect(outcomes.every((r) => !r.ok)).toBe(true)
   })
 
   it('英文语言标签取英文字典名称', () => {

@@ -18,7 +18,16 @@
 // 塌缩选区（上游 notSelected 同口径；选区替换形态归 #9 SelectKey）。
 // 计划 selection 为单一 {anchor, head}，平台按 EditorSelection.single
 // 应用——命中即坍缩其余光标，与上游 dispatch 单选区行为等价。
-import { RuleEngine, RuleType, type ApplyResult, type TxContext } from './rules/rule-engine'
+import {
+  RuleEngine,
+  RuleType,
+  type ApplyResult,
+  type TabstopSpec,
+  type TxContext,
+} from './rules/rule-engine'
+
+// intercept 层经本模块取 tabstop 类型（单一来源，避免多点直连引擎内部）
+export type { TabstopSpec } from './rules/rule-engine'
 import { detectScopeFromText } from './ruleScopeFallback'
 
 /** 管线输入面：AddonInputContext 的结构子集（管线只消费这些字段） */
@@ -53,6 +62,20 @@ export function planInputRuleModification(
   ctx: RuleInputPipelineContext,
   options: { debug?: boolean } = {},
 ): RuleInputBehaviorPlan | null {
+  return planInputRuleWithTabstops(engine, ctx, options)?.plan ?? null
+}
+
+/**
+ * planInputRuleModification 的伴随形态：计划与引擎产出的 tabstop 组一并
+ * 返回（#15 导航态激活的数据源——行为链 onInput 暂存 tabstops，页面装配层
+ * 在计划应用后喂 tabstopNav.activateTabstops；tabstops 为 applyReplacement
+ * 后文档绝对坐标，与平台应用计划后的文档一致，可直接使用）。
+ */
+export function planInputRuleWithTabstops(
+  engine: RuleEngine,
+  ctx: RuleInputPipelineContext,
+  options: { debug?: boolean } = {},
+): { plan: RuleInputBehaviorPlan; tabstops: readonly TabstopSpec[] } | null {
   if (!pipelineConsumesUserEvent(ctx.userEvent)) return null
   const first = ctx.snapshot.selections[0]
   if (first === undefined) return null
@@ -74,7 +97,7 @@ export function planInputRuleModification(
   }
   const result = engine.process(tx)
   if (result === null) return null
-  return applyResultToPlan(result)
+  return { plan: applyResultToPlan(result), tabstops: result.tabstops }
 }
 
 /**

@@ -266,16 +266,29 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
 
   const behaviors = sdk.behaviors
   if (behaviors !== undefined) {
-    const ruleOutcomes = registerRuleInputBehaviors({
+    const ruleRuntime = registerRuleInputBehaviors({
       behaviors,
       channel: sdk.channel,
       language: navigator.language,
     })
-    for (const outcome of ruleOutcomes) {
+    for (const outcome of ruleRuntime.outcomes) {
       if (!outcome.ok) {
         // 普通 API 拒绝不算故障：经 debugLog 留痕便于诊断（logging.ts 约定）
         debugLog('rule behavior register rejected:', outcome.localId, outcome.reason)
       }
     }
+
+    // #15×#25 接线：行为链计划应用后的 docChanged 事务里取走暂存的
+    // tabstop 组激活导航态（坐标为应用后文档绝对坐标，直接可用；读即
+    // 消费，无残留）。pending 只在 onInput 命中含占位符的计划后非空，
+    // 窗口极小——若被无关 docChanged 事务抢先消费，导航态静默不激活，
+    // 下次输入即恢复，不视为故障（口径见 tabstop.md「行为链接线」节）。
+    sdk.registerExtension(
+      cm6.view.EditorView.updateListener.of((update) => {
+        if (!update.docChanged) return
+        const pending = ruleRuntime.consumePendingTabstops()
+        if (pending.length > 0) tabstopNav.activateTabstops(update.view, pending)
+      }),
+    )
   }
 })
