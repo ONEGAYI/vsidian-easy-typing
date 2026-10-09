@@ -590,7 +590,8 @@ function runViewCommand(
     void deps.gate
       .refresh()
       .then(() => {
-        if (target === null) return
+        // 违约防御深度：undefined 按无活动视图降级（同 plainPaste 口径）
+        if (target === null || target === undefined) return
         const engine = deps.gate.settings()
         const view = deps.views.viewForInstance(target.info.instanceId)
         if (view !== null) {
@@ -601,7 +602,10 @@ function runViewCommand(
           return
         }
         // 句柄路径：仅主正文句柄（原命令面板 main 回退）；嵌入/悬停目标不执行
-        if (target.info.viewType !== 'main' || !target.info.editable) return
+        if (target.info.viewType !== 'main' || !target.info.editable) {
+          debugLog('formatting command skipped: target view not registered (embed/hover) — no fallback to main')
+          return
+        }
         if (isDocUriExcluded(target.info.targetDocUri, engine.excludeFiles)) {
           deps.notify?.({ kind: 'command-file-excluded' })
           return

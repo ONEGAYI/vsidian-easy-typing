@@ -21,6 +21,7 @@ import type { AddonChannelOutcome } from '../types/vendor/shared/addonPage'
 import type { AddonCommandDefinition } from '../types/vendor/shared/addonCommands'
 import type { AddonViewHandle } from '../types/vendor/shared/addonEditApi'
 import type { PasteMarker } from './pasteMarker'
+import { debugLog } from './logging'
 import { normalizeClipboardText } from './smartPasteAlgorithm'
 
 /** 命令局部 ID（平台注入命名空间前缀成完整命令 ID） */
@@ -190,9 +191,16 @@ export function createPlainPasteCommandHandler(
   deps: PlainPasteCommandDeps,
 ): (target: AddonViewHandle | null) => void {
   return (target) => {
-    if (target === null) return
+    // 违约防御深度（对齐 viewIdentity 缺席守卫）：undefined 按无活动视图降级，
+    // 不让 handler 异常被平台 reportFault 升级为整组件回收
+    if (target === null || target === undefined) return
     const view = deps.views.viewForInstance(target.info.instanceId)
-    if (view === null) return
+    if (view === null) {
+      // 留痕面（对齐拆除前 B-F3 诊断口径）：登记面外目标（嵌入/悬停实例或
+      // viewIdentity 缺席）静默放弃——「命令没反应」类反馈的定位线索
+      debugLog('plain-paste skipped: target view not registered (embed/hover or viewIdentity unavailable)')
+      return
+    }
     if (view.compositionStarted || view.state.readOnly) return
     void deps
       .readClipboardText()

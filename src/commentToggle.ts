@@ -42,6 +42,7 @@ import type { AddonCommandDefinition } from '../types/vendor/shared/addonCommand
 import type { AddonViewHandle } from '../types/vendor/shared/addonEditApi'
 import type { EditorViewRegistry } from './plainPasteCommand'
 import { detectScopeFromText } from './ruleScopeFallback'
+import { debugLog } from './logging'
 import { RuleScope } from './rules/rule-engine'
 
 // ---- 语言注释符表（上游 commentSymbols 逐条移植；键为小写语言标识） ----
@@ -281,9 +282,14 @@ export function createToggleCommentCommandHandler(
   deps: ToggleCommentCommandDeps,
 ): (target: AddonViewHandle | null) => void {
   return (target) => {
-    if (target === null) return
+    // 违约防御深度：undefined 按无活动视图降级（同 plainPaste 口径）
+    if (target === null || target === undefined) return
     const view = deps.views.viewForInstance(target.info.instanceId)
-    if (view === null) return
+    if (view === null) {
+      // 留痕面（对齐拆除前 B-F3 诊断口径）：登记面外目标静默放弃
+      debugLog('comment-toggle skipped: target view not registered (embed/hover or viewIdentity unavailable)')
+      return
+    }
     if (view.compositionStarted || view.state.readOnly) return
     const plan = planCommentToggle(view.state)
     if (plan === null) return

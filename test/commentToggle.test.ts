@@ -455,4 +455,13 @@ describe('命令 handler（目标句柄路由 + 守卫 + 单事务派发）', ()
     setup(main)(fakeHandle('embed:host-1', 'embed'))
     expect(dispatched).toHaveLength(0)
   })
+
+  it('平台违约传 undefined（旧签名宿主零参调用形态）→ 按无活动视图静默无动作不抛错', async () => {
+    // 防御深度对齐 viewIdentity 缺席守卫：handler 抛错会被平台 reportFault
+    // 升级为整组件回收——违约输入按无目标降级而非异常
+    const { view, dispatched } = fakeCmdView('hello', 2)
+    const handler = setup(view)
+    expect(() => handler(undefined as unknown as AddonViewHandle | null)).not.toThrow()
+    expect(dispatched).toHaveLength(0)
+  })
 })

@@ -100,7 +100,8 @@ export function createSelectBlockCommandHandler(
   deps: SelectBlockCommandDeps,
 ): (target: AddonViewHandle | null) => void {
   return (target) => {
-    if (target === null) return
+    // 违约防御深度：undefined 按无活动视图降级（同 plainPaste 口径）
+    if (target === null || target === undefined) return
     const snap = target.editor.getSnapshot()
     if (!snap.ok) return
     const primary = snap.snapshot.selections[0]
