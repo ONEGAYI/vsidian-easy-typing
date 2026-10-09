@@ -19,8 +19,8 @@ import type { Extension } from '@codemirror/state'
 import type { EditorView, ViewPlugin } from '@codemirror/view'
 import type { AddonChannelOutcome } from '../types/vendor/shared/addonPage'
 import type { AddonCommandDefinition } from '../types/vendor/shared/addonCommands'
+import type { AddonViewHandle } from '../types/vendor/shared/addonEditApi'
 import type { PasteMarker } from './pasteMarker'
-import { debugLog } from './logging'
 import { normalizeClipboardText } from './smartPasteAlgorithm'
 
 /** 命令局部 ID（平台注入命名空间前缀成完整命令 ID） */
@@ -46,21 +46,25 @@ export function buildPlainPasteCommandDefinition(title: string): AddonCommandDef
   }
 }
 
-// ---- 视图捕获：命令回调无 view 入参，经 ViewPlugin 登记在场编辑器实例 ----
+// ---- 视图捕获：命令回调携带目标句柄（views 面对象），CM6 视图经登记表解析 ----
 
 /** 在场编辑器视图登记表（当前平台附加组件扩展槽仅挂主正文 Live 实例，
- *  嵌入视图不经此登记——登记面以平台装配事实为准） */
+ *  嵌入视图不经此登记——登记面以平台装配事实为准）。命令回调的 target
+ *  句柄经 viewForInstance 反查解析出本页 CM6 视图（合成 paste 事件的
+ *  载体）；登记面外的目标（嵌入/悬停实例）解析为 null。 */
 export interface EditorViewRegistry {
   /** 登记视图，返回注销句柄 */
   register(view: EditorView): { dispose(): void }
-  /** 活动目标：聚焦者优先；无聚焦且唯一在场视图兜底；多视图无聚焦返回 null */
-  activeView(): EditorView | null
-  /** 视图是否在登记表（审查 B-F3：聚焦视图不在场 = 嵌入/悬停实例的判别面） */
-  contains(view: EditorView): boolean
+  /** 按平台实例 ID 解析登记视图：登记视图逐一经 identityOf 反查匹配；
+   *  无匹配（ID 非平台实例或未登记）返回 null */
+  viewForInstance(instanceId: string): EditorView | null
 }
 
-/** 构造视图登记表 */
-export function createEditorViewRegistry(): EditorViewRegistry {
+/** 构造视图登记表（identityOf = experimental.viewIdentity 的 instanceIdOf
+ *  反查面，page-editor 经箭头包装注入） */
+export function createEditorViewRegistry(
+  identityOf: (view: EditorView) => string | null,
+): EditorViewRegistry {
   const views = new Set<EditorView>()
   return {
     register(view: EditorView) {
@@ -71,16 +75,11 @@ export function createEditorViewRegistry(): EditorViewRegistry {
         },
       }
     },
-    activeView() {
-      const live = Array.from(views)
-      for (const view of live) {
-        if (view.hasFocus) return view
+    viewForInstance(instanceId: string) {
+      for (const view of views) {
+        if (identityOf(view) === instanceId) return view
       }
-      // 无聚焦（如命令面板入口）：唯一在场视图兜底，多视图不猜目标
-      return live.length === 1 ? live[0]! : null
-    },
-    contains(view: EditorView) {
-      return views.has(view)
+      return null
     },
   }
 }
@@ -177,28 +176,22 @@ export interface PlainPasteCommandDeps {
   readonly views: EditorViewRegistry
   readonly readClipboardText: () => Promise<string>
   readonly dispatchPlainPaste: (view: EditorView, text: string) => boolean
-  /** 当前焦点 CM6 视图探测（page-editor 经 EditorView.findFromDOM(activeElement)
-   *  注入；缺省视为无焦点信息，不拦兜底路径） */
-  readonly getFocusedView?: () => EditorView | null
 }
 
 /**
- * 产出命令回调：找目标视图 → 读剪贴板 text/plain → 置纯文本标记 → 合成
- * 纯文本粘贴事件（同步重入粘贴链，标记在窗内被 #26 观察）。无视图/无文本/
- * 组合中/只读一律静默无动作（不标记不派发）。
- *
- * 嵌入视图口径（审查 B-F3 修复）：焦点元素属于某个 CM6 视图但不在登记表
- * （嵌入/悬停实例——附加组件扩展槽仅挂主正文 Live 实例）时拒绝执行并
- * debugLog 留痕——用户意图是嵌入文档，唯一在场视图兜底会误写主文档。
+ * 产出命令回调（target = 平台解析的目标视图句柄，PR #432 起命令回调
+ * 携带）：句柄实例 ID 经登记表解析本页 CM6 视图 → 读剪贴板 text/plain
+ * → 置纯文本标记 → 合成纯文本粘贴事件（同步重入粘贴链，标记在窗内被
+ * #26 观察）。无活动视图（target null）/目标实例不在登记面（嵌入/悬停
+ * ——扩展槽未装配，无本页视图可合成事件）/无文本/组合中/只读一律静默
+ * 无动作（不标记不派发）。
  */
-export function createPlainPasteCommandHandler(deps: PlainPasteCommandDeps): () => void {
-  return () => {
-    const focused = deps.getFocusedView?.() ?? null
-    if (focused !== null && !deps.views.contains(focused)) {
-      debugLog('plain-paste skipped: focused view not registered (embed/hover) — refuse fallback target')
-      return
-    }
-    const view = deps.views.activeView()
+export function createPlainPasteCommandHandler(
+  deps: PlainPasteCommandDeps,
+): (target: AddonViewHandle | null) => void {
+  return (target) => {
+    if (target === null) return
+    const view = deps.views.viewForInstance(target.info.instanceId)
     if (view === null) return
     if (view.compositionStarted || view.state.readOnly) return
     void deps

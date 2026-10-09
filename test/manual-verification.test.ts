@@ -77,7 +77,7 @@ describe('人工验证清单结构契约（#21）', () => {
 
   it('宿主版本矩阵三要素：vsidian 基线 commit / VSIX 安装态 / 1.82.3 下界', () => {
     const doc = readDoc()
-    expect(doc).toContain('7651616e466d4950ee40880079634e3a78424162')
+    expect(doc).toContain('9107e2f0554d8b5c1637d16e1d1b375543b01c1c')
     expect(doc).toContain('--install-extension')
     expect(doc).toContain('1.82.3')
     // 先装宿主再装组件（extensionDependencies 依赖顺序）在步骤中写明

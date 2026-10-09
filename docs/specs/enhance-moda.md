@@ -76,10 +76,10 @@
   `select-block`（公开 ID 由平台注入命名空间）、mode `live`、writes
   `false`（纯选区事务——快捷键不在源码模式/设置页接管宿主绑定）、
   **默认未绑定**（上游无默认热键；平台允许空 defaultBindings）。
-- **命令目标视图路由**：焦点 CM6 视图优先
-  （`EditorView.findFromDOM(document.activeElement)`——编辑器内快捷键/
-  菜单触发路径）；无焦点（命令面板触发，焦点在宿主 UI）回退 `main`
-  视图快照 + `setSelection`（零文本变更事务）。
+- **命令目标视图路由**：目标视图句柄由平台命令回调携带（vsidian
+  PR #432——平台解析焦点嵌入 Live → 该实例、否则主正文）——句柄快照
+  决策 + `setSelection`（零文本变更事务）；无活动视图（target null）
+  无动作。
 
 ## 接管边界（票面验收项）
 
@@ -127,9 +127,10 @@
   延迟再评估增量缓存。
 - 段块/引用块/列表档位均为行级区间（含行尾换行前的全部内容，不含末
   行换行符——上游同口径）。
-- 命令面板触发「选择当前块」且焦点不在任何 CM6 视图时回退主视图；
-  embed（引用内 Live）有焦点时优先操作 embed 自身（findFromDOM 精确
-  路由），无焦点时不猜测 embed——回退 main 是明确边界。
+- 命令目标句柄由平台解析（焦点嵌入 Live → 该实例句柄；否则主正文；
+  无活动视图 null）——embed（引用内 Live）中触发即操作 embed 自身，
+  无焦点不猜测，目标即边界（原 findFromDOM 探针双路径随平台句柄面
+  落地合一）。
 - 上游 handleModA 末段的 BetterCodeEdit 代码块选中（selectCodeBlockInPos）
   属另一功能族（betterCodeEdit 设置），不在本票范围。
 
@@ -142,7 +143,7 @@
   公式/frontmatter 内 Mod+A 应落穿为原生全选。
 - **设置运行时翻转**：设置页开/关 enhanceModA 后回到编辑器（焦点回归），
   下一次 Mod+A 即按新值判定。
-- **命令路径**：命令面板执行「选择当前文本块」（焦点在宿主 UI 的回退
-  路径）；在 embed 引用内 Live 中触发命令（findFromDOM 路由）；快捷键
-  管理中为 select-block 绑定/清空/恢复默认。
+- **命令路径**：命令面板执行「选择当前文本块」（焦点在宿主 UI——
+  平台解析主正文句柄）；在 embed 引用内 Live 中触发命令（平台解析
+  embed 句柄）；快捷键管理中为 select-block 绑定/清空/恢复默认。
 - **长文档**：10 万行档位下 Mod+A 响应延迟是否可感知（O(行数) 扫描）。

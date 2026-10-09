@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url'
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 /** 当前快照锚定的 vsidian 提交（re-vendor 升级时随变更修改此常量并重跑） */
-const DEFAULT_COMMIT = '7651616e466d4950ee40880079634e3a78424162'
+const DEFAULT_COMMIT = '9107e2f0554d8b5c1637d16e1d1b375543b01c1c'
 
 /**
  * vendor 入口：公开 API 面文件，保留完整导出类型面。

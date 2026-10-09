@@ -84,14 +84,16 @@
 
 ### 折叠查询（experimental.headingFold）消费口径
 
-- **folds() 按主实例寻址**：`sdk.registerExtension` 的扩展槽只挂主正文
-  Live 实例（平台 `syncController.reconfigureAddonExtensions` 仅转发
-  `this.live`），keymap 触发即主视图——查询恒 `folds('main')`。嵌入/
-  悬停视图不挂附加组件扩展，Enter 不会在那里触发本 keymap。
+- **folds() 按反查实例 ID 寻址**（vsidian PR #432 起的 §4.2 契约）：
+  keymap 回调 view 经 `experimental.viewIdentity.instanceIdOf(view)` 反查
+  实例 ID 后按 ID 查询——不依赖「扩展槽仅挂主正文」的装配范围推定
+  （装配范围演进时寻址自动跟随）；反查 null（非平台实例）透传。清单
+  已声明 `viewIdentity: '^1.0.0'`。
 - **每键实时查询 + 零开销行门槛**：Command 先判光标行是 ATX 标题
-  （纯文本正则，零 API 调用），通过才调 `folds()`——平台侧 folds 每次
-  调用做全文档标题直查（无跨调用缓存），非标题行 Enter 主路径不付这笔
-  开销；标题行 Enter 频率低（建标题后立即输入内容），查询成本可接受。
+  （纯文本正则，零 API 调用），通过才调 `folds()`——平台侧 folds 走
+  共享缓存过滤并逐项拷贝返回（PR #432 起，无全文档重扫），非标题行
+  Enter 主路径不付这笔每键调用开销；标题行 Enter 频率低（建标题后立即
+  输入内容），查询成本可接受。
 - **防御性拷贝消费**：folds() 返回派生视图拷贝，本仓只读消费（find），
   无变异。
 - **Live-only 边界**：folds() 拒绝（`read-only` = 阅读态 / hover 只读、

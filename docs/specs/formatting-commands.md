@@ -15,8 +15,8 @@
 
 - 五命令端到端：**真实 EditorState 状态迁移断言**承载——planner 的变更 +
   选区经 `state.update` 应用后断言终态文本与选区（上游逐条对照）；handler
-  流经模拟 view（聚焦路径）与 views 面替身（命令面板路径）验证派发/写回
-  形态。浏览器与真实宿主命令面板端到端归 #21。
+  流经模拟 view（句柄解析的视图路径）与目标句柄替身（快照提交路径）
+  验证派发/写回形态。浏览器与真实宿主命令面板端到端归 #21。
 - 快捷键注册与冲突检查：键位规范序契约测试（keyStep 序
   ctrl→alt→shift→meta，mac 形态避开 vsidian#417 永不命中形态）+ 与 #12
   纯文本粘贴（ctrl+shift+v / shift+meta+v）零重叠断言 + 平台内置同弦
@@ -30,11 +30,11 @@
 
 | 命令（局部 id） | 上游 id / 默认热键 | 本仓默认绑定 | mode / writes | 视图路由 |
 | --- | --- | --- | --- | --- |
-| `format-article` | `easy-typing-format-article` / Mod+Shift+S | `ctrl+shift+s`、`shift+meta+s` | live / true | 聚焦视图 → main 回退 |
-| `format-selection` | `easy-typing-format-selection` / Mod+Shift+L | **默认未绑定**（见键位节） | live / true | 聚焦视图 → main 回退 |
-| `delete-blank-lines` | `easy-typing-delete-blank-line` / Mod+Shift+K | `ctrl+shift+k`、`shift+meta+k` | live / true | 聚焦视图 → main 回退 |
+| `format-article` | `easy-typing-format-article` / Mod+Shift+S | `ctrl+shift+s`、`shift+meta+s` | live / true | 目标句柄视图 → 句柄快照 |
+| `format-selection` | `easy-typing-format-selection` / Mod+Shift+L | **默认未绑定**（见键位节） | live / true | 目标句柄视图 → 句柄快照 |
+| `delete-blank-lines` | `easy-typing-delete-blank-line` / Mod+Shift+K | `ctrl+shift+k`、`shift+meta+k` | live / true | 目标句柄视图 → 句柄快照 |
 | `toggle-auto-format` | `easy-typing-format-switch` / Ctrl+Tab | **默认未绑定**（Tab 固定链拒绝） | both / false | 无视图依赖（写设置） |
-| `convert-code-block` | `easy-typing-insert-codeblock` / Mod+Shift+N | `ctrl+shift+n`、`shift+meta+n` | live / true | 聚焦视图 → main 回退 |
+| `convert-code-block` | `easy-typing-insert-codeblock` / Mod+Shift+N | `ctrl+shift+n`、`shift+meta+n` | live / true | 目标句柄视图 → 句柄快照 |
 
 标题文案对照上游 locale（`commands.formatArticle` 等五词条）双语落
 `src/i18n/`。写命令（writes=true）快捷键仅 Live 正文接管宿主绑定：宿主
@@ -145,27 +145,22 @@ pathname + `decodeURIComponent`（坏编码回退原文）→ '\' 归一 '/' →
 
 ## 视图路由与撤销
 
-- **目标视图解析**：命令回调 `() => void` 无 view 入参——复用 **#12 的
-  `viewRegistry` 共享实例**（`createEditorViewRegistry`，page-editor 同
-  工厂作用域内 #12 块位置在前；不另建实例，评估结论：ViewPlugin 登记面
-  全页唯一语义，两套登记表反而引入「命令面板兜底视图」与「登记表视图」
-  不一致的可能）。聚焦视图优先（快捷键入口）；无聚焦且唯一在场视图兜底；
-  多视图无聚焦 → **views 面 main 句柄回退**（命令面板入口）：快照 →
-  计划 → `applyEdits` 单请求（`history: 'atomic'`，镜像 #11 select-block
-  的双路径形态，但含文本写回）。
-- **嵌入视图口径（审查 B-F3 修复）**：执行前校验焦点元素——属于某个
-  CM6 视图（`EditorView.findFromDOM(activeElement)` 命中）但**不在登记表**
-  即为嵌入/悬停实例（平台事实：附加组件扩展槽仅挂主正文 Live 实例，
-  viewRegistry 永远只登记主实例）：此时**拒绝执行**并 debugLog 留痕
-  （不走唯一在场视图兜底、不走 main 回退）——用户意图是嵌入文档，
-  兜底目标会把命令写到主文档（误目标）。焦点无 CM6 归属（命令面板入
-  口，焦点在宿主 UI）不受影响，照常走兜底。#12 纯文本粘贴命令同口径
-  （`plainPasteCommand.ts`）。
-- **docUri 关联**（排除判定用）：单一可写视图 → 其 `targetDocUri`（多数
-  场景精确）；多视图 → 各句柄快照 text 与聚焦视图 doc 内容比对关联（#407
-  「按实际触发文档判定」的多视图近似——CM6 视图与 instanceId 无直接映
-  射面）；关联失败回退 main。已知边界：多视图 + 焦点在 embed 且内容与
-  main 一致时判 main 的 URI（同文不同档的退化场景）。
+- **目标视图解析**（vsidian PR #432 起）：命令回调携带目标视图句柄
+  `target`（平台解析焦点嵌入 Live → 该实例句柄、否则主正文；无活动视图
+  null）——复用 **#12 的 `viewRegistry` 共享实例**（`createEditorViewRegistry`，
+  page-editor 同工厂作用域内 #12 块位置在前；不另建实例，评估结论：
+  ViewPlugin 登记面全页唯一语义，两套登记表反而引入解析不一致的可能）。
+  视图路径：句柄实例 ID 经登记表反查（`viewIdentity.instanceIdOf` 匹配）
+  解析本页 CM6 视图 → 单事务 `view.dispatch`；登记面外的主正文句柄 →
+  快照 → 计划 → `applyEdits` 单请求（`history: 'atomic'`）。
+- **嵌入视图口径**：目标句柄即命令语义的目标文档（平台保证——焦点在
+  引用 B 中编辑不会误写父 A）。句柄为嵌入/悬停实例（登记面外——平台
+  事实：附加组件扩展槽仅挂主正文 Live 实例）时无执行载体，静默无动作、
+  不向主文档兜底（原审查 B-F3 焦点探针拒绝口径随平台句柄面落地拆除）。
+  #12 纯文本粘贴命令同口径（`plainPasteCommand.ts`）。
+- **docUri 关联**（排除判定用）：直接取目标句柄 `info.targetDocUri`（
+  平台权威归属）——原「多视图快照内容比对」近似（#407 过渡形态）随
+  句柄面落地移除，同文不同档的退化场景一并消除。
 - **守卫**：IME 组合中 / 只读视图不派发（#12/#13 同口径）；排除命中不
   派发并通知。
 - **撤销**：聚焦路径单笔 `view.dispatch`（changes + selection + 自定义

@@ -106,12 +106,15 @@
 
 ## 与上游的差异
 
-- **视图路由**：上游 `editorCallback` 直收 `editor.cm`；平台命令回调无
-  view 入参，**复用 #12 的 `createEditorViewRegistry`**（ViewPlugin 登记
-  在场编辑器，聚焦者优先，无聚焦唯一视图兜底——`src/plainPasteCommand.ts`）。
-  **共享决策（供并行工单 #28 对照）**：命令类工单统一复用该登记表 +
-  `createViewTrackerExtension` 扩展，不另建第二套视图捕获；#28 若需相同
-  路由，直接 import 同一工厂。
+- **视图路由**：上游 `editorCallback` 直收 `editor.cm`；平台命令回调
+  携带目标视图句柄（vsidian PR #432——平台解析焦点嵌入 Live → 该实例、
+  否则主正文），句柄实例 ID 经 **#12 的 `createEditorViewRegistry`**
+  （ViewPlugin 登记在场编辑器 + `viewIdentity.instanceIdOf` 反查匹配，
+  `src/plainPasteCommand.ts`）解析本页 CM6 视图后派发；目标为嵌入/悬停
+  句柄（扩展槽未装配、登记面外）时无执行载体，静默无动作——不向主文档
+  兜底误写。**共享决策（供并行工单 #28 对照）**：命令类工单统一复用该
+  登记表 + `createViewTrackerExtension` 扩展，不另建第二套视图捕获；
+  #28 若需相同路由，直接 import 同一工厂。
 - **IME 组合中与只读不动作**（上游无此判定；平台惯例，对齐 #12/#13）。
 - **userEvent 用 CM6 惯例 `input.comment`**（上游自定义
   `'EasyTyping.toggleComment'`，对齐 #13 采用 `input.*` 族的先例）。

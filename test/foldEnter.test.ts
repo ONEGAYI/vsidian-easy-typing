@@ -225,7 +225,7 @@ describe('keymap Command createFoldEnterCommand：接管/透传与派发形态',
     return { view: view as unknown as EditorView, calls }
   }
 
-  /** mock folds：记录寻址的实例 ID（断言按 'main' 寻址） */
+  /** mock folds：记录寻址的实例 ID（断言按反查实例 ID 寻址） */
   function foldsOf(result: AddonHeadingFoldQueryResult): {
     folds: (instanceId: string) => AddonHeadingFoldQueryResult
     calls: string[]
@@ -240,10 +240,13 @@ describe('keymap Command createFoldEnterCommand：接管/透传与派发形态',
     }
   }
 
+  /** mock 视图身份反查：固定返回 'main'（生产装配为 viewIdentity.instanceIdOf） */
+  const mainIdentityOf = (): string | null => 'main'
+
   it('功能开 + 命中：派发插入事务（changes + 光标 + input.newline + scrollIntoView，零 effects）并接管', () => {
     const { view, calls } = fakeView(stateAt(DOC, 11))
     const { folds } = foldsOf({ ok: true, spans: [FOLD_A] })
-    const command = createFoldEnterCommand({ folds, isEnabled: () => true })
+    const command = createFoldEnterCommand({ folds, instanceIdOf: mainIdentityOf, isEnabled: () => true })
     expect(command(view)).toBe(true)
     expect(calls).toHaveLength(1)
     expect(calls[0]!.changes).toEqual({ from: 21, to: 21, insert: '## \n' })
@@ -254,28 +257,46 @@ describe('keymap Command createFoldEnterCommand：接管/透传与派发形态',
     expect(calls[0]!.effects).toBeUndefined()
   })
 
-  it('折叠查询按主实例寻址（扩展槽只挂主正文 Live）', () => {
+  it('折叠查询按反查实例 ID 寻址（instanceIdOf 透传语义，不再推定 main）', () => {
     const { view } = fakeView(stateAt(DOC, 11))
     const { folds, calls: foldCalls } = foldsOf({ ok: true, spans: [FOLD_A] })
-    const command = createFoldEnterCommand({ folds, isEnabled: () => true })
+    // 反查返回非 'main' 的 ID 同样原样寻址——证明查询路由来自反查面而非硬编码
+    const command = createFoldEnterCommand({
+      folds,
+      instanceIdOf: () => 'embed:host-1',
+      isEnabled: () => true,
+    })
     command(view)
-    expect(foldCalls).toEqual(['main'])
+    expect(foldCalls).toEqual(['embed:host-1'])
   })
 
-  it('功能关 → 透传且零查询（设置门在折叠查询之前）', () => {
+  it('反查 null（非平台实例——扩展槽装配范围演进的防御面）→ 透传且零查询', () => {
     const { view, calls } = fakeView(stateAt(DOC, 11))
     const { folds, calls: foldCalls } = foldsOf({ ok: true, spans: [FOLD_A] })
-    const command = createFoldEnterCommand({ folds, isEnabled: () => false })
+    const command = createFoldEnterCommand({
+      folds,
+      instanceIdOf: () => null,
+      isEnabled: () => true,
+    })
     expect(command(view)).toBe(false)
     expect(calls).toHaveLength(0)
     expect(foldCalls).toHaveLength(0)
   })
 
-  it('光标行非 ATX 标题 → 透传且零查询（零开销行门槛：非标题行 Enter 主路径不付 folds 全文档直查）', () => {
+  it('功能关 → 透传且零查询（设置门在折叠查询之前）', () => {
+    const { view, calls } = fakeView(stateAt(DOC, 11))
+    const { folds, calls: foldCalls } = foldsOf({ ok: true, spans: [FOLD_A] })
+    const command = createFoldEnterCommand({ folds, instanceIdOf: mainIdentityOf, isEnabled: () => false })
+    expect(command(view)).toBe(false)
+    expect(calls).toHaveLength(0)
+    expect(foldCalls).toHaveLength(0)
+  })
+
+  it('光标行非 ATX 标题 → 透传且零查询（零开销行门槛：非标题行 Enter 主路径不付 folds 调用开销）', () => {
     for (const cursor of [15, 27, 37]) {
       const { view, calls } = fakeView(stateAt(DOC, cursor))
       const { folds, calls: foldCalls } = foldsOf({ ok: true, spans: [FOLD_A] })
-      const command = createFoldEnterCommand({ folds, isEnabled: () => true })
+      const command = createFoldEnterCommand({ folds, instanceIdOf: mainIdentityOf, isEnabled: () => true })
       expect(command(view), `cursor=${cursor}`).toBe(false)
       expect(calls).toHaveLength(0)
       expect(foldCalls).toHaveLength(0)
@@ -285,7 +306,7 @@ describe('keymap Command createFoldEnterCommand：接管/透传与派发形态',
   it('标题行但展开态（folds 命中空集）→ 透传零派发（展开态 Enter 完全归平台链）', () => {
     const { view, calls } = fakeView(stateAt(DOC, 11))
     const { folds } = foldsOf({ ok: true, spans: [] })
-    const command = createFoldEnterCommand({ folds, isEnabled: () => true })
+    const command = createFoldEnterCommand({ folds, instanceIdOf: mainIdentityOf, isEnabled: () => true })
     expect(command(view)).toBe(false)
     expect(calls).toHaveLength(0)
   })
@@ -294,7 +315,7 @@ describe('keymap Command createFoldEnterCommand：接管/透传与派发形态',
     for (const reason of ['read-only', 'view-disposed'] as const) {
       const { view, calls } = fakeView(stateAt(DOC, 11))
       const { folds } = foldsOf({ ok: false, reason })
-      const command = createFoldEnterCommand({ folds, isEnabled: () => true })
+      const command = createFoldEnterCommand({ folds, instanceIdOf: mainIdentityOf, isEnabled: () => true })
       expect(command(view), reason).toBe(false)
       expect(calls).toHaveLength(0)
     }
@@ -303,7 +324,7 @@ describe('keymap Command createFoldEnterCommand：接管/透传与派发形态',
   it('多选区 → 透传且零查询', () => {
     const { view, calls } = fakeView(multiStateAt(DOC, [11, 27]))
     const { folds, calls: foldCalls } = foldsOf({ ok: true, spans: [FOLD_A] })
-    const command = createFoldEnterCommand({ folds, isEnabled: () => true })
+    const command = createFoldEnterCommand({ folds, instanceIdOf: mainIdentityOf, isEnabled: () => true })
     expect(command(view)).toBe(false)
     expect(calls).toHaveLength(0)
     expect(foldCalls).toHaveLength(0)
@@ -318,7 +339,7 @@ describe('keymap Command createFoldEnterCommand：接管/透传与派发形态',
       },
     }
     const { folds } = foldsOf({ ok: true, spans: [FOLD_A] })
-    const command = createFoldEnterCommand({ folds, isEnabled: () => true })
+    const command = createFoldEnterCommand({ folds, instanceIdOf: mainIdentityOf, isEnabled: () => true })
     expect(command(view as unknown as EditorView)).toBe(false)
   })
 
@@ -330,7 +351,7 @@ describe('keymap Command createFoldEnterCommand：接管/透传与派发形态',
     })
     const { view, calls } = fakeView(state)
     const { folds } = foldsOf({ ok: true, spans: [FOLD_A] })
-    const command = createFoldEnterCommand({ folds, isEnabled: () => true })
+    const command = createFoldEnterCommand({ folds, instanceIdOf: mainIdentityOf, isEnabled: () => true })
     expect(command(view)).toBe(false)
     expect(calls).toHaveLength(0)
   })

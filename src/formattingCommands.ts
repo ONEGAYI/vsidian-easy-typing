@@ -37,6 +37,7 @@
 // 一步还原——测试断言钉住。
 import type { EditorView } from '@codemirror/view'
 import type { AddonCommandDefinition } from '../types/vendor/shared/addonCommands'
+import type { AddonViewHandle } from '../types/vendor/shared/addonEditApi'
 import type { EditorViewRegistry } from './plainPasteCommand'
 import type { AutoFormatGate, AutoFormatEngineSettings } from './autoFormatIntercept'
 import { formatLine, type LineFormatSettings } from './formatting/lineFormatter'
@@ -502,34 +503,12 @@ export function planConvertCodeBlock(
 
 // ===== 注册接入（page-editor 消费；依赖全部可注入） =====
 
-/** views 面结构子集（真实 AddonViewsFacet 兼容；测试可注入替身） */
-export interface FormattingFacetViewsSubset {
-  list(): ReadonlyArray<{
-    instanceId: string
-    targetDocUri: string
-    mode: 'live' | 'reading'
-    viewType: 'main' | 'embed' | 'hover'
-    editable: boolean
-  }>
-  get(instanceId: string): {
-    info: { instanceId: string; targetDocUri: string; mode: 'live' | 'reading'; editable: boolean }
-    editor: {
-      getSnapshot(): { ok: true; snapshot: { text: string; selections: Array<{ anchor: number; head: number }>; version: number; revision: number } } | { ok: false; reason: string }
-      applyEdits(request: {
-        revision: number
-        changes: ReadonlyArray<{ offset: number; length: number; text: string }>
-        selection?: { anchor: number; head: number }
-        history?: 'atomic' | 'joinPrevious'
-      }): Promise<{ ok: true; credential: unknown } | { ok: false; reason: string }>
-    }
-  } | null
-}
-
-/** commands 面结构子集（真实 AddonSdkCommandsFacet 兼容） */
+/** commands 面结构子集（真实 AddonSdkCommandsFacet 兼容；回调签名 =
+ *  平台命令回调的目标视图句柄（PR #432）） */
 export interface FormattingCommandsFacetSubset {
   register(
     def: AddonCommandDefinition,
-    handler: () => void,
+    handler: (target: AddonViewHandle | null) => void,
   ): { ok: boolean; reason?: string; commandId?: string; dispose(): void }
 }
 
@@ -550,13 +529,8 @@ export interface RegisterFormattingCommandsDeps {
   readonly channel: FormattingChannelSubset
   /** 设置门（#26 createAutoFormatGate——命令族各建实例，装载拉取 + 每次执行前刷新） */
   readonly gate: AutoFormatGate
-  /** #12 视图登记表（page-editor 共享实例注入） */
+  /** #12 视图登记表（page-editor 共享实例注入；目标句柄 → 本页 CM6 视图解析） */
   readonly views: EditorViewRegistry
-  /** 当前焦点 CM6 视图探测（page-editor 经 EditorView.findFromDOM(activeElement)
-   *  注入；审查 B-F3 嵌入视图拒绝口径用；缺省视为无焦点信息，不拦兜底路径） */
-  readonly getFocusedView?: () => EditorView | null
-  /** views 面（命令面板入口的 main 回退 + docUri 解析；缺省则无回退） */
-  readonly facetViews?: FormattingFacetViewsSubset
   /** 通知发送（宿主 NOTICE_TOPIC；缺省静默——纯逻辑测试） */
   readonly notify?: (request: FormattingNoticeRequest) => void
   /** i18n 文案（命令标题） */
@@ -570,45 +544,16 @@ export interface FormattingCommandRegistration {
   readonly reason?: string
 }
 
-/**
- * 目标视图的 docUri 解析：单一可写视图 → 其 URI；多视图经内容比对关联
- *（快照 text === 视图 doc——#407「按实际触发文档判定」的多视图近似），
- * 关联失败回退 main。解析不出（无视图面/无 main）→ null（不判排除，
- * fail-open——可得才判的防御口径）。
- */
-export function resolveDocUriForView(
-  view: EditorView,
-  facetViews: FormattingFacetViewsSubset | undefined,
-): string | null {
-  if (facetViews === undefined) return null
-  const editable = facetViews.list().filter((info) => info.mode === 'live' && info.editable)
-  if (editable.length === 0) return null
-  if (editable.length === 1) return editable[0]!.targetDocUri
-  const doc = view.state.doc.toString()
-  const matched: Array<{ instanceId: string; targetDocUri: string }> = []
-  for (const info of editable) {
-    const handle = facetViews.get(info.instanceId)
-    if (handle === null) continue
-    const snap = handle.editor.getSnapshot()
-    if (snap.ok && snap.snapshot.text === doc) {
-      matched.push({ instanceId: info.instanceId, targetDocUri: info.targetDocUri })
-    }
-  }
-  if (matched.length === 1) return matched[0]!.targetDocUri
-  const main = matched.find((m) => m.instanceId === 'main')
-  if (main !== undefined) return main.targetDocUri
-  return matched[0]?.targetDocUri ?? editable.find((i) => i.instanceId === 'main')?.targetDocUri ?? null
-}
-
-/** 视图命令公共守卫：组合中/只读/排除命中（通知）→ true 表示不执行 */
+/** 视图命令公共守卫：组合中/只读/排除命中（通知，排除判定用句柄的权威
+ *  targetDocUri——#407「按实际触发文档判定」的平台句柄形态）→ true 表示不执行 */
 function guardedSkip(
   view: EditorView,
+  docUri: string,
   engine: AutoFormatEngineSettings,
   deps: RegisterFormattingCommandsDeps,
 ): boolean {
   if (view.compositionStarted || view.state.readOnly) return true
-  const docUri = resolveDocUriForView(view, deps.facetViews)
-  if (docUri !== null && isDocUriExcluded(docUri, engine.excludeFiles)) {
+  if (isDocUriExcluded(docUri, engine.excludeFiles)) {
     deps.notify?.({ kind: 'command-file-excluded' })
     return true
   }
@@ -631,65 +576,62 @@ function dispatchPlan(
   })
 }
 
-/** 视图命令执行流：刷新设置 → 嵌入视图口径校验 → 目标视图（登记表聚焦
- *  优先）→ 排除 → 计划 → 派发；无在场视图走 main 句柄回退（命令面板
- *  入口）。焦点元素属于 CM6 视图但不在登记表（嵌入/悬停实例——附加组件
- *  扩展槽仅挂主正文 Live 实例）时拒绝执行并 debugLog 留痕（审查 B-F3
- *  修复）：用户意图是嵌入文档，兜底目标会误写主文档。 */
+/** 视图命令执行流（target = 平台命令回调携带的目标视图句柄，PR #432）：
+ *  刷新设置 → 视图路径（句柄实例 ID 经登记表解析本页 CM6 视图，单事务
+ *  派发）→ 句柄路径（登记面外的主正文句柄快照 + applyEdits 单请求）。
+ *  无活动视图（target null）或嵌入/悬停句柄（扩展槽未装配、无执行载体）
+ *  静默无动作——句柄即命令语义的目标文档，不向主文档兜底误写。 */
 function runViewCommand(
   deps: RegisterFormattingCommandsDeps,
   planner: (text: string, anchor: number, head: number, settings: LineFormatSettings) => FormattingCommandPlan | null,
   userEvent: string,
-): void {
-  void deps.gate
-    .refresh()
-    .then(() => {
-      const focused = deps.getFocusedView?.() ?? null
-      if (focused !== null && !deps.views.contains(focused)) {
-        debugLog('formatting command skipped: focused view not registered (embed/hover) — refuse fallback target')
-        return
-      }
-      const engine = deps.gate.settings()
-      const view = deps.views.activeView()
-      if (view !== null) {
-        if (guardedSkip(view, engine, deps)) return
-        const sel = view.state.selection.main
-        const plan = planner(view.state.doc.toString(), sel.anchor, sel.head, engine.lineFormat)
-        if (plan !== null) dispatchPlan(view, plan, userEvent)
-        return
-      }
-      // 无聚焦视图（命令面板入口）：main 句柄快照 → applyEdits 单请求
-      const main = deps.facetViews?.get('main')
-      if (main === null || main === undefined || !main.info.editable) return
-      if (isDocUriExcluded(main.info.targetDocUri, engine.excludeFiles)) {
-        deps.notify?.({ kind: 'command-file-excluded' })
-        return
-      }
-      const snap = main.editor.getSnapshot()
-      if (!snap.ok) return
-      const primary = snap.snapshot.selections[0]
-      if (primary === undefined) return
-      const plan = planner(snap.snapshot.text, primary.anchor, primary.head, engine.lineFormat)
-      if (plan === null) return
-      void main.editor
-        .applyEdits({
-          revision: snap.snapshot.revision,
-          changes: plan.changes.map((c) => ({ offset: c.offset, length: c.length, text: c.text })),
-          ...(plan.selection !== undefined
-            ? { selection: { anchor: plan.selection.anchor, head: plan.selection.head } }
-            : {}),
-          history: 'atomic',
-        })
-        .then((outcome) => {
-          if (!outcome.ok) debugLog('formatting command applyEdits rejected:', outcome.reason)
-        })
-    })
-    .catch(() => {
-      // 通道/快照链路异常静默 + debugLog 留痕（对齐同文件 runToggleAutoFormat
-      // 的 .catch 形态；审查 C-P3-2 修复——裸 then 链的 rejection 会成为
-      // 页面 unhandledrejection）
-      debugLog('formatting command pipeline failed (channel/gate) — command dropped, retryable')
-    })
+): (target: AddonViewHandle | null) => void {
+  return (target) => {
+    void deps.gate
+      .refresh()
+      .then(() => {
+        if (target === null) return
+        const engine = deps.gate.settings()
+        const view = deps.views.viewForInstance(target.info.instanceId)
+        if (view !== null) {
+          if (guardedSkip(view, target.info.targetDocUri, engine, deps)) return
+          const sel = view.state.selection.main
+          const plan = planner(view.state.doc.toString(), sel.anchor, sel.head, engine.lineFormat)
+          if (plan !== null) dispatchPlan(view, plan, userEvent)
+          return
+        }
+        // 句柄路径：仅主正文句柄（原命令面板 main 回退）；嵌入/悬停目标不执行
+        if (target.info.viewType !== 'main' || !target.info.editable) return
+        if (isDocUriExcluded(target.info.targetDocUri, engine.excludeFiles)) {
+          deps.notify?.({ kind: 'command-file-excluded' })
+          return
+        }
+        const snap = target.editor.getSnapshot()
+        if (!snap.ok) return
+        const primary = snap.snapshot.selections[0]
+        if (primary === undefined) return
+        const plan = planner(snap.snapshot.text, primary.anchor, primary.head, engine.lineFormat)
+        if (plan === null) return
+        void target.editor
+          .applyEdits({
+            revision: snap.snapshot.revision,
+            changes: plan.changes.map((c) => ({ offset: c.offset, length: c.length, text: c.text })),
+            ...(plan.selection !== undefined
+              ? { selection: { anchor: plan.selection.anchor, head: plan.selection.head } }
+              : {}),
+            history: 'atomic',
+          })
+          .then((outcome) => {
+            if (!outcome.ok) debugLog('formatting command applyEdits rejected:', outcome.reason)
+          })
+      })
+      .catch(() => {
+        // 通道/快照链路异常静默 + debugLog 留痕（对齐同文件 runToggleAutoFormat
+        // 的 .catch 形态；审查 C-P3-2 修复——裸 then 链的 rejection 会成为
+        // 页面 unhandledrejection）
+        debugLog('formatting command pipeline failed (channel/gate) — command dropped, retryable')
+      })
+  }
 }
 
 /** 切换自动格式化：刷新读现值 → 写翻转（user 层持久）→ 通知回执 */
@@ -726,7 +668,7 @@ export function registerFormattingCommands(
   const register = (
     localId: string,
     def: AddonCommandDefinition,
-    handler: () => void,
+    handler: (target: AddonViewHandle | null) => void,
   ): void => {
     const handle = deps.commands.register(def, handler)
     registrations.push({ localId, handle, ok: handle.ok, reason: handle.reason })
@@ -736,27 +678,30 @@ export function registerFormattingCommands(
   register(
     FORMAT_ARTICLE_COMMAND_ID,
     buildFormatArticleCommandDefinition(m.formatArticleTitle),
-    () => runViewCommand(deps, planFormatArticle, 'input.easyTyping.formatArticle'),
+    runViewCommand(deps, planFormatArticle, 'input.easyTyping.formatArticle'),
   )
   register(
     FORMAT_SELECTION_COMMAND_ID,
     buildFormatSelectionCommandDefinition(m.formatSelectionTitle),
-    () => runViewCommand(deps, planFormatSelection, 'input.easyTyping.formatSelection'),
+    runViewCommand(deps, planFormatSelection, 'input.easyTyping.formatSelection'),
   )
   register(
     DELETE_BLANK_LINES_COMMAND_ID,
     buildDeleteBlankLinesCommandDefinition(m.deleteBlankLinesTitle),
-    () => runViewCommand(deps, planDeleteBlankLines, 'input.easyTyping.deleteBlankLines'),
+    runViewCommand(deps, planDeleteBlankLines, 'input.easyTyping.deleteBlankLines'),
   )
   register(
     TOGGLE_AUTO_FORMAT_COMMAND_ID,
     buildToggleAutoFormatCommandDefinition(m.toggleAutoFormatTitle),
-    () => runToggleAutoFormat(deps),
+    (target) => {
+      void target
+      runToggleAutoFormat(deps)
+    },
   )
   register(
     CONVERT_CODE_BLOCK_COMMAND_ID,
     buildConvertCodeBlockCommandDefinition(m.convertCodeBlockTitle),
-    () => runViewCommand(deps, planConvertCodeBlock, 'input.easyTyping.convertCodeBlock'),
+    runViewCommand(deps, planConvertCodeBlock, 'input.easyTyping.convertCodeBlock'),
   )
 
   return {

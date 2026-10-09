@@ -28,9 +28,9 @@
 // ctrl+slash）同弦并存的核对结论见规格「平台键位冲突核对」节。
 //
 // 与上游的差异：
-// - **视图路由**：上游 editorCallback 直收 editor.cm；平台命令回调无 view
-//   入参，复用 #12 的 createEditorViewRegistry（ViewPlugin 登记在场编辑器，
-//   聚焦者优先）——共享决策，供并行工单 #28 对照。
+// - **视图路由**：上游 editorCallback 直收 editor.cm；平台命令回调携带
+//   目标视图句柄（PR #432），句柄实例 ID 经 #12 的 createEditorViewRegistry
+//   （ViewPlugin 登记在场编辑器）解析本页 CM6 视图后派发。
 // - **IME 组合中与只读不动作**（上游无此判定；平台惯例，对齐 #12/#13）。
 // - **userEvent 用 CM6 惯例 'input.comment'**（上游自定义
 //   'EasyTyping.toggleComment'，对齐 #13 采用 input.* 族的先例——撤销
@@ -39,10 +39,9 @@
 //   切换产生空 changes 事务（无操作，上游同样派发）。
 import type { EditorState } from '@codemirror/state'
 import type { AddonCommandDefinition } from '../types/vendor/shared/addonCommands'
+import type { AddonViewHandle } from '../types/vendor/shared/addonEditApi'
 import type { EditorViewRegistry } from './plainPasteCommand'
-import type { EditorView } from '@codemirror/view'
 import { detectScopeFromText } from './ruleScopeFallback'
-import { debugLog } from './logging'
 import { RuleScope } from './rules/rule-engine'
 
 // ---- 语言注释符表（上游 commentSymbols 逐条移植；键为小写语言标识） ----
@@ -268,26 +267,22 @@ export function buildToggleCommentCommandDefinition(title: string): AddonCommand
 /** 命令依赖（页面装配注入生产实现，测试接替身） */
 export interface ToggleCommentCommandDeps {
   readonly views: EditorViewRegistry
-  /** 焦点视图探针（嵌入视图拒绝口径，审查第 2 轮复核 P1——B-F3 同型） */
-  readonly getFocusedView?: () => EditorView | null
 }
 
 /**
- * 产出命令回调：取在场目标视图 → 计划 → 单事务派发（changes + 可选
- * selection，userEvent input.comment）。无视图/组合中/只读/未知语言一律
- * 静默无动作（上游未知语言 return false 同口径）。
- *
- * 嵌入视图口径（B-F3 同型修复）：焦点元素属于某个 CM6 视图但不在登记表
- * （嵌入/悬停实例）时拒绝执行——唯一在场兜底会误写主文档。
+ * 产出命令回调（target = 平台解析的目标视图句柄，PR #432 起命令回调
+ * 携带）：句柄实例 ID 经登记表解析本页 CM6 视图 → 计划 → 单事务派发
+ *（changes + 可选 selection，userEvent input.comment）。无活动视图
+ *（target null）/目标实例不在登记面（嵌入/悬停——扩展槽未装配，无执行
+ * 载体）/组合中/只读/未知语言一律静默无动作（上游未知语言 return false
+ * 同口径）。
  */
-export function createToggleCommentCommandHandler(deps: ToggleCommentCommandDeps): () => void {
-  return () => {
-    const focused = deps.getFocusedView?.() ?? null
-    if (focused !== null && !deps.views.contains(focused)) {
-      debugLog('comment-toggle skipped: focused view not registered (embed/hover) — refuse fallback target')
-      return
-    }
-    const view = deps.views.activeView()
+export function createToggleCommentCommandHandler(
+  deps: ToggleCommentCommandDeps,
+): (target: AddonViewHandle | null) => void {
+  return (target) => {
+    if (target === null) return
+    const view = deps.views.viewForInstance(target.info.instanceId)
     if (view === null) return
     if (view.compositionStarted || view.state.readOnly) return
     const plan = planCommentToggle(view.state)

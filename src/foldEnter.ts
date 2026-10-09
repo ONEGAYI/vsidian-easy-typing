@@ -101,29 +101,30 @@ export function planFoldHeadingEnter(
 export interface FoldEnterCommandDeps {
   /** 折叠查询（experimental.headingFold 的 folds 方法，按实例 ID 寻址） */
   readonly folds: (instanceId: string) => AddonHeadingFoldQueryResult
+  /** 视图身份反查（experimental.viewIdentity 的 instanceIdOf，经 page-editor
+   *  箭头包装注入）：回调 view → 实例 ID；null = 非平台实例 */
+  readonly instanceIdOf: (view: EditorView) => string | null
   /** 功能开关（collapsePersistentEnter 生效值；false = 透传） */
   readonly isEnabled: () => boolean
 }
 
 /**
- * 扩展槽只挂主正文 Live 实例（平台 syncController.reconfigureAddonExtensions
- * 仅转发主视图），keymap 触发即主视图——折叠查询按 'main' 寻址。
- */
-const MAIN_INSTANCE_ID = 'main'
-
-/**
  * Enter keymap Command：命中接管（派发单笔插入事务，return true），
  * 其余透传（return false 落穿平台 Enter 链——列表续行/表格/普通换行照旧）。
  *
+ * 寻址：回调 view 经 instanceIdOf 反查实例 ID 后按 ID 查 folds（平台
+ * developer-guide §4.2 契约——不依赖「扩展槽仅挂主正文」的装配范围推定，
+ * 装配范围演进时寻址自动跟随）；反查 null（非平台实例）透传。
+ *
  * 查询节流：先做零开销行门槛（光标行是 ATX 标题才调 folds()——平台侧
- * folds 每次调用都做全文档标题直查，非标题行 Enter 主路径不付这笔开销）；
- * folds() 拒绝（read-only/view-disposed，含阅读态 Live-only 边界）一律
- * 静默透传，不算故障。
+ * folds 走共享缓存过滤并逐项拷贝返回，非标题行 Enter 主路径不付这笔
+ * 每键调用开销）；folds() 拒绝（read-only/view-disposed，含阅读态
+ * Live-only 边界）一律静默透传，不算故障。
  */
 export function createFoldEnterCommand(
   deps: FoldEnterCommandDeps,
 ): (view: EditorView) => boolean {
-  const { folds, isEnabled } = deps
+  const { folds, instanceIdOf, isEnabled } = deps
   return (view: EditorView): boolean => {
     // IME 组合中与只读状态不接管（组合取消交默认路径；只读实例不写）
     if (view.compositionStarted || view.state.readOnly) return false
@@ -132,7 +133,9 @@ export function createFoldEnterCommand(
     if (sel.ranges.length !== 1) return false
     // 零开销行门槛：非 ATX 标题行零 API 调用直接透传
     if (atxLevelOf(view.state.doc.lineAt(sel.main.to).text) === null) return false
-    const outcome = folds(MAIN_INSTANCE_ID)
+    const instanceId = instanceIdOf(view)
+    if (instanceId === null) return false
+    const outcome = folds(instanceId)
     if (!outcome.ok) return false
     const plan = planFoldHeadingEnter(view.state, outcome.spans)
     if (plan === null) return false
