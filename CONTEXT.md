@@ -63,6 +63,14 @@ vsidian behaviors 模型：同一次输入事务按**有效序**被多个已注�
 
 「本次粘贴跳过自动格式化」的一次性意图信号（上游 `main.ts` markPaste 双标志）：纯文本粘贴入口（Mod+Shift+V）置位，500ms 窗口内格式化管线消费即清（`consumePlainPaste`）；窗口内普通粘贴事件不清除该意图。与 `pasteDetected`（粘贴正在发生，普通/纯文本都置）成对。消费面是 #26 格式化管线，本标记是其联动缝。
 
+### NewLineBelow（下方新建行）
+
+Mod+Enter 在**当前行行尾**插入新行并延续结构前缀（上游 `goNewLineAfterCurLine`）：列表续标记（有序递增、任务项重置 `[ ]`）、引用续 `>` 串；**不保持原光标列**——光标固定落新行前缀末尾。接管面为平台 defaultKeymap `Mod-Enter → insertBlankLine` 的净增量（前缀延续）；关闭设置或多选区时透传回平台内建行为。实施口径见[规格](docs/specs/new-line-below.md)。
+
+### 严格换行（StrictModeEnter，待决策）
+
+上游对 Obsidian `strictLineBreaks: true`（严格渲染，单换行阅读视图不可见）的**编辑侧补偿**：Enter 时按三模式（`enter_twice` 双回车分段 / `two_space` 行尾两空格硬换行 / `mix_mode` 混合）改写插入文本使换行在严格渲染下可见。Vsidian 阅读管线 markdown-it `breaks: false` 恒为严格语义——补偿前提原生恒成立；是否移植属产品决策（文本改写取舍），三方案对比见 [ADR-0002](docs/adr/0002-strict-line-break-mapping.md)。
+
 ## 移植口径备忘
 
 - 永不移植清单与三标签口径见 [AGENTS.md](AGENTS.md)，不在此重复。

@@ -5,6 +5,7 @@ import { defineAddonPage } from 'vsidian-addon-sdk'
 import type { VsidianAddonPageSdk } from '../types/vendor/shared/addonPage'
 import { betterBackspaceCommand } from './backspaceIntercept'
 import { createCollapseEnterGate, createFoldEnterCommand } from './foldEnter'
+import { createNewLineBelowCommand, createNewLineBelowGate } from './newLineBelow'
 import { taboutCommand } from './taboutIntercept'
 import { pickMessages } from './i18n'
 import { debugLog } from './logging'
@@ -254,6 +255,42 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       }),
     )
   }
+
+  // ============================================================
+  // 工单 #13 增量块：Enter 族——当前行下方新建行（Mod+Enter，上游
+  // goNewLineAfterCurLine 移植）。独立成块（不动上方既有装配），降低与
+  // 并行工单的合并冲突。
+  // ============================================================
+
+  // newLineBelow 设置门（#3 通道，#13 新增本仓键、默认开——上游命令恒
+  // 可用的等价默认）：装载拉取 + 焦点回归刷新（对齐 #11/#18 门形态）。
+  const newLineBelowGate = createNewLineBelowGate(sdk.channel)
+  void newLineBelowGate.refresh()
+
+  // Mod+Enter 抢先层（Prec.high，#402 四层契约第 2 层「可替代平台键位」）：
+  // 平台侧 Mod+Enter 并非无主——defaultKeymap（extraExtensions 普通槽）内建
+  // `Mod-Enter → insertBlankLine`（插空行 + 自动缩进，无前缀延续）。本层先
+  // 于它尝试，命中面（功能开 + 单选区 + 非组合/非只读）接管为前缀延续版
+  //「下方新建行」（列表续标记/有序递增/任务重置/引用续前缀——平台没有
+  // 的净增量）；其余 return false 落穿，平台 insertBlankLine 兜底（透传 ≠
+  // 无操作，键位永不失效）。与 #18（Enter）/#7（Tab）不同键位，无同键
+  // 竞争。仲裁核对见 docs/specs/new-line-below.md「层归属与平台
+  // Mod+Enter 仲裁」节。
+  sdk.registerExtension(
+    cm6.state.Prec.high(
+      cm6.view.keymap.of([
+        {
+          key: 'Mod-Enter',
+          run: createNewLineBelowCommand({ isEnabled: () => newLineBelowGate.enabled() }),
+        },
+      ]),
+    ),
+  )
+  sdk.registerExtension(
+    cm6.view.EditorView.updateListener.of((update) => {
+      if (update.focusChanged) void newLineBelowGate.refresh()
+    }),
+  )
 
   // ============================================================
   // 工单 #25 增量块：onInput 行为链——#1 规则内核（Input 类）按功能族

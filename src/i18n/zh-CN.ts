@@ -100,6 +100,10 @@ const zhMessages = {
       name: '折叠标题回车不展开',
       desc: '在折叠的标题行按回车时，不展开折叠内容，直接在下方添加同级标题行',
     },
+    newLineBelow: {
+      name: 'Ctrl/Cmd+Enter 在下方新建行',
+      desc: '在当前行下方新建一行并延续列表或引用前缀（有序列表自动递增、任务项重置为未完成）；关闭时回退编辑器内建行为（仅插入空行）',
+    },
   },
   noHost: '当前扩展宿主中未找到 Vsidian（onegayi.vsidian）',
   // 「选择当前块」命令标题（工单 #11；文案对齐上游 locale commands.selectBlock）

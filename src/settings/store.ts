@@ -52,8 +52,8 @@ const STRING_ENUM_KEYS: Readonly<Record<string, readonly string[]>> = {
   strictLineMode: STRICT_LINE_MODE_VALUES,
 }
 
-/** 快照值按定义类型校验（一层边界内的本组件 23 键形态；
- *  目标类型以默认值事实源的键类型为基准） */
+/** 快照值按定义类型校验（一层边界内的本组件 24 键形态——23 上游映射键
+ *  + #13 新增 newLineBelow；目标类型以默认值事实源的键类型为基准） */
 function pickValidValue(key: string, value: unknown): AddonSettingValue | undefined {
   if (key === 'excludeFiles') {
     if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) return undefined

@@ -1,6 +1,7 @@
 // 设置定义形状契约（工单 #3）：全量清单防漏项 + 默认值矩阵 + 文案来自字典。
 // 全量键清单在本测试独立硬编码（不从实现导入——防同源盲区），与
-// docs/specs/settings-mapping.md §二的 23 项一一对应；上游 30 字段中
+// docs/specs/settings-mapping.md §二的 24 项一一对应（23 个上游映射键 +
+// #13 新增本仓键 newLineBelow）；上游 30 字段中
 // 3 项永不移植、3 项归 #14 storage、1 项剔除，均不在此出现。
 import { describe, expect, it } from 'vitest'
 import type { AddonSettingDefinition } from '../types/vendor/shared/addonSettings'
@@ -12,7 +13,7 @@ import {
 } from '../src/settings/defaults'
 import { pickMessages } from '../src/i18n'
 
-/** 进设置 schema 的 23 键（顺序 = 映射表 §二） */
+/** 进设置 schema 的 24 键（顺序 = 映射表 §二；newLineBelow 为 #13 本仓新增） */
 const EXPECTED_KEYS = [
   'tabout',
   'smartPaste',
@@ -37,6 +38,7 @@ const EXPECTED_KEYS = [
   'strictLineMode',
   'enhanceModA',
   'collapsePersistentEnter',
+  'newLineBelow',
 ] as const
 
 const zhDefs = buildSettingDefinitions(pickMessages('zh-CN'))
@@ -49,7 +51,7 @@ function defByKey(defs: AddonSettingDefinition[], key: string): AddonSettingDefi
 }
 
 describe('定义全量清单（防漏项）', () => {
-  it('键集与顺序与映射表 §二完全一致（23 项）', () => {
+  it('键集与顺序与映射表 §二完全一致（24 项）', () => {
     expect(zhDefs.map((d) => d.key)).toEqual([...EXPECTED_KEYS])
   })
 
@@ -57,7 +59,7 @@ describe('定义全量清单（防漏项）', () => {
     expect(new Set(zhDefs.map((d) => d.key)).size).toBe(EXPECTED_KEYS.length)
   })
 
-  it('默认值单一事实源覆盖全部 23 键（defaults 与定义同源）', () => {
+  it('默认值单一事实源覆盖全部 24 键（defaults 与定义同源）', () => {
     expect(Object.keys(DEFAULT_EFFECTIVE_SETTINGS).sort()).toEqual([...EXPECTED_KEYS].sort())
   })
 })
@@ -67,7 +69,7 @@ describe('定义形状与默认值矩阵', () => {
     const booleanKeys = EXPECTED_KEYS.filter(
       (key) => typeof DEFAULT_EFFECTIVE_SETTINGS[key] === 'boolean',
     )
-    expect(booleanKeys.length).toBe(14)
+    expect(booleanKeys.length).toBe(15)
     for (const key of booleanKeys) {
       const def = defByKey(zhDefs, key)
       expect(def.type, key).toBe('boolean')

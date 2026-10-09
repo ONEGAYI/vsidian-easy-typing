@@ -100,6 +100,10 @@ export const enMessages: Messages = {
       name: 'Keep Collapsed on Enter',
       desc: 'Pressing Enter on a collapsed heading inserts a same-level heading below without expanding the fold.',
     },
+    newLineBelow: {
+      name: 'Ctrl/Cmd+Enter inserts line below',
+      desc: 'Insert a new line below the current one, continuing list or quote prefixes (ordered lists auto-increment, task items reset to unchecked); when off, falls back to the built-in editor behavior (plain blank line).',
+    },
   },
   noHost: 'Vsidian (onegayi.vsidian) not found in this extension host',
   // Select-current-block command title (issue #11; wording follows upstream locale commands.selectBlock)

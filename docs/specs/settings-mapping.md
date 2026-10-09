@@ -10,12 +10,12 @@
 
 | 去向 | 数量 | 说明 |
 | --- | --- | --- |
-| 进平台设置 schema | 23 | 经 `settings.registerDefinitions` 注册，进 Vsidian 设置页「附加组件」分页 |
+| 进平台设置 schema | 23 + 1 | 23 个上游映射键经 `settings.registerDefinitions` 注册，进 Vsidian 设置页「附加组件」分页；另 1 键 `newLineBelow` 为 #13 新增的**本仓门控键**（无上游字段，理由见 §二表末行） |
 | 归 #14 storage 持久化 | 3 | 超出设置边界的富结构 / 规则数据族伴随状态 |
 | 永不移植 | 3 | AGENTS.md 永不移植清单（MS-IME / macOS 右键 / 上游死设置） |
 | 剔除（概念消失） | 1 | 规则存储路径——平台 `ctx.storage` 固定目录，无路径配置概念 |
 
-## 二、进设置 schema 的 23 项（映射总表）
+## 二、进设置 schema 的 24 项（映射总表）
 
 键名为平台侧扁平 camelCase（平台 key 点分层级仅为建议）；`title`/`description` 文案经 `src/i18n/` 双语字典生成，禁止散落字面量。
 
@@ -44,6 +44,7 @@
 | StrictLineMode | `strictLineMode` | string enum | `'enter_twice'` | 上游已是字符串枚举（`enter_twice`/`two_space`/`mix_mode`），原值直映 |
 | EnhanceModA | `enhanceModA` | boolean | `false` | 直映 |
 | CollapsePersistentEnter | `collapsePersistentEnter` | boolean | `false` | 设置数据链本票交付；生效逻辑已随 #18 落地（消费 `experimental.headingFold.folds()`，见 [fold-enter.md](fold-enter.md)） |
+| ——（无上游字段） | `newLineBelow` | boolean | `true` | **#13 本仓新增门控键**：上游 Mod+Enter 命令（`goNewLineAfterCurLine`）恒可用、无设置门，但 Obsidian 侧用户可解绑热键；实验层 keymap 不进平台统一快捷键管理（#402 契约，用户无法解绑），按「组件内功能粒度开关由插件设置承担」补此键。默认 `true` = 上游「命令恒可用」的等价默认；关闭时透传回平台内建 Mod+Enter（defaultKeymap `insertBlankLine`，仅插入空行不带前缀延续）。生效逻辑见 [new-line-below.md](new-line-below.md) |
 
 不设 `maxLength`/`minItems`/`maxItems`：上游多行文本（正则、词典）表达力不受限，无依据不引入上限。
 
