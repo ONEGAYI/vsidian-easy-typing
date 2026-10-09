@@ -1,0 +1,525 @@
+/* 规则管理设置页内容样式（工单 #16）——构建拷贝至 dist/settings.css，
+ * extension.ts registerPage 登记。自绘边界：全部类名带
+ * vsidian-easy-typing- 前缀，只作用于 mountRoot 内部；配色优先复用
+ * webview 基线 --vscode-* 主题变量（带回退值，暗亮色主题均可用），
+ * 不新增平台级样式契约。 */
+
+.vsidian-easy-typing-root {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 760px;
+  font-size: 13px;
+  color: var(--vscode-foreground, #cccccc);
+}
+
+.vsidian-easy-typing-page-title {
+  margin: 4px 0 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.vsidian-easy-typing-page-intro {
+  margin: 0;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+/* 状态行（info/success/failed 三态，data-vet-status 承载） */
+.vsidian-easy-typing-status {
+  min-height: 1.3em;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+.vsidian-easy-typing-status[data-vet-status='failed'] {
+  color: var(--vscode-errorForeground, #f48771);
+}
+
+.vsidian-easy-typing-status[data-vet-status='success'] {
+  color: var(--vscode-charts-green, #89d185);
+}
+
+/* 分组卡片 */
+.vsidian-easy-typing-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  border-radius: 6px;
+  background: var(--vscode-sideBar-background, transparent);
+}
+
+.vsidian-easy-typing-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.vsidian-easy-typing-section-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.vsidian-easy-typing-section-desc {
+  margin: 0;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  white-space: pre-line;
+}
+
+.vsidian-easy-typing-section-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* 按钮与芯片 */
+.vsidian-easy-typing-btn {
+  padding: 3px 12px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 4px;
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  color: var(--vscode-button-secondaryForeground, #ffffff);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.vsidian-easy-typing-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground, #45494e);
+}
+
+.vsidian-easy-typing-btn-primary {
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #ffffff);
+}
+
+.vsidian-easy-typing-btn-primary:hover {
+  background: var(--vscode-button-hoverBackground, #1177bb);
+}
+
+.vsidian-easy-typing-icon-btn {
+  padding: 2px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.vsidian-easy-typing-icon-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+  color: var(--vscode-foreground, #cccccc);
+}
+
+.vsidian-easy-typing-icon-btn.vsidian-easy-typing-danger:hover {
+  color: var(--vscode-errorForeground, #f48771);
+}
+
+.vsidian-easy-typing-chip {
+  padding: 2px 10px;
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  border-radius: 10px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.vsidian-easy-typing-chip:hover {
+  color: var(--vscode-foreground, #cccccc);
+}
+
+.vsidian-easy-typing-chip-active {
+  border-color: var(--vscode-button-background, #0e639c);
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #ffffff);
+}
+
+.vsidian-easy-typing-chip-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* 规则条目 */
+.vsidian-easy-typing-rule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vsidian-easy-typing-rule-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
+  border-radius: 5px;
+}
+
+.vsidian-easy-typing-rule-disabled {
+  opacity: 0.5;
+}
+
+.vsidian-easy-typing-rule-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.vsidian-easy-typing-rule-tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.vsidian-easy-typing-tag {
+  flex-shrink: 0;
+  padding: 0 7px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 17px;
+  border: 1px solid transparent;
+}
+
+.vsidian-easy-typing-tag-input {
+  background: rgba(86, 156, 214, 0.18);
+  color: #6cb6ff;
+}
+
+.vsidian-easy-typing-tag-delete {
+  background: rgba(244, 135, 113, 0.16);
+  color: #f48771;
+}
+
+.vsidian-easy-typing-tag-selectkey {
+  background: rgba(197, 137, 211, 0.18);
+  color: #c586c0;
+}
+
+.vsidian-easy-typing-tag-fn {
+  background: rgba(220, 179, 104, 0.18);
+  color: #dcb368;
+}
+
+.vsidian-easy-typing-tag-code {
+  background: rgba(110, 178, 129, 0.16);
+  color: #6eb281;
+}
+
+.vsidian-easy-typing-tag-formula {
+  background: rgba(110, 178, 129, 0.16);
+  color: #6eb281;
+}
+
+.vsidian-easy-typing-tag-tab,
+.vsidian-easy-typing-tag-auto {
+  background: rgba(128, 128, 128, 0.16);
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+.vsidian-easy-typing-rule-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vsidian-easy-typing-rule-meta {
+  display: flex;
+  gap: 6px;
+}
+
+.vsidian-easy-typing-rule-deleted {
+  opacity: 0.75;
+}
+
+.vsidian-easy-typing-empty {
+  padding: 8px 4px;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+/* 拖拽（用户规则排序） */
+.vsidian-easy-typing-drag-handle {
+  flex-shrink: 0;
+  cursor: grab;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  user-select: none;
+  letter-spacing: -2px;
+}
+
+.vsidian-easy-typing-rule-item.vsidian-easy-typing-dragging {
+  opacity: 0.4;
+}
+
+.vsidian-easy-typing-rule-item.vsidian-easy-typing-drag-over-top {
+  box-shadow: 0 -2px 0 0 var(--vscode-focusBorder, #007fd4);
+}
+
+.vsidian-easy-typing-rule-item.vsidian-easy-typing-drag-over-bottom {
+  box-shadow: 0 2px 0 0 var(--vscode-focusBorder, #007fd4);
+}
+
+/* 开关行 */
+.vsidian-easy-typing-toggle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.vsidian-easy-typing-toggle input {
+  accent-color: var(--vscode-button-background, #0e639c);
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  cursor: pointer;
+}
+
+/* 已停用内置规则折叠区 */
+.vsidian-easy-typing-deleted-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vsidian-easy-typing-deleted-summary {
+  cursor: pointer;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  user-select: none;
+}
+
+/* 数据目录 */
+.vsidian-easy-typing-storage-uri {
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--vscode-textCodeBlock-background, rgba(128, 128, 128, 0.12));
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  word-break: break-all;
+  align-self: flex-start;
+}
+
+/* 编辑表单浮层 */
+.vsidian-easy-typing-hidden {
+  display: none !important;
+}
+
+.vsidian-easy-typing-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 40px 16px;
+  overflow-y: auto;
+}
+
+.vsidian-easy-typing-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.vsidian-easy-typing-modal-dialog {
+  position: relative;
+  width: 640px;
+  max-width: 100%;
+  max-height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.4));
+  border-radius: 8px;
+  background: var(--vscode-editorWidget-background, #252526);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.vsidian-easy-typing-modal-header {
+  padding: 14px 18px 8px;
+}
+
+.vsidian-easy-typing-modal-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.vsidian-easy-typing-modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 6px 18px;
+}
+
+.vsidian-easy-typing-modal-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
+}
+
+.vsidian-easy-typing-form-error {
+  flex: 1;
+  min-height: 1.2em;
+  color: var(--vscode-errorForeground, #f48771);
+}
+
+/* 表单：pill 条与行式布局 */
+.vsidian-easy-typing-pill-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.vsidian-easy-typing-pill-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vsidian-easy-typing-pill-label {
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+.vsidian-easy-typing-pill-options {
+  display: flex;
+  gap: 6px;
+}
+
+.vsidian-easy-typing-pill {
+  padding: 2px 12px;
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.vsidian-easy-typing-pill-active {
+  border-color: var(--vscode-button-background, #0e639c);
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #ffffff);
+}
+
+.vsidian-easy-typing-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.22));
+  border-radius: 6px;
+}
+
+.vsidian-easy-typing-form-group-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vsidian-easy-typing-form-group-title {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.vsidian-easy-typing-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vsidian-easy-typing-form-row-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.vsidian-easy-typing-form-name {
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  font-size: 12px;
+}
+
+.vsidian-easy-typing-form-desc {
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  font-size: 11px;
+  white-space: pre-line;
+}
+
+.vsidian-easy-typing-root input[type='text'],
+.vsidian-easy-typing-root input[type='number'],
+.vsidian-easy-typing-root textarea {
+  padding: 4px 8px;
+  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.35));
+  border-radius: 4px;
+  background: var(--vscode-input-background, #3c3c3c);
+  color: var(--vscode-input-foreground, #cccccc);
+  font-size: 12px;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.vsidian-easy-typing-textarea {
+  min-height: 72px;
+  resize: vertical;
+  font-family: var(--vscode-editor-font-family, monospace) !important;
+  white-space: pre;
+}
+
+/* 函数体只读代码块与词法着色 */
+.vsidian-easy-typing-code {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--vscode-textCodeBlock-background, rgba(128, 128, 128, 0.12));
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.vsidian-easy-typing-hl-keyword {
+  color: #c586c0;
+}
+
+.vsidian-easy-typing-hl-string {
+  color: #ce9178;
+}
+
+.vsidian-easy-typing-hl-number {
+  color: #b5cea8;
+}
+
+.vsidian-easy-typing-hl-comment {
+  color: #6a9955;
+}
+
+/* 规则测试编辑器 */
+.vsidian-easy-typing-test-output {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 1.3em;
+}
+
+.vsidian-easy-typing-test-output[data-vet-test-state='miss'] {
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+.vsidian-easy-typing-test-output[data-vet-test-state='hit'] .vsidian-easy-typing-test-state {
+  color: var(--vscode-charts-green, #89d185);
+  font-size: 12px;
+}
