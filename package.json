@@ -1,0 +1,47 @@
+{
+  "name": "vsidian-easy-typing",
+  "publisher": "ONEGAYI",
+  "displayName": "Vsidian Easy Typing",
+  "description": "Input experience add-on for Vsidian: smart CJK/Latin spacing, punctuation and pair conversion, editable enhancements, and a customizable text transform rule engine. Ported from easy-typing-obsidian.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.82.3"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "extensionDependencies": [
+    "onegayi.vsidian"
+  ],
+  "keywords": [
+    "vsidian-addon"
+  ],
+  "activationEvents": [],
+  "vsidianAddon": {
+    "manifestVersion": 1,
+    "api": "^1.0.0",
+    "experimental": {
+      "cm6": "^1.1.0"
+    }
+  },
+  "main": "./dist/extension.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "compile": "npm run build && npm run typecheck",
+    "test": "vitest run",
+    "vendor:sdk": "node scripts/vendorSdkTypes.mjs",
+    "vendor:check": "node scripts/vendorSdkTypes.mjs --check"
+  },
+  "devDependencies": {
+    "@codemirror/language": "6.12.4",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.13",
+    "@types/node": "22.20.4",
+    "@types/vscode": "1.82.0",
+    "esbuild": "0.28.2",
+    "typescript": "6.0.3",
+    "vitest": "5.0.1"
+  }
+}

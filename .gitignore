@@ -1,0 +1,16 @@
+# 依赖与产物
+node_modules/
+dist/
+out/
+
+# 测试运行残留
+.vscode-test/
+coverage/
+
+# 日志与临时文件
+*.log
+*.tmp
+
+# 系统杂项
+.DS_Store
+Thumbs.db
