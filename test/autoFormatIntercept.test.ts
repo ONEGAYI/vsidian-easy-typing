@@ -195,3 +195,39 @@ describe('设置门与富结构种子', () => {
     expect(gate.settings().lineFormat.inlineFormulaSpaceMode).toBe(0)
   })
 })
+
+// 工单 #28 增量：文件排除（ExcludeFiles × #407 docUri）——上游
+// cm_extensions.ts:417 `!AutoFormat || isCurrentFileExclude` 的同序接入。
+describe('文件排除（#28：excludeFiles × ctx.docUri）', () => {
+  it('docUri 命中排除清单 → 恒 null（引用目标文档判定，非宿主文档）', async () => {
+    const { registrations } = registerAll({ effective: { excludeFiles: ['DailyNote/'] } })
+    await Promise.resolve()
+    const reg = registrations[0]!
+    // embed 视图语义：docUri 是引用目标 B（排除命中）——与宿主文档无关
+    const embedCtx = { ...inputCtx('中文a', 3, 'a'), docUri: 'file:///v/DailyNote/引用目标.md' }
+    expect(reg.onInput(embedCtx)).toBeNull()
+    // 文件级精确命中同型
+    expect(reg.onInput({ ...inputCtx('中文a', 3, 'a'), docUri: 'file:///v/DailyNote/a.md' })).toBeNull()
+  })
+
+  it('未命中清单照常格式化；autoFormat 关闭先于排除判定（上游同序）', async () => {
+    const { registrations } = registerAll({ effective: { excludeFiles: ['DailyNote/'] } })
+    await Promise.resolve()
+    const ctx = { ...inputCtx('中文a', 3, 'a'), docUri: 'file:///v/free/a.md' }
+    expect(registrations[0]!.onInput(ctx)).not.toBeNull()
+  })
+
+  it('gate：excludeFiles 数组校验（非字符串数组回默认空清单）', async () => {
+    const gate = createAutoFormatGate({
+      request: () => Promise.resolve({ ok: true as const, result: { effective: { excludeFiles: 'DailyNote/' } } }),
+    })
+    await gate.refresh()
+    expect(gate.settings().excludeFiles).toEqual([])
+    const gate2 = createAutoFormatGate({
+      request: () =>
+        Promise.resolve({ ok: true as const, result: { effective: { excludeFiles: ['DailyNote/', 3] } } }),
+    })
+    await gate2.refresh()
+    expect(gate2.settings().excludeFiles).toEqual([])
+  })
+})
