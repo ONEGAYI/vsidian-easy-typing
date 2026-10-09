@@ -28,7 +28,7 @@ import {
   defaultWebReadText,
   dispatchPlainPasteEvent,
 } from './plainPasteCommand'
-import { registerRuleInputBehaviors } from './ruleBehaviorIntercept'
+import { registerRuleDeleteSelectKeyBehaviors, registerRuleInputBehaviors } from './ruleBehaviorIntercept'
 
 /** 本组件声明的扩展 ID（装载器按此核对入口身份） */
 const ADDON_ID = 'ONEGAYI.vsidian-easy-typing'
@@ -287,6 +287,39 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       cm6.view.EditorView.updateListener.of((update) => {
         if (!update.docChanged) return
         const pending = ruleRuntime.consumePendingTabstops()
+        if (pending.length > 0) tabstopNav.activateTabstops(update.view, pending)
+      }),
+    )
+  }
+
+  // ============================================================
+  // 工单 #9 增量块：Delete 联动删除与 SelectKey 选中包裹——#1 内核剩余
+  // 两类触发（delete.* 白名单 / input.type 选区替换）按功能族注册进同一
+  // 行为链。族设计（06-delete-rules / 07-selectkey-rules，与 #25 五族共
+  // 用 input-rules 独占组）、事务前重建与坐标换算见
+  // docs/specs/rule-engine.md「#9 Delete/SelectKey 触发接入」节。
+  // ============================================================
+
+  if (behaviors !== undefined) {
+    const triggerRuntime = registerRuleDeleteSelectKeyBehaviors({
+      behaviors,
+      channel: sdk.channel,
+      language: navigator.language,
+    })
+    for (const outcome of triggerRuntime.outcomes) {
+      if (!outcome.ok) {
+        // 普通 API 拒绝不算故障：经 debugLog 留痕便于诊断（logging.ts 约定）
+        debugLog('trigger rule behavior register rejected:', outcome.localId, outcome.reason)
+      }
+    }
+
+    // #15×#9 接线：独立暂存槽 + 独立 docChanged 监听（与 #25 通道互不干
+    // 扰——独占组保证一次输入至多一族命中）。SelectKey 包裹计划携带
+    // ${0:${SEL}} 的 $0 组（覆盖选中文本），计划应用后激活导航态。
+    sdk.registerExtension(
+      cm6.view.EditorView.updateListener.of((update) => {
+        if (!update.docChanged) return
+        const pending = triggerRuntime.consumePendingTabstops()
         if (pending.length > 0) tabstopNav.activateTabstops(update.view, pending)
       }),
     )

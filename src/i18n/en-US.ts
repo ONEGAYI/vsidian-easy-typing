@@ -131,6 +131,16 @@ export const enMessages: Messages = {
       desc: 'Typing > or 》 converts to the Markdown quote marker; a space is added after the marker',
       examples: ['line-start > → > '],
     },
+    deletePair: {
+      name: 'Paired-structure linked deletion',
+      desc: 'Deleting one end of an empty pair removes the whole pair ($|$, ==|==, 【|】, ![[...]], empty code blocks, etc.)',
+      examples: ['backspace in $|$ → remove the pair', 'backspace in 【|】 → remove the pair'],
+    },
+    selectKeyWrap: {
+      name: 'Selection wrap by trigger key',
+      desc: 'Typing a trigger key over a selection wraps it: · → inline code, 【 → [], ¥/￥ → $$, fullwidth quotes and 《（ → paired symbols',
+      examples: ['select text, type · → `text`', 'select text, type 【 → [text]'],
+    },
   },
   // Rule error notification template (issue #25; {id} rule id, {message} engine-reported detail)
   ruleError: {

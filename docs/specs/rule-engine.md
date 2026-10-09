@@ -1,6 +1,6 @@
-# 规则引擎内核与内置规则（工单 #1）+ 行为链接入（工单 #25）
+# 规则引擎内核与内置规则（工单 #1）+ 行为链接入（工单 #25）+ Delete/SelectKey 触发接入（工单 #9）
 
-规则引擎纯逻辑内核（三触发类建模、Input 类执行）与内置规则数据全量移植。事实源模块：`src/rules/rule-engine.ts`（内核）与 `src/rules/default-rules.ts`（数据）；测试矩阵：`test/rule-engine-core.test.ts`（机制）与 `test/rules-matrix.test.ts`（内置规则）。#25 行为链接入：`src/ruleBehaviorPipeline.ts`（onInput 触发管线）、`src/ruleBehaviorIntercept.ts`（功能族注册）、`src/ruleScopeFallback.ts`（作用域判定降级）；测试：`test/ruleBehaviorPipeline.test.ts`、`test/ruleBehaviorIntercept.test.ts`、`test/ruleScopeFallback.test.ts`。
+规则引擎纯逻辑内核（三触发类建模、Input 类执行）与内置规则数据全量移植。事实源模块：`src/rules/rule-engine.ts`（内核）与 `src/rules/default-rules.ts`（数据）；测试矩阵：`test/rule-engine-core.test.ts`（机制）与 `test/rules-matrix.test.ts`（内置规则）。#25 行为链接入：`src/ruleBehaviorPipeline.ts`（onInput 触发管线）、`src/ruleBehaviorIntercept.ts`（功能族注册）、`src/ruleScopeFallback.ts`（作用域判定降级）；测试：`test/ruleBehaviorPipeline.test.ts`、`test/ruleBehaviorIntercept.test.ts`、`test/ruleScopeFallback.test.ts`。#9 Delete/SelectKey 触发接入：管线函数与族注册落在上述同两模块（`planDeleteRuleModification` / `planSelectKeyRuleModification` + `06-delete-rules` / `07-selectkey-rules` 族），页面接线在 `src/page-editor.ts` 的 #9 增量块。
 
 ## 验收口径
 
@@ -88,7 +88,7 @@
 - **本票直接消费**：`userEvent='input.type.compose'`（IME 定稿，#399）与 `input.type` 同路径进管线（引擎对两者不区分——`changeType` 仅用于 Tab 触发模式判定）。上游对 compose 定稿与普通输入同样共用 `tryProcessInput`。
 - **#6（compose 去重）挂接点**：`userEvent` 原样保留在管线入口（`RuleInputPipelineContext`），管线为纯函数（无跨调用状态）——#6 可在管线外层包裹去重判定，零侵入。
 - **#26（格式化管线）挂接点**：中英空格等自动格式化归上游 `Formater`（非规则引擎），本票集成测试钉住「中文后键入半角字母规则面零命中」基线；#26 经同一 `RuleInputPipelineContext` 形状另注册行为族消费，管线入口不改。
-- **#9（Delete/SelectKey）挂接点**：`pipelineConsumesUserEvent` 只放行 `input.type` / `input.type.compose`；delete.* 事件本链返回 null。#9 复用 `applyResultToPlan` 与 `detectScopeFromText`，SelectKey 的包裹目标从 `AddonInputContext.replaced` 读回后组 TxContext（`key` + `selection`）。
+- **#9（Delete/SelectKey）挂接点**：`pipelineConsumesUserEvent` 只放行 `input.type` / `input.type.compose`；delete.* 事件与选区替换形态（replaced 非空）在本链返回 null。#9 已随独立管线函数接入（见下节），复用 `applyResultToPlan` 与 `detectScopeFromText`，SelectKey 的包裹目标从 `AddonInputContext.replaced` 读回后组 TxContext（`key` + `selection`）。
 
 ### 设置门控（总门核对结论）
 
@@ -107,3 +107,38 @@
 - **用户自定义正则区块跳过顺延**：上游 `triggerCvtRule` 的 `UserDefinedRegSwitch × UserRulesRespectUserDefinedRegexBlocks` 跳过检查依赖 `splitTextWithLinkAndUserDefined`（core.ts ~100 行，未移植）且默认配置下不生效（`userRulesRespectUserDefinedRegexBlocks` 默认 false），归 #14 随用户规则移植。
 - **`$0` 字面标记**：#1 已知边界延续——替换体占位符保留为字面文本（如 `（$0）`），#14 解析落地后恢复上游语义，届时矩阵与管线断言同步更新。
 - **中英空格**：规则面零命中基线（集成测试钉住），转换本体归 #26 格式化管线消费。
+
+## #9 Delete/SelectKey 触发接入（delete.* 联动删除 + 选区替换包裹）
+
+剩余两类触发的执行内核接入：`planDeleteRuleModification`（Delete 类）与 `planSelectKeyRuleModification`（SelectKey 类）落在 `src/ruleBehaviorPipeline.ts`，族注册（`06-delete-rules` / `07-selectkey-rules`）与接线落在 `src/ruleBehaviorIntercept.ts` 与 `src/page-editor.ts` 的 #9 增量块。上游对照 `cm_extensions.ts` 的 delete.backward 分支（L327-369）与 Selection Replace 分支（L61-110）。
+
+### 触发面与门控
+
+- **Delete**：`pipelineConsumesDeleteEvent` 白名单五类 `delete.backward / forward / selection / cut / line`（与平台 `liveInstance.ts` 的 `ADDON_BEHAVIOR_DELETE_USER_EVENTS` 同集；`delete.dedent` 属缩进命令族不纳入）+ `inputText === ''`（平台契约：delete 事务净插入为空串）+ `replaced` 非空区间。
+- **SelectKey**：`userEvent === 'input.type'` + `replaced` 非空（键入替换选区；`input.type.compose` 的 IME 定稿补驱动 replaced 恒 null——平台 #399 边界，compose 天然不进 SelectKey，测试钉住）。上游的 `fromB+1===toB` 单字符门（——/…… 例外）**不设**：引擎 triggerKeys 经 `parseSelectKeyRuleTriggerKeys` 逐字符解析、恒单字符，多字符键必然不中任何规则——与上游门控结果等价，少一道任意性更强的门。
+- **多选区一律不进**（两管线同门）：多区间时平台 replaced 是**最小包围 + 按区间顺序拼接**（`AddonReplacedRange` 契约），事务前重建无法精确还原；且单条计划的 changes 无法忠实表达多区间替换。以「快照选区数 = 1」为代理判定（多区间删除/替换后残留多光标），返回 null 落原生。与 #25「仅处理首个选区、其余不触发」口径一致。
+
+### 事务前重建与坐标换算（核心设计）
+
+平台 snapshot 是**事务后**状态（已含本次输入/删除），而引擎需要上游的 startState（事务前文档 + 事务前光标）：
+
+- **Delete 重建**：事务前文档 = `snapshot.text` 在 `replaced.from` 处拼回 `replaced.text`（单区间精确）。虚拟光标按事件映射——`backward → replaced.to`（上游 toA 同口径：左正则尾锚可命中刚删的字符）、`forward → replaced.from`（Delete 键删光标右侧的镜像）、`selection / cut / line → replaced.to`（上游只实现 backward，这三类按 backward 口径统一近似；`delete.line` 的空块场景按此口径验证）。引擎产出（matchRange/cursor/tabstops）为事务前坐标，经 `preOffsetToSnapshot`（≤from 不变、≥to 平移被删长度、区间内钳 from，单调）换算回快照坐标落计划。**换算后空操作**（length 0 且空文本——如 cut 已删尽整对）返回 null：原生删除即终态，不提交无意义计划。
+- **SelectKey 重建**：事务前文档 = `snapshot.text` 把 `replaced.text` 拼回键入文本之前（`slice(0, from) + replaced.text + slice(from + inputText.length)`）。TxContext 带 `key`（inputText）+ `selection`（replaced 区间），`${SEL}` 展开读事务前选中文本。计划替换快照中键入文本占据区 `[from, from + inputText.length)`；引擎 cursor/tabstops 以 `matchRange.from`（= `replaced.from`）为基点、与计划基点一致——**直接透传，无需换算**（推导：newText 落计划后占据 `[from, from + newText.length)`，引擎坐标 = from + 产出内偏移）。
+
+### Input 管线的 replaced 门（#25 行为修正）
+
+Input 管线（`planInputRuleWithTabstops`）新增 `replaced !== null → return null`：上游输入路径要求 `changedStr.length < 1`（updateListener 门，cm_extensions.ts L547-549），选区替换事务只由 transactionFilter 的 SelectKey 分支处理，命中与否都不再落入 Input 规则。#25 只复刻了 notSelected 条件（快照塌缩光标）、漏了 changedStr 条件——选区替换后快照光标同样塌缩，autopair 类会基于残缺上下文命中并占用独占组，既堵住 SelectKey 又丢失被替换内容。本门为该缺口的管线层修正，#25 五族注册的 onInput 适配器相应透传 `ctx.replaced`（族定义与链序零改动）。
+
+### 族设计与独占组结论
+
+- **两族**：`06-delete-rules`（autopair-delete 10 + 五条 del-* 30，同管联动删除）与 `07-selectkey-rules`（四条 sel-wrap-* 40，同管选中包裹）。分族依据同 #25 三条（开关粒度 / 触发域 / 链序保真——localId 数值前缀延续上游优先级分层编码：30 < 40 排在 01-05 之后）。
+- **独占组：与 #25 五族共用 `input-rules`**。核对平台语义（vsidian `webview/addonBehaviors.ts` driveInput）：按有效序逐行为调用，**返回 null 不占用组**、首个返回计划者占用组、其后同组跳过。三类触发面互斥（Input 族对 delete.* 走 userEvent 门返回 null、对选区替换走 replaced 门返回 null；Delete/SelectKey 族对纯插入与 compose 返回 null）——同组在结构上保住「一条输入至多一条规则生效」的上游全局首命中语义，且不会出现「Delete 事务被 Input 首命中堵住」（Input 族对 delete.* 恒 null）。若拆独立组则该不变量只剩各管线自觉门控，无平台层保障——故取同组。
+- **撤销**：Delete/SelectKey 规则同为用户输入直接触发的单发修饰，无同链前序 SDK 原子修饰可并组——延续 #25 全量核对结论，一律 `atomic`（联动删除与选中包裹各自成独立撤回步）。撤销单步还原的验收由注册声明（测试断言 `history: 'atomic'`）+ #21 真实撤销验证承载（真实撤销管线归平台）。
+- **tabstop 暂存**：SelectKey 包裹计划携带 `${0:${SEL}}` 的 `$0` 组（覆盖选中文本）。#9 注册函数返回独立暂存槽与 `consumePendingTabstops`（与 #25 槽互不干扰——独占组保证一次输入至多一族命中），page-editor 以独立 docChanged 监听消费、喂 `tabstopNav.activateTabstops`（读即消费，同 #15×#25 口径）。
+
+### 已知边界（#9 增）
+
+- **多区间近似**：快照选区数 = 1 是「单一删除/替换区间」的代理判定——理论上单光标事务也可含多变更区间（CM6 命令罕见形态），此时重建不精确。可观测面内无更可靠信号，接受该近似。
+- **`delete.selection / cut / line` 光标近似**：虚拟光标统一取区间右端（backward 口径）；上游未实现这三类，无法对照。联动删除规则面向「删空对的一端」场景，选区/整行删除下命中与否均由引擎左右正则自然裁定。
+- **IME 定稿不适用 SelectKey**：平台对 compose 补驱动 replaced 恒 null（组合事务先于 compositionend，替换侧无法归因）——组合输入选中文本的包裹不可达，属平台边界，非本插件可修。
+- **CSP 函数体规则边界延续**：#25 的 #405 处置对 #9 同样适用——`autopair-delete` 与三条 sel-wrap 函数体规则（sF 旗标）在真实 webview 装载期编译失败降级；vitest 环境全量验证（本票矩阵即此形态）。`builtin-sel-wrap-backtick`（'s' 旗标，字符串替换体）不受影响——真实页面选中包裹仅 `·` 键可用，#17 预注册函数表落地后消除。#21 按此口径核对。

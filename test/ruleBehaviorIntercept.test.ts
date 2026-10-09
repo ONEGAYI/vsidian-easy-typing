@@ -1,19 +1,24 @@
-// 行为链接入层测试（工单 #25）：功能族注册契约、默认链序与上游优先级
-// 对照、族引擎装载（含 reportError 注入）、onInput 全链、设置门与
-// reportError 节流上报。分族依据与 joinPrevious 核对结论记录在
-// docs/specs/rule-engine.md「#25 行为链接入」节。
+// 行为链接入层测试（工单 #25 + 工单 #9）：功能族注册契约、默认链序与
+// 上游优先级对照、族引擎装载（含 reportError 注入）、onInput 全链、设置
+// 门与 reportError 节流上报。#9 增补：Delete/SelectKey 族契约、注册形状
+// 与三类触发面的端到端链仲裁（按平台 addonBehaviors runtime 语义模拟有
+// 效序 + 独占组）。分族依据与 joinPrevious 核对结论记录在
+// docs/specs/rule-engine.md「#25 行为链接入」「#9 Delete/SelectKey 触发
+// 接入」节。
 import { describe, expect, it } from 'vitest'
 import { RuleEngine, RuleScope, RuleType } from '../src/rules/rule-engine'
 import { DEFAULT_BUILTIN_RULES } from '../src/rules/default-rules'
 import { pickMessages } from '../src/i18n'
 import { SETTINGS_TOPIC } from '../src/settings/store'
-import type { AddonBehaviorRegistration } from '../types/vendor/shared/addonBehaviors'
+import type { AddonBehaviorRegistration, AddonBehaviorInputPlan } from '../types/vendor/shared/addonBehaviors'
 import {
+  DELETE_SELECTKEY_RULE_FAMILIES,
   INPUT_RULE_EXCLUSIVE_GROUP,
   INPUT_RULE_FAMILIES,
   RULE_ERROR_TOPIC,
   buildFamilyEngine,
   createRuleErrorReporter,
+  registerRuleDeleteSelectKeyBehaviors,
   registerRuleInputBehaviors,
   type RuleFamilyDefinition,
 } from '../src/ruleBehaviorIntercept'
@@ -272,3 +277,244 @@ describe('reportError 节流上报（createRuleErrorReporter）', () => {
 function neverResolvingChannel(): { request: () => Promise<{ ok: false; reason: 'timeout' }> } {
   return { request: () => Promise.resolve({ ok: false as const, reason: 'timeout' as const }) }
 }
+
+// ===== 工单 #9：Delete / SelectKey 族注册 =====
+
+describe('#9 功能族契约：分族覆盖与链序', () => {
+  it('两族恰好覆盖全部 Delete/SelectKey 类内置规则（6 + 4 条），无遗漏无重复', () => {
+    const expected = DEFAULT_BUILTIN_RULES
+      .map((r, index) => ({ r, index }))
+      .filter(({ r }) => {
+        const type = RuleEngine.parseOptions(r.options).type
+        return type === RuleType.Delete || type === RuleType.SelectKey
+      })
+      .sort((a, b) => (a.r.priority ?? 100) - (b.r.priority ?? 100) || a.index - b.index)
+      .map(({ r }) => r.id)
+    const familyRuleIds = DELETE_SELECTKEY_RULE_FAMILIES.flatMap((f) => f.ruleIds)
+    expect(new Set(familyRuleIds).size).toBe(familyRuleIds.length)
+    expect([...familyRuleIds].sort()).toEqual([...expected].sort())
+    expect(familyRuleIds.length).toBe(10)
+    expect(DELETE_SELECTKEY_RULE_FAMILIES.map((f) => f.localId)).toEqual(['06-delete-rules', '07-selectkey-rules'])
+    // 与 #25 五族零重叠：全量 20 条恰好分进七个族
+    const all = [...INPUT_RULE_FAMILIES, ...DELETE_SELECTKEY_RULE_FAMILIES].flatMap((f) => f.ruleIds)
+    expect(new Set(all).size).toBe(DEFAULT_BUILTIN_RULES.length)
+  })
+
+  it('族内规则类型一致（Delete 族全 Delete、SelectKey 族全 SelectKey）', () => {
+    for (const family of DELETE_SELECTKEY_RULE_FAMILIES) {
+      const engine = buildFamilyEngine(family, undefined)
+      expect(engine.getRules().map((r) => r.id)).toEqual(family.ruleIds)
+      const kinds = new Set(engine.getRules().map((r) => r.type))
+      expect(kinds.size).toBe(1)
+    }
+    expect(buildFamilyEngine(DELETE_SELECTKEY_RULE_FAMILIES[0]!, undefined).getRules().every((r) => r.type === RuleType.Delete)).toBe(true)
+    expect(buildFamilyEngine(DELETE_SELECTKEY_RULE_FAMILIES[1]!, undefined).getRules().every((r) => r.type === RuleType.SelectKey)).toBe(true)
+  })
+})
+
+describe('#9 注册形状与 onInput 全链', () => {
+  function registerTriggerAll(language: string): {
+    registrations: RuleBehaviorRegistrationSubset[]
+    runtime: ReturnType<typeof registerRuleDeleteSelectKeyBehaviors>
+  } {
+    const registrations: RuleBehaviorRegistrationSubset[] = []
+    const runtime = registerRuleDeleteSelectKeyBehaviors({
+      behaviors: {
+        register: (reg) => {
+          registrations.push(reg)
+          return { ok: true as const, key: `ONEGAYI.vsidian-easy-typing#${reg.id}` }
+        },
+        onChanged: () => () => {},
+      },
+      channel: neverResolvingChannel(),
+      language,
+    })
+    return { registrations, runtime }
+  }
+
+  it('两族各注册一条：名称走字典、history 一律 atomic、与 #25 五族共用独占组', () => {
+    const { registrations } = registerTriggerAll('zh-CN')
+    expect(registrations.map((r) => r.id)).toEqual(['06-delete-rules', '07-selectkey-rules'])
+    const m = pickMessages('zh-CN')
+    for (const reg of registrations) {
+      expect(reg.id).toMatch(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+      expect(reg.name.length).toBeGreaterThan(0)
+      expect(reg.description).toBeDefined()
+      expect((reg.examples ?? []).length).toBeGreaterThan(0)
+      expect(reg.history).toBe('atomic')
+      expect(reg.exclusiveGroup).toBe(INPUT_RULE_EXCLUSIVE_GROUP)
+    }
+    expect(registrations.some((r) => r.name === m.ruleFamilies.deletePair.name)).toBe(true)
+    expect(registrations.some((r) => r.name === m.ruleFamilies.selectKeyWrap.name)).toBe(true)
+  })
+
+  it('Delete 族 onInput：【|】 退格产出联动删除计划；input 事件返回 null', () => {
+    const { registrations } = registerTriggerAll('zh-CN')
+    const del = registrations.find((r) => r.id === '06-delete-rules')!
+    const plan = del.onInput({
+      userEvent: 'delete.backward',
+      inputText: '',
+      replaced: { from: 0, to: 1, text: '【' },
+      docUri: 'file:///a.md',
+      snapshot: { text: '】', selections: [{ anchor: 0, head: 0 }], version: 1, revision: 1 },
+    })
+    expect(plan).toEqual({
+      changes: [{ offset: 0, length: 1, text: '' }],
+      selection: { anchor: 0, head: 0 },
+    })
+    expect(
+      del.onInput({
+        userEvent: 'input.type',
+        inputText: '（',
+        replaced: null,
+        docUri: 'file:///a.md',
+        snapshot: { text: '（', selections: [{ anchor: 1, head: 1 }], version: 1, revision: 1 },
+      }),
+    ).toBeNull()
+  })
+
+  it('SelectKey 族 onInput：选中 hello 键 · 产出包裹计划；delete 事件返回 null', () => {
+    const { registrations } = registerTriggerAll('zh-CN')
+    const sel = registrations.find((r) => r.id === '07-selectkey-rules')!
+    const plan = sel.onInput({
+      userEvent: 'input.type',
+      inputText: '·',
+      replaced: { from: 0, to: 5, text: 'hello' },
+      docUri: 'file:///a.md',
+      snapshot: { text: '·', selections: [{ anchor: 1, head: 1 }], version: 1, revision: 1 },
+    })
+    expect(plan).toEqual({
+      changes: [{ offset: 0, length: 1, text: '`hello`' }],
+      selection: { anchor: 1, head: 1 },
+    })
+    expect(
+      sel.onInput({
+        userEvent: 'delete.backward',
+        inputText: '',
+        replaced: { from: 0, to: 1, text: '$' },
+        docUri: 'file:///a.md',
+        snapshot: { text: '$', selections: [{ anchor: 0, head: 0 }], version: 1, revision: 1 },
+      }),
+    ).toBeNull()
+  })
+
+  it('tabstop 暂存通道：SelectKey 包裹计划后可取 $0 组（覆盖选中文本），读即消费', () => {
+    const { registrations, runtime } = registerTriggerAll('zh-CN')
+    expect(runtime.consumePendingTabstops()).toEqual([])
+    const sel = registrations.find((r) => r.id === '07-selectkey-rules')!
+    sel.onInput({
+      userEvent: 'input.type',
+      inputText: '·',
+      replaced: { from: 0, to: 5, text: 'hello' },
+      docUri: 'file:///a.md',
+      snapshot: { text: '·', selections: [{ anchor: 1, head: 1 }], version: 1, revision: 1 },
+    })
+    const pending = runtime.consumePendingTabstops()
+    expect(pending).toEqual([{ number: 0, from: 1, to: 6 }])
+    expect(runtime.consumePendingTabstops()).toEqual([])
+  })
+
+  it('英文语言标签取英文字典名称', () => {
+    const { registrations } = registerTriggerAll('en-US')
+    const m = pickMessages('en-US')
+    expect(registrations.some((r) => r.name === m.ruleFamilies.deletePair.name)).toBe(true)
+    expect(registrations.some((r) => r.name === m.ruleFamilies.selectKeyWrap.name)).toBe(true)
+  })
+})
+
+describe('#9 端到端链仲裁（按平台 addonBehaviors runtime 语义模拟）', () => {
+  /** 注册面：收集两套注册（#25 五族 + #9 两族），按完整键字典序排有效序 */
+  function registerChain(): RuleBehaviorRegistrationSubset[] {
+    const registrations: RuleBehaviorRegistrationSubset[] = []
+    const behaviors = {
+      register: (reg: RuleBehaviorRegistrationSubset) => {
+        registrations.push(reg)
+        return { ok: true as const, key: `ONEGAYI.vsidian-easy-typing#${reg.id}` }
+      },
+      onChanged: () => () => {},
+    }
+    registerRuleInputBehaviors({ behaviors, channel: neverResolvingChannel(), language: 'zh-CN' })
+    registerRuleDeleteSelectKeyBehaviors({ behaviors, channel: neverResolvingChannel(), language: 'zh-CN' })
+    // 平台默认有效序 = 完整键字典序；同组件前缀下等价 localId 字典序
+    return [...registrations].sort((a, b) => a.id.localeCompare(b.id))
+  }
+
+  /** 平台链语义复刻（addonBehaviors.ts driveInput 核心）：按序各试、
+   * 首个返回计划者占用独占组、其后同组跳过、null 不占用 */
+  function driveChain(
+    registrations: RuleBehaviorRegistrationSubset[],
+    ctx: Parameters<RuleBehaviorRegistrationSubset['onInput']>[0],
+  ): { plan: AddonBehaviorInputPlan | null; firedId: string | null; called: string[] } {
+    const handledGroups = new Set<string>()
+    const called: string[] = []
+    for (const reg of registrations) {
+      if (reg.exclusiveGroup !== undefined && handledGroups.has(reg.exclusiveGroup)) {
+        called.push(`${reg.id}:skipped-group`)
+        continue
+      }
+      const plan = reg.onInput(ctx)
+      called.push(`${reg.id}:${plan === null ? 'null' : 'plan'}`)
+      if (plan !== null && reg.exclusiveGroup !== undefined) {
+        handledGroups.add(reg.exclusiveGroup)
+        return { plan, firedId: reg.id, called }
+      }
+    }
+    return { plan: null, firedId: null, called }
+  }
+
+  it('选中 hello 键 （：Input 五族对选区替换形态让位（replaced 门），SelectKey 族命中包裹', () => {
+    const chain = registerChain()
+    const { plan, firedId, called } = driveChain(chain, {
+      userEvent: 'input.type',
+      inputText: '（',
+      replaced: { from: 0, to: 5, text: 'hello' },
+      docUri: 'file:///a.md',
+      snapshot: { text: '（', selections: [{ anchor: 1, head: 1 }], version: 1, revision: 1 },
+    })
+    // 01-05 全部 null（replaced 门）——若 autopair 放行会占用组并丢被替换内容
+    expect(firedId).toBe('07-selectkey-rules')
+    expect(plan?.changes[0]?.text).toBe('（hello）')
+    expect(called.filter((c) => c.endsWith(':null')).length).toBe(6) // 01-05 + 06-delete
+    expect(called).toContain('02-autopair:null')
+  })
+
+  it('【|】 退格：Delete 族命中联动删除，其余族不响应', () => {
+    const chain = registerChain()
+    const { plan, firedId } = driveChain(chain, {
+      userEvent: 'delete.backward',
+      inputText: '',
+      replaced: { from: 0, to: 1, text: '【' },
+      docUri: 'file:///a.md',
+      snapshot: { text: '】', selections: [{ anchor: 0, head: 0 }], version: 1, revision: 1 },
+    })
+    expect(firedId).toBe('06-delete-rules')
+    expect(plan?.changes).toEqual([{ offset: 0, length: 1, text: '' }])
+  })
+
+  it('纯插入（（：Input 族 autopair 照常命中，Delete/SelectKey 族不占用组', () => {
+    const chain = registerChain()
+    const { plan, firedId } = driveChain(chain, {
+      userEvent: 'input.type',
+      inputText: '（',
+      replaced: null,
+      docUri: 'file:///a.md',
+      snapshot: { text: '（', selections: [{ anchor: 1, head: 1 }], version: 1, revision: 1 },
+    })
+    expect(firedId).toBe('02-autopair')
+    expect(plan?.changes[0]?.text).toBe('（）')
+  })
+
+  it('非触发输入（x 纯插入）：全链零命中，链照常落原生', () => {
+    const chain = registerChain()
+    const { plan, called } = driveChain(chain, {
+      userEvent: 'input.type',
+      inputText: 'x',
+      replaced: null,
+      docUri: 'file:///a.md',
+      snapshot: { text: 'x', selections: [{ anchor: 1, head: 1 }], version: 1, revision: 1 },
+    })
+    expect(plan).toBeNull()
+    expect(called.every((c) => c.endsWith(':null'))).toBe(true)
+    expect(called.length).toBe(7)
+  })
+})

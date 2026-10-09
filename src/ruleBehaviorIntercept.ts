@@ -38,7 +38,12 @@ import { DEFAULT_BUILTIN_RULES } from './rules/default-rules'
 import { pickMessages, type Messages } from './i18n'
 import { debugLog } from './logging'
 import { RULE_ERROR_TOPIC, SETTINGS_TOPIC } from './settings/store'
-import { planInputRuleWithTabstops, type TabstopSpec } from './ruleBehaviorPipeline'
+import {
+  planDeleteRuleModification,
+  planInputRuleWithTabstops,
+  planSelectKeyRuleModification,
+  type TabstopSpec,
+} from './ruleBehaviorPipeline'
 
 // 规则错误通知通道 topic（宿主 extension.ts 挂 handler 显示 i18n 警告；
 // 定义在 settings/store.ts 的共享常量区，此处 re-export 供页面侧同一来源消费）
@@ -79,21 +84,25 @@ export interface RuleFamilyDefinition {
   readonly rules: readonly SimpleRule[]
 }
 
-/** 五族共用独占组：一条输入至多一族生效（上游首命中语义的平台承载） */
+/** 五族共用独占组：一条输入至多一族生效（上游首命中语义的平台承载）。
+ * #9 起 Delete/SelectKey 族共用同组——三类触发面互斥（userEvent / replaced
+ * 形态不同），不命中不占用组，同组结构化保住「一条输入至多一条规则」
+ * 的上游全局首命中语义（设计核对见规格「#9 触发接入」节）。 */
 export const INPUT_RULE_EXCLUSIVE_GROUP = 'input-rules'
 
 /** 从内置规则数据解析族表（规则 id 缺失时该条不装载——完整性由契约测试钉住） */
 export function resolveRuleFamilies(
+  seeds: readonly RuleFamilySeed[],
   builtin: readonly SimpleRule[] = DEFAULT_BUILTIN_RULES,
 ): RuleFamilyDefinition[] {
-  return RULE_FAMILY_SEEDS.map((seed) => ({
+  return seeds.map((seed) => ({
     ...seed,
     rules: builtin.filter((r) => 'id' in r && seed.ruleIds.includes((r as { id: string }).id)),
   }))
 }
 
 /** 功能族清单（默认实例；测试可注入替代数据源） */
-export const INPUT_RULE_FAMILIES: readonly RuleFamilyDefinition[] = resolveRuleFamilies()
+export const INPUT_RULE_FAMILIES: readonly RuleFamilyDefinition[] = resolveRuleFamilies(RULE_FAMILY_SEEDS)
 
 /** 族引擎构造：只装载本族规则，reportError 走注入回调（#1 上报缝） */
 export function buildFamilyEngine(
@@ -249,6 +258,129 @@ export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): Rul
 
   // 只读观察刷新设置缓存：设置页改 debug 后下一次输入即生效（平台 onChanged
   // 每次输入触发——与 vsidian input-behavior 样例同形态）
+  deps.behaviors.onChanged(() => {
+    void gate.refresh()
+  })
+  return {
+    outcomes: outcome,
+    consumePendingTabstops: () => {
+      const pending = pendingTabstops
+      pendingTabstops = []
+      return pending
+    },
+  }
+}
+
+// ===== 工单 #9：Delete / SelectKey 族注册 =====
+//
+// 【分族依据】同 #25 三条：开关粒度（平台行为冲突管理以行为为粒度）、
+// 触发域（Delete 族同管联动删除、SelectKey 族同管选中包裹）、链序保真
+//（localId 数值前缀延续上游优先级分层：Delete 规则 10/30 < SelectKey 40
+// —— 排在 01-05 Input 族之后；三类触发面互斥，跨族序无实际仲裁作用，
+// 编号仅延续「上游优先级分层编码」的既有约定）。
+//
+// 【独占组】与 #25 五族共用 'input-rules'：平台语义（addonBehaviors
+// runtime）按有效序首个**返回计划**者占用组、返回 null 不占用——Input
+// 族对 delete.*（userEvent 门）与选区替换形态（replaced 门）一律 null，
+// Delete/SelectKey 族对 input.type 纯插入与 compose 一律 null，三面互斥
+// 下同组等价于上游「一条输入至多一条规则生效」的全局首命中语义。
+//
+// 【撤销】Delete/SelectKey 规则同为用户输入直接触发的单发修饰，无同链
+// 前序 SDK 原子修饰可并组——与 #25 结论同口径，一律 atomic（删除联动与
+// 选中包裹各自成独立撤回步；真实撤销验证归 #21）。
+//
+// 【tabstop 暂存】SelectKey 包裹计划携带 ${0:${SEL}} → $0 组覆盖选中文本
+//（#15 导航态数据源）。独立暂存槽（与 #25 的槽互不干扰——独占组保证
+// 一次输入至多一族命中）；页面装配层以独立 docChanged 监听消费，读即
+// 消费语义与 #25 通道一致。
+
+/** #9 族种子：Delete 族（上游优先级 10 配对删除 + 30 联动删除）与
+ * SelectKey 族（上游优先级 40 选中替换） */
+const DELETE_SELECTKEY_FAMILY_SEEDS: readonly RuleFamilySeed[] = [
+  // 上游优先级 10（autopair-delete）+ 30（五条联动删除）：删除成对结构一端时联动删除
+  {
+    localId: '06-delete-rules',
+    i18nKey: 'deletePair',
+    ruleIds: [
+      'builtin-autopair-delete',
+      'builtin-del-inline-formula',
+      'builtin-del-highlight',
+      'builtin-del-block-formula',
+      'builtin-del-codeblock',
+      'builtin-del-wikilink',
+    ],
+  },
+  // 上游优先级 40：选中文本后按键包裹
+  {
+    localId: '07-selectkey-rules',
+    i18nKey: 'selectKeyWrap',
+    ruleIds: [
+      'builtin-sel-wrap-backtick',
+      'builtin-sel-wrap-symbols',
+      'builtin-sel-wrap-quotes',
+      'builtin-sel-wrap-cjk-brackets',
+    ],
+  },
+]
+
+/** #9 功能族清单（默认实例；测试可注入替代数据源） */
+export const DELETE_SELECTKEY_RULE_FAMILIES: readonly RuleFamilyDefinition[] =
+  resolveRuleFamilies(DELETE_SELECTKEY_FAMILY_SEEDS)
+
+/** 注册 #9 Delete/SelectKey 族（page-editor 增量块消费；deps 形状与
+ * registerRuleInputBehaviors 一致，返回形态同构） */
+export function registerRuleDeleteSelectKeyBehaviors(deps: RegisterRuleBehaviorsDeps): RuleBehaviorRuntime {
+  const messages = pickMessages(deps.language)
+  const gate = createRulePipelineGate(deps.channel)
+  void gate.refresh()
+  const reportRuleError = createRuleErrorReporter(deps.channel, { now: deps.now })
+
+  // 独占组保证一次输入至多一族命中——单一暂存槽足够
+  let pendingTabstops: readonly TabstopSpec[] = []
+
+  const outcome: RuleBehaviorRegisterOutcome[] = []
+  for (const family of DELETE_SELECTKEY_RULE_FAMILIES) {
+    const engine = buildFamilyEngine(family, reportRuleError)
+    const i18n = messages.ruleFamilies[family.i18nKey]
+    const result = deps.behaviors.register({
+      id: family.localId,
+      name: i18n.name,
+      description: i18n.desc,
+      examples: [...i18n.examples],
+      exclusiveGroup: INPUT_RULE_EXCLUSIVE_GROUP,
+      history: 'atomic',
+      onInput: (ctx: AddonInputContext) => {
+        // Delete 族只面对 delete.* 事件；SelectKey 族只面对 input.type
+        // 选区替换——两条管线对不属己方的触发面返回 null，不占用独占组
+        const pipelineCtx = {
+          userEvent: ctx.userEvent,
+          inputText: ctx.inputText,
+          replaced: ctx.replaced,
+          snapshot: { text: ctx.snapshot.text, selections: ctx.snapshot.selections },
+        }
+        const deleteResult = planDeleteRuleModification(engine, pipelineCtx, { debug: gate.debug() })
+        if (deleteResult !== null) {
+          if (deleteResult.tabstops.length > 0) pendingTabstops = deleteResult.tabstops
+          return deleteResult.plan
+        }
+        const selectKeyResult = planSelectKeyRuleModification(engine, pipelineCtx, { debug: gate.debug() })
+        if (selectKeyResult !== null) {
+          if (selectKeyResult.tabstops.length > 0) pendingTabstops = selectKeyResult.tabstops
+          return selectKeyResult.plan
+        }
+        return null
+      },
+    })
+    if (!result.ok) {
+      debugLog('rule behavior register rejected:', family.localId, result.reason)
+    }
+    outcome.push(
+      result.ok
+        ? { localId: family.localId, ok: true }
+        : { localId: family.localId, ok: false, reason: result.reason },
+    )
+  }
+
   deps.behaviors.onChanged(() => {
     void gate.refresh()
   })
