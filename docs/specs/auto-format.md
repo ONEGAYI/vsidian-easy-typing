@@ -73,5 +73,5 @@
 ## 给后续票的提示
 
 - **#27（保护区接入）——已落地**：解析与匹配纯逻辑在 `src/userDefinedRegex.ts`，格式化侧内置计算 + 「用户规则尊重保护区」规则管线接入的完整语义见 [protected-zones.md](protected-zones.md)。注入缝两处（管线 `protectedRanges` 与接入 `protectedRangesFor`）形态不变，外部注入优先于内置计算。
-- **#28（格式化命令复用）**：`formatLine(line, curCh, prevCh=undefined, settings, { protectedRanges })` 即上游 formatLine 的命令重排入口形态（prevCh undefined = 整行重排不认前缀抑制）；多行/选区重排按行循环调用 + 行首偏移换算（参照 autoFormatPipeline 的坐标换算）。粘贴格式化（AutoFormatPaste 主动侧）与「格式化文章」都可经此承载，不经行为链。
+- **#28（格式化命令复用，已落地）**：本节原文写 `formatLine(line, curCh, prevCh=undefined, ...)` 是命令重排入口——**#28 实施勘误**：`prevCh=undefined` 是「跳过间距引擎」形态（`applyLanguagePairSpacing` 早退，实测零变更）；命令整行重排的正确入口是上游同形 `formatLine(line, curCh, 0, settings)`（键入区间 [0, curCh) 覆盖整行前缀，语言对全量生效；autoCapital 恒关——上游 `{...settings, AutoCapital: false}`）。多行/选区重排按行循环调用 + 行首偏移换算（参照 autoFormatPipeline 的坐标换算）。粘贴格式化（AutoFormatPaste 主动侧）经此承载，不经行为链；实施与键位/文件排除记录见 [formatting-commands.md](formatting-commands.md)。
 - **#21（真实 webview 人工验证）**：本族验证点——中文后键入半角字母出空格且光标在词尾；`n8n`/`b站` 词典词条内部无空格、越词后延迟边界补插；规则族命中输入（如 `。。`）本次不格式化（独占组链序）；折叠/展开与 IME 定稿路径；多光标不格式化；Ctrl+Z 两步撤回（键入与格式化分离，平台撤销管线结构性边界）；CSP 无涉（纯算法，无 new Function）。真实 `experimental.cm6.language.syntaxTree` 未解析（vsidian#406）不影响本族——分区走文本降级。

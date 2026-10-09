@@ -41,6 +41,7 @@ import {
   type RulePipelineChannelSubset,
 } from './ruleBehaviorIntercept'
 import { planAutoFormatLineModification } from './autoFormatPipeline'
+import { isDocUriExcluded } from './fileExclusion'
 import { SpaceState } from './formatting/inlineParts'
 import {
   matchProtectedRanges,
@@ -55,9 +56,12 @@ export const AUTO_FORMAT_LOCAL_ID = '06-autoformat'
 
 /** 间距引擎配置：行格式化设置 + 上游 AutoFormat 总门（族回调内判定）+
  * #27 保护区两键（上游 UserDefinedRegSwitch / UserDefinedRegExp——规则表
- * 为解析缓存形态，refresh 时重建） */
+ * 为解析缓存形态，refresh 时重建）+ #28 文件排除清单（ExcludeFiles 命中
+ * → 恒 null，上游 cm_extensions.ts:417 的 `|| isCurrentFileExclude(ctx)`
+ * 对应物） */
 export interface AutoFormatEngineSettings {
   readonly autoFormat: boolean
+  readonly excludeFiles: readonly string[]
   readonly lineFormat: LineFormatSettings
   readonly userDefinedRegSwitch: boolean
   readonly userDefinedRegexRules: readonly UserDefinedRegexRule[]
@@ -81,6 +85,8 @@ interface AutoFormatEffectiveSubset {
   inlineLinkSmartSpace: boolean
   userDefinedRegSwitch: boolean
   userDefinedRegExp: string
+  /** #28：文件排除清单（上游 ExcludeFiles 消费） */
+  excludeFiles?: readonly string[]
 }
 
 /** 默认引擎配置（出厂默认值 + 富结构种子；通道不可用时的兜底） */
@@ -88,6 +94,7 @@ export function defaultAutoFormatEngineSettings(): AutoFormatEngineSettings {
   const d = DEFAULT_EFFECTIVE_SETTINGS
   return {
     autoFormat: d.autoFormat,
+    excludeFiles: [...d.excludeFiles],
     lineFormat: {
       languagePairs: RICH_STRUCTURE_DEFAULTS.languagePairs.map((p) => ({ a: p.a, b: p.b })),
       customScriptCategories: RICH_STRUCTURE_DEFAULTS.customScriptCategories.map((c) => ({
@@ -114,25 +121,32 @@ function pickOfSameType<T>(fallback: T, raw: unknown): T {
   return fallback
 }
 
+/** excludeFiles 数组校验（字符串数组透传，其余回默认；store.ts 同口径） */
+function pickStringArray(fallback: readonly string[], raw: unknown): readonly string[] {
+  if (!Array.isArray(raw) || !raw.every((item) => typeof item === 'string')) return fallback
+  return [...(raw as readonly string[])]
+}
+
 function readEngineSettings(effective: unknown): AutoFormatEngineSettings {
   const base = defaultAutoFormatEngineSettings()
-  const e = (effective ?? {}) as Partial<AutoFormatEffectiveSubset> & { autoFormat?: unknown }
+  const raw = (effective ?? {}) as Partial<AutoFormatEffectiveSubset> & { autoFormat?: unknown }
   return {
-    autoFormat: pickOfSameType(base.autoFormat, e.autoFormat),
+    autoFormat: pickOfSameType(base.autoFormat, raw.autoFormat),
+    excludeFiles: pickStringArray(base.excludeFiles, raw.excludeFiles),
     lineFormat: {
       ...base.lineFormat,
-      autoCapital: pickOfSameType(base.lineFormat.autoCapital, e.autoCapital),
-      prefixDictionary: pickOfSameType(base.lineFormat.prefixDictionary, e.prefixDictionary),
-      softSpaceLeftSymbols: pickOfSameType(base.lineFormat.softSpaceLeftSymbols, e.softSpaceLeftSymbols),
-      softSpaceRightSymbols: pickOfSameType(base.lineFormat.softSpaceRightSymbols, e.softSpaceRightSymbols),
-      inlineCodeSpaceMode: spaceModeToState(pickOfSameType('soft' as SpaceMode, e.inlineCodeSpaceMode)),
-      inlineFormulaSpaceMode: spaceModeToState(pickOfSameType('soft' as SpaceMode, e.inlineFormulaSpaceMode)),
-      inlineLinkSpaceMode: spaceModeToState(pickOfSameType('soft' as SpaceMode, e.inlineLinkSpaceMode)),
-      inlineLinkSmartSpace: pickOfSameType(base.lineFormat.inlineLinkSmartSpace, e.inlineLinkSmartSpace),
+      autoCapital: pickOfSameType(base.lineFormat.autoCapital, raw.autoCapital),
+      prefixDictionary: pickOfSameType(base.lineFormat.prefixDictionary, raw.prefixDictionary),
+      softSpaceLeftSymbols: pickOfSameType(base.lineFormat.softSpaceLeftSymbols, raw.softSpaceLeftSymbols),
+      softSpaceRightSymbols: pickOfSameType(base.lineFormat.softSpaceRightSymbols, raw.softSpaceRightSymbols),
+      inlineCodeSpaceMode: spaceModeToState(pickOfSameType('soft' as SpaceMode, raw.inlineCodeSpaceMode)),
+      inlineFormulaSpaceMode: spaceModeToState(pickOfSameType('soft' as SpaceMode, raw.inlineFormulaSpaceMode)),
+      inlineLinkSpaceMode: spaceModeToState(pickOfSameType('soft' as SpaceMode, raw.inlineLinkSpaceMode)),
+      inlineLinkSmartSpace: pickOfSameType(base.lineFormat.inlineLinkSmartSpace, raw.inlineLinkSmartSpace),
     },
-    userDefinedRegSwitch: pickOfSameType(base.userDefinedRegSwitch, e.userDefinedRegSwitch),
+    userDefinedRegSwitch: pickOfSameType(base.userDefinedRegSwitch, raw.userDefinedRegSwitch),
     userDefinedRegexRules: parseUserDefinedRegExp(
-      pickOfSameType(DEFAULT_EFFECTIVE_SETTINGS.userDefinedRegExp, e.userDefinedRegExp),
+      pickOfSameType(DEFAULT_EFFECTIVE_SETTINGS.userDefinedRegExp, raw.userDefinedRegExp),
     ),
   }
 }
@@ -218,7 +232,10 @@ export function registerAutoFormatBehavior(deps: RegisterAutoFormatDeps): RuleBe
     history: 'atomic',
     onInput: (ctx: AddonInputContext) => {
       const engine = gate.settings()
-      if (!engine.autoFormat) return null // 上游 AutoFormat 总门（规则五族不受影响）
+      // 上游 AutoFormat 总门（规则五族不受影响）；文件排除（#407 docUri，
+      // #28 接入）——上游 cm_extensions.ts:417 `!AutoFormat || isCurrentFileExclude` 同序
+      if (!engine.autoFormat) return null
+      if (isDocUriExcluded(ctx.docUri, engine.excludeFiles)) return null
       // #27 保护区：外部注入（#26 注入缝）优先；缺省用设置驱动的内置计算
       //（上游 core.ts:181-183——UserDefinedRegSwitch 开才带 UserDefinedRegExp
       // 进分区解析，关 = 无 user 分区）

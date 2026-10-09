@@ -34,7 +34,9 @@ import {
   registerRuleDeleteSelectKeyBehaviors,
   registerRuleInputBehaviors,
 } from './ruleBehaviorIntercept'
-import { registerAutoFormatBehavior } from './autoFormatIntercept'
+import { registerAutoFormatBehavior, createAutoFormatGate } from './autoFormatIntercept'
+import { registerFormattingCommands } from './formattingCommands'
+import { NOTICE_TOPIC } from './settings/store'
 
 /** 本组件声明的扩展 ID（装载器按此核对入口身份） */
 const ADDON_ID = 'ONEGAYI.vsidian-easy-typing'
@@ -406,5 +408,39 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
     )
     // 页面释放时注销命令（平台随代次回收，此处显式闭环）
     sdk.onDispose(() => registration.dispose())
+  }
+
+  // ============================================================
+  // 工单 #28 增量块：格式化命令族——五命令经平台稳定 commands API 注册
+  //（统一快捷键管理 + 命令面板）。格式化全文/选区、删除空行、选区转代码
+  // 块为视图写命令（writes=true 仅 Live 正文接管宿主绑定），切换自动格式
+  // 化为双模式非写命令（写 #3 生效值）。视图捕获共享 #12 块的 viewRegistry
+  //（同工厂作用域、位置在前——评估结论见 docs/specs/formatting-commands.md
+  //「视图路由」节）；命令面板无聚焦入口回退 views 面 main 句柄
+  //（applyEdits 单请求）。文件排除（ExcludeFiles）命中 → 不执行 + 通知。
+  // ============================================================
+
+  if (commands !== undefined) {
+    const formattingGate = createAutoFormatGate(sdk.channel)
+    const formattingCommands = registerFormattingCommands({
+      commands,
+      channel: sdk.channel,
+      gate: formattingGate,
+      views: viewRegistry,
+      ...(sdk.views !== undefined ? { facetViews: sdk.views } : {}),
+      notify: (request) => {
+        // 尽力而为通道（上游 Notice 等价）；失败静默——通知不阻断命令语义
+        void sdk.channel.request(NOTICE_TOPIC, request).catch(() => {})
+      },
+      messages: pickMessages(navigator.language),
+    })
+    for (const outcome of formattingCommands.outcomes) {
+      if (!outcome.ok) {
+        // 普通 API 拒绝不算故障：经 debugLog 留痕（logging.ts 约定）
+        debugLog('formatting command register rejected:', outcome.localId, outcome.reason)
+      }
+    }
+    // 页面释放时注销五命令（平台随代次回收，此处显式闭环）
+    sdk.onDispose(() => formattingCommands.dispose())
   }
 })
