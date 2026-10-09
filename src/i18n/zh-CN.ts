@@ -6,6 +6,9 @@ const zhMessages = {
     // 工单 #12 纯文本粘贴命令标题（区别于平台「粘贴纯文本」：本命令同时
     // 置跳过自动格式化标记，#26 格式化管线消费）
     pastePlainTitle: '纯文本粘贴（跳过自动格式化）',
+    // 工单 #2 注释切换命令标题（上游 locale commands.toggleComment，括注
+    // 区别于平台内建 HTML 注释操作）
+    toggleCommentTitle: '切换注释（代码块按语言，正文用 %%）',
   },
   settings: {
     tabout: {

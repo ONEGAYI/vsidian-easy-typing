@@ -4,6 +4,7 @@
 import { defineAddonPage } from 'vsidian-addon-sdk'
 import type { VsidianAddonPageSdk } from '../types/vendor/shared/addonPage'
 import { betterBackspaceCommand } from './backspaceIntercept'
+import { buildToggleCommentCommandDefinition, createToggleCommentCommandHandler } from './commentToggle'
 import { createCollapseEnterGate, createFoldEnterCommand } from './foldEnter'
 import { createNewLineBelowCommand, createNewLineBelowGate } from './newLineBelow'
 import { taboutCommand } from './taboutIntercept'
@@ -386,5 +387,24 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       // 普通 API 拒绝不算故障：经 debugLog 留痕（logging.ts 约定）
       debugLog('autoformat behavior register rejected:', autoFormatOutcome.reason)
     }
+  }
+
+  // ============================================================
+  // 工单 #2 增量块：注释切换命令（语言注释符表 + Markdown %%）——上游
+  // comment_toggle.ts 的 Mod+/ 命令，**平台稳定 commands API**（统一快捷
+  // 键管理 + 命令面板）。视图路由复用 #12 的 viewRegistry（登记表共享
+  // 决策，供并行工单 #28 对照）；与平台内建 htmlComment 同弦并存的核对
+  // 见 docs/specs/comment-toggle.md「平台键位冲突核对」节。
+  // ============================================================
+
+  if (commands !== undefined) {
+    const registration = commands.register(
+      buildToggleCommentCommandDefinition(
+        pickMessages(navigator.language).commands.toggleCommentTitle,
+      ),
+      createToggleCommentCommandHandler({ views: viewRegistry }),
+    )
+    // 页面释放时注销命令（平台随代次回收，此处显式闭环）
+    sdk.onDispose(() => registration.dispose())
   }
 })
