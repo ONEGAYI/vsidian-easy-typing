@@ -43,7 +43,7 @@
 | StrictModeEnter | `strictModeEnter` | boolean | `false` | 直映 |
 | StrictLineMode | `strictLineMode` | string enum | `'enter_twice'` | 上游已是字符串枚举（`enter_twice`/`two_space`/`mix_mode`），原值直映 |
 | EnhanceModA | `enhanceModA` | boolean | `false` | 直映 |
-| CollapsePersistentEnter | `collapsePersistentEnter` | boolean | `false` | 设置数据链本票交付；生效依赖平台 headingFold（未进 vsidian main），生效逻辑归折叠功能票 |
+| CollapsePersistentEnter | `collapsePersistentEnter` | boolean | `false` | 设置数据链本票交付；生效逻辑已随 #18 落地（消费 `experimental.headingFold.folds()`，见 [fold-enter.md](fold-enter.md)） |
 
 不设 `maxLength`/`minItems`/`maxItems`：上游多行文本（正则、词典）表达力不受限，无依据不引入上限。
 
@@ -86,7 +86,7 @@
 
 - 平台 string enum 的设置页渲染展示**值本身**（`'soft'`、`'enter_twice'`），无 per-值文案映射入口——三档语义在 description 中说明；若平台后续提供枚举 label 映射再跟进。
 - 跨窗口设置变更不实时推送（平台 Memento 无变更事件，vsidian addonSettings.ts 头注）：同窗口 onChanged 即时；跨窗口以重开对账。
-- `collapsePersistentEnter` 的生效被平台 headingFold 未进 main 阻塞：设置键先行交付，生效逻辑随折叠功能票。
+- `collapsePersistentEnter` 的生效曾受平台 headingFold 未进 main 阻塞（本票 #3 交付时的边界）：平台 PR #416 已合入（2026-10-09），#18 已消费 `experimental.headingFold` 落地生效逻辑，该边界解除。
 
 ## 七、验收口径（票面映射）
 

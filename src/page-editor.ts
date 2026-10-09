@@ -1,9 +1,10 @@
-// 编辑器页入口（工单 #22 脚手架 + 工单 #7 Tabout + 工单 #14 规则装载）：
-// 经 SDK 构建桥打成 chrome114 IIFE。消费形态参照 vsidian
-// test/examples/input-behavior/src/page-editor.ts。
+// 编辑器页入口（工单 #22 脚手架 + 工单 #7 Tabout + 工单 #14 规则装载 +
+// 工单 #18 折叠标题 Enter 拦截）：经 SDK 构建桥打成 chrome114 IIFE。
+// 消费形态参照 vsidian test/examples/input-behavior/src/page-editor.ts。
 import { defineAddonPage } from 'vsidian-addon-sdk'
 import type { VsidianAddonPageSdk } from '../types/vendor/shared/addonPage'
 import { betterBackspaceCommand } from './backspaceIntercept'
+import { createCollapseEnterGate, createFoldEnterCommand } from './foldEnter'
 import { taboutCommand } from './taboutIntercept'
 import { pickMessages } from './i18n'
 import { debugLog } from './logging'
@@ -116,5 +117,47 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       // 普通 API 拒绝不算故障：经 debugLog 留痕便于诊断（logging.ts 约定）
       debugLog('select-block command register rejected:', registered.reason)
     }
+  }
+
+  // ============================================================
+  // 工单 #18 增量块：CollapsePersistentEnter 折叠标题 Enter 拦截。
+  // 独立成块（不动上方既有装配），降低与并行工单的合并冲突。
+  // ============================================================
+
+  // 折叠查询消费 experimental.headingFold（清单已声明 ^1.0.0）。入口缺席
+  //（宿主旧版）时本功能静默不注册——防御性处理，不算故障（清单兼容判定
+  // 已在装载期拦住不匹配宿主，此处是防御深度）。
+  const headingFold = sdk.experimental.headingFold
+  if (headingFold !== undefined) {
+    // collapsePersistentEnter 设置门（#3 通道，上游默认关）：装载拉取 +
+    // 焦点回归刷新（对齐 #11 modAGate 形态——设置页改开关后回到编辑器
+    // 即按新值判定）。
+    const collapseEnterGate = createCollapseEnterGate(sdk.channel)
+    void collapseEnterGate.refresh()
+
+    // Enter 抢先层（Prec.high，票面 #402 分层核对）：先于平台 Enter 情境
+    // 链（列表续行/表格/普通换行）尝试。接管面 = 功能开 + 光标在被折叠
+    // 的 ATX 标题行（folds() 命中，查询前有零开销行门槛）；命中在折叠
+    // 区间末尾新建同级标题行（折叠保持）；其余 return false 落穿。仲裁
+    // 核对见 docs/specs/fold-enter.md「层归属与平台 Enter 仲裁」节。
+    // 方法经箭头包装注入（不裸传方法引用，规避 this 绑定假设）。
+    sdk.registerExtension(
+      cm6.state.Prec.high(
+        cm6.view.keymap.of([
+          {
+            key: 'Enter',
+            run: createFoldEnterCommand({
+              folds: (instanceId) => headingFold.folds(instanceId),
+              isEnabled: () => collapseEnterGate.enabled(),
+            }),
+          },
+        ]),
+      ),
+    )
+    sdk.registerExtension(
+      cm6.view.EditorView.updateListener.of((update) => {
+        if (update.focusChanged) void collapseEnterGate.refresh()
+      }),
+    )
   }
 })
