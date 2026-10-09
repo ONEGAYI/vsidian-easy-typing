@@ -101,4 +101,36 @@ export const enMessages: Messages = {
   noHost: 'Vsidian (onegayi.vsidian) not found in this extension host',
   // Select-current-block command title (issue #11; wording follows upstream locale commands.selectBlock)
   commandSelectBlock: 'Select current text block',
+  // Behavior family names/descriptions (issue #25; examples shown in behavior management UI)
+  ruleFamilies: {
+    punctCollapse: {
+      name: 'Double fullwidth punctuation to halfwidth',
+      desc: 'Typing the same fullwidth punctuation twice converts to the halfwidth form (e.g. 。。 → .)',
+      examples: ['。。 → .', '！！ → !'],
+    },
+    autopair: {
+      name: 'Fullwidth bracket and quote auto-pairing',
+      desc: 'Auto-complete the pair when typing fullwidth brackets/quotes; skip over the closing symbol when the pair already exists',
+      examples: ['（ → （）', 'type 》 inside 《》 → skip over'],
+    },
+    symbolConvert: {
+      name: 'Symbol composition conversion',
+      desc: '·· to inline code, continuing · in inline code upgrades to a code block, ￥/$ compositions to formulas, line-start 》/、 to quote marker or slash',
+      examples: ['·· → inline code', 'line-start 》 → > '],
+    },
+    punctExpand: {
+      name: 'Halfwidth to fullwidth after CJK',
+      desc: 'Halfwidth punctuation typed after CJK text converts to fullwidth (disabled by default upstream; rule data default off)',
+      examples: ['中文, → 中文，'],
+    },
+    quote: {
+      name: 'Quote marker conversion',
+      desc: 'Typing > or 》 converts to the Markdown quote marker; a space is added after the marker',
+      examples: ['line-start > → > '],
+    },
+  },
+  // Rule error notification template (issue #25; {id} rule id, {message} engine-reported detail)
+  ruleError: {
+    notify: 'Input rule {id} skipped: {message}',
+  },
 }

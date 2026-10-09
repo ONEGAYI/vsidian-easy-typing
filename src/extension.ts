@@ -9,7 +9,7 @@ import * as vscode from 'vscode'
 import type { AddonDefinition, AddonSetupContext } from '../types/vendor/host/addons/addonRegistry'
 import type { VsidianHostExports } from './host-api'
 import { pickMessages } from './i18n'
-import { attachSettings, SETTINGS_TOPIC, type EasyTypingSettingsFacade } from './settings/store'
+import { attachSettings, RULE_ERROR_TOPIC, SETTINGS_TOPIC, type EasyTypingSettingsFacade } from './settings/store'
 import { buildSettingDefinitions } from './settings/definitions'
 import { debugLog, setDebugEnabled } from './logging'
 
@@ -47,6 +47,21 @@ function registerSettingsChannels(setupCtx: AddonSetupContext): void {
       return { ok: false, reason: 'invalid-payload' }
     }
     return settingsFacade?.clearWorkspaceOverride(request.key) ?? { ok: false, reason: 'rejected' }
+  })
+  // 规则错误通知（工单 #25）：页面侧规则引擎 reportError 注入缝的 i18n
+  // 承接——上游 Obsidian Notice 的等价通道（webview 无自绘通知面）。
+  // 文案走字典（ruleError.notify 模板），{id}/{message} 占位替换；页面侧
+  // 已全局节流（5 秒窗），宿主侧不重复节流
+  setupCtx.channel.handle(RULE_ERROR_TOPIC, (payload) => {
+    const request = payload as { ruleId?: unknown; message?: unknown }
+    if (typeof request?.ruleId !== 'string' || typeof request?.message !== 'string') {
+      return null
+    }
+    const messages = pickMessages(vscode.env.language)
+    void vscode.window.showWarningMessage(
+      messages.ruleError.notify.replace('{id}', request.ruleId).replace('{message}', request.message),
+    )
+    return null
   })
 }
 

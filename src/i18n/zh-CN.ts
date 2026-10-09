@@ -99,6 +99,38 @@ const zhMessages = {
   noHost: '当前扩展宿主中未找到 Vsidian（onegayi.vsidian）',
   // 「选择当前块」命令标题（工单 #11；文案对齐上游 locale commands.selectBlock）
   commandSelectBlock: '选择当前文本块',
+  // 行为族名称/说明（工单 #25；examples 为行为管理界面展示的输入→输出示例）
+  ruleFamilies: {
+    punctCollapse: {
+      name: '连续全角标点转半角',
+      desc: '连续输入两个相同的全角标点时转换为对应半角形式（如 。。 → .）',
+      examples: ['。。 → .', '！！ → !'],
+    },
+    autopair: {
+      name: '全角括号引号自动配对',
+      desc: '输入全角括号/引号自动补全配对；已有配对时输入右侧符号自动跳过',
+      examples: ['（ → （）', '《》 内输入 》 → 跳过'],
+    },
+    symbolConvert: {
+      name: '符号组合转换',
+      desc: '间隔号 ·· 转行内代码、行内代码续输 · 升级为代码块、￥/$ 组合转公式、行首 》/、 转引用标记或斜杠',
+      examples: ['·· → 行内代码', '行首 》 → > '],
+    },
+    punctExpand: {
+      name: 'CJK 后半角标点转全角',
+      desc: '中英文字符后输入半角标点转换为全角形式（上游默认关闭，规则数据态默认关）',
+      examples: ['中文, → 中文，'],
+    },
+    quote: {
+      name: '引用标记转换',
+      desc: '输入 > 或 》 转为 Markdown 引用标记，引用标记后自动补空格',
+      examples: ['行首 > → > '],
+    },
+  },
+  // 规则错误通知模板（工单 #25；{id} 规则 id、{message} 引擎上报的技术细节）
+  ruleError: {
+    notify: '输入规则 {id} 已跳过：{message}',
+  },
 }
 
 export { zhMessages }

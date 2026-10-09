@@ -13,6 +13,7 @@ import {
   createModACommand,
   createSelectBlockCommandHandler,
 } from './modaIntercept'
+import { registerRuleInputBehaviors } from './ruleBehaviorIntercept'
 
 /** 本组件声明的扩展 ID（装载器按此核对入口身份） */
 const ADDON_ID = 'ONEGAYI.vsidian-easy-typing'
@@ -105,6 +106,30 @@ defineAddonPage(ADDON_ID, (sdk: VsidianAddonPageSdk) => {
     if (!registered.ok) {
       // 普通 API 拒绝不算故障：经 debugLog 留痕便于诊断（logging.ts 约定）
       debugLog('select-block command register rejected:', registered.reason)
+    }
+  }
+
+  // ============================================================
+  // 工单 #25 增量块：onInput 行为链——#1 规则内核（Input 类）按功能族
+  // 注册进平台稳定行为链。族清单/默认链序/独占组/撤销边界（全 atomic）
+  // 见 docs/specs/rule-engine.md「#25 行为链接入」节与
+  // src/ruleBehaviorIntercept.ts 头注。平台行为冲突管理以族为粒度逐项
+  // 开关与调序（内置规则逐条开关的插件侧承载形态）；规则错误经
+  // RULE_ERROR_TOPIC 通道由宿主显示 i18n 警告。
+  // ============================================================
+
+  const behaviors = sdk.behaviors
+  if (behaviors !== undefined) {
+    const ruleOutcomes = registerRuleInputBehaviors({
+      behaviors,
+      channel: sdk.channel,
+      language: navigator.language,
+    })
+    for (const outcome of ruleOutcomes) {
+      if (!outcome.ok) {
+        // 普通 API 拒绝不算故障：经 debugLog 留痕便于诊断（logging.ts 约定）
+        debugLog('rule behavior register rejected:', outcome.localId, outcome.reason)
+      }
     }
   }
 })
