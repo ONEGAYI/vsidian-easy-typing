@@ -51,6 +51,6 @@
 ## 给后续票的接口提示
 
 - **#15（Tabstop 导航）**：`ApplyResult.tabstops`（`{number, from, to}` 文档绝对坐标，number 升序）已填充，`cursor` 落 `tabstops[0].from`；分组导航把 tabstop 组转多光标选区 + Tab/Shift-Tab 跳转，引擎零改动。
-- **#16（规则管理 UI）**：读写全经 `RULES_TOPIC`（`src/rules/rules-protocol.ts`）；`get` 返回 `{ revision, builtin, user, deletedBuiltinRuleIds }`；mutate 11 op 覆盖增删改/开关/排序/触发模式/删除恢复重置/导入（content 字符串）；`exportUser` 给下载、`storageUri` 给「打开数据目录」类提示。设置页（setup 通道）与编辑器页（enable 通道）都已注册。
+- **#16（规则管理 UI，已落地）**：读写全经 `RULES_TOPIC`（`src/rules/rules-protocol.ts`）；`get` 返回 `{ revision, builtin, user, deletedBuiltinRuleIds }`；mutate 11 op 覆盖增删改/开关/排序/触发模式/删除恢复重置/导入（content 字符串）；`exportUser` 给下载、`storageUri` 给「打开数据目录」类提示。设置页（setup 通道）与编辑器页（enable 通道）都已注册。实施落档见 [rules-ui.md](rules-ui.md)。
 - **#17（函数替换体）**：函数体字符串现状字面保留（存储 + `new Function` 编译执行）；`sanitizeSimpleRule` 的宽松校验点是收口位置（`src/rules/rule-store.ts`）。
 - **#25（输入行为链）**：`PageRulesClient.engine`（`src/rules/rules-page.ts`）即消费入口——规则已在引擎内、自动重载已就绪；作用域判定按 #1 设计注入 `scopeHint`。
