@@ -47,7 +47,8 @@ export function buildPlainPasteCommandDefinition(title: string): AddonCommandDef
 
 // ---- 视图捕获：命令回调无 view 入参，经 ViewPlugin 登记在场编辑器实例 ----
 
-/** 在场编辑器视图登记表（主正文 + 嵌入实例；随视图生命周期增减） */
+/** 在场编辑器视图登记表（当前平台附加组件扩展槽仅挂主正文 Live 实例，
+ *  嵌入视图不经此登记——登记面以平台装配事实为准） */
 export interface EditorViewRegistry {
   /** 登记视图，返回注销句柄 */
   register(view: EditorView): { dispose(): void }

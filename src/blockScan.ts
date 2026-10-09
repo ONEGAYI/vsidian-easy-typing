@@ -68,8 +68,10 @@ const PLAIN_LINE: LineInfo = Object.freeze({
 
 /**
  * 全文档行扫描：围栏/公式/frontmatter 代状态 + 列表标记/续行 + 引用前缀。
- * O(行数) 单遍；调用方（按键/命令）每次决策扫描一次，与上游树版单次
- * 查询的代价模型同阶（不缓存——文档随时变更，正确性优先）。
+ * O(行数) 单遍；调用方（按键/命令）每次决策扫描一次。**代价与上游树版
+ * 不同阶**（上游 syntaxTree 增量查询近 O(1)，本降级版 O(行数)）——已知
+ * 成本：10 万行文档每键全行扫描；enhanceModA 默认关、仅 Mod+a 路径可达
+ * （审查 B-P2-3 订正；上游续行判定实际只看局部，#5 树版落地后窗口化）
  */
 export function scanLines(texts: readonly string[]): LineInfo[] {
   const result: LineInfo[] = []

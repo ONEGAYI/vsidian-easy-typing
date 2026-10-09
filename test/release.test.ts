@@ -20,13 +20,14 @@ import {
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
-// 2026-10-09 实测打包基线（10 文件、解压约 248 KB）的最小形态。
+// 2026-10-09 实测打包基线（11 文件、解压约 287 KB）的最小形态。
 const BASE_ENTRIES = [
   { size: 1911, name: '[Content_Types].xml' },
   { size: 3000, name: 'extension.vsixmanifest' },
   { size: 1190, name: 'extension/LICENSE.txt' },
   { size: 1485, name: 'extension/package.json' },
   { size: 2929, name: 'extension/readme.md' },
+  { size: 7605, name: 'extension/README.en.md' },
   { size: 4200, name: 'extension/changelog.md' },
   { size: 95168, name: 'extension/dist/editor.js' },
   { size: 64144, name: 'extension/dist/extension.js' },

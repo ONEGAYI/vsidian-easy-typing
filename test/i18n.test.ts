@@ -44,6 +44,20 @@ describe('中英键集 parity', () => {
     expect(deepKeys(enMessages)).toEqual(deepKeys(zhMessages))
   })
 
+  it('数组键长度一致（deepKeys 视数组为叶子，长度差异需独立钉住——审查 F4）', () => {
+    // 沿 deepKeys 的叶子路径取两侧数组值对比长度（如 ruleFamilies.*.examples）
+    const zh = zhMessages as unknown as Record<string, unknown>
+    const en = enMessages as unknown as Record<string, unknown>
+    for (const path of deepKeys(zhMessages)) {
+      const get = (source: Record<string, unknown>): unknown =>
+        path.split('.').reduce<unknown>((acc, key) => (acc as Record<string, unknown>)[key], source)
+      const fromZh = get(zh)
+      if (!Array.isArray(fromZh)) continue
+      expect(get(en), path).toHaveLength(fromZh.length)
+      expect(fromZh.length, path).toBeGreaterThan(0)
+    }
+  })
+
   it('设置文案条目 name/desc 均为非空字符串（两语言全量）', () => {
     for (const messages of [zhMessages, enMessages]) {
       for (const [key, entry] of Object.entries(messages.settings)) {
