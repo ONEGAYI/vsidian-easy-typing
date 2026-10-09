@@ -12,6 +12,7 @@ import { pickMessages } from './i18n'
 import { attachSettings, SETTINGS_TOPIC, type EasyTypingSettingsFacade } from './settings/store'
 import { buildSettingDefinitions } from './settings/definitions'
 import { debugLog, setDebugEnabled } from './logging'
+import { CLIPBOARD_READ_TEXT_TOPIC } from './plainPasteCommand'
 
 /** 本扩展 ID（publisher.name，装载器按此核对入口身份） */
 const SELF_ID = 'ONEGAYI.vsidian-easy-typing'
@@ -73,6 +74,9 @@ const definition: AddonDefinition = {
   },
   enable(enableCtx) {
     enableCtx.pages.registerEditor({ entry: 'dist/editor.js' })
+    // 剪贴板读取回退（工单 #12）：web clipboard 权限受限时，编辑器页纯文本
+    // 粘贴命令经本 topic 读宿主 vscode.env.clipboard（text/plain）
+    enableCtx.channel.handle(CLIPBOARD_READ_TEXT_TOPIC, () => vscode.env.clipboard.readText())
     enableCtx.onDispose(() => {
       // 运行释放回调：功能票在此注销运行期资源（设置门面属 setup 生命周期，
       // 不在此释放）

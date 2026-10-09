@@ -4,6 +4,9 @@
 import type { Messages } from './index'
 
 export const enMessages: Messages = {
+  commands: {
+    pastePlainTitle: 'Paste as plain text (skip auto formatting)',
+  },
   settings: {
     tabout: {
       name: 'Tab Out of Paired Symbols',
