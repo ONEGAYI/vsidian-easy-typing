@@ -1,8 +1,11 @@
 // i18n 契约（工单 #3）：中英两键集 parity + 语言检测口径 + 设置文案完整性。
 // parity 双保险：en 字典以 `Messages`（typeof zh）类型钉住编译期键集，
 // 本测试再以运行时深度键集对比防绕过（as 断言 / 动态键注入）。
+// #19 增：内置规则描述映射（builtinRuleDescriptions）完整性——键集必须
+// 覆盖全部内置规则 id（default-rules.ts 是单一事实源），防新增规则漏登记。
 import { describe, expect, it } from 'vitest'
 import { pickMessages, zhMessages, enMessages } from '../src/i18n'
+import { DEFAULT_BUILTIN_RULES } from '../src/rules/default-rules'
 
 /** 收集对象的深度键路径（叶子为非对象值；数组视为叶子） */
 function deepKeys(value: unknown, prefix = ''): string[] {
@@ -46,6 +49,23 @@ describe('中英键集 parity', () => {
       for (const [key, entry] of Object.entries(messages.settings)) {
         expect(entry.name, `${key}.name`).toMatch(/\S/)
         expect(entry.desc, `${key}.desc`).toMatch(/\S/)
+      }
+    }
+  })
+})
+
+describe('内置规则描述映射（builtinRuleDescriptions，#19）', () => {
+  it('两语言键集覆盖全部内置规则 id 且值为非空字符串', () => {
+    for (const messages of [zhMessages, enMessages]) {
+      // 展开为宽松索引形态（字典类型是字面量键集，string 索引需显式放宽）
+      const table: Record<string, string> = { ...messages.builtinRuleDescriptions }
+      for (const rule of DEFAULT_BUILTIN_RULES) {
+        expect(table[rule.id], rule.id).toMatch(/\S/)
+      }
+      // 反向：映射内不残留已不存在的内置规则 id（防改名后留孤儿键）
+      const builtinIds = new Set(DEFAULT_BUILTIN_RULES.map((rule) => rule.id))
+      for (const key of Object.keys(messages.builtinRuleDescriptions)) {
+        expect(builtinIds.has(key), `orphan key ${key}`).toBe(true)
       }
     }
   })

@@ -203,11 +203,18 @@ export function computeDropIndex(fromIndex: number, targetIndex: number, dropOnB
 // ===== 列表预览（上游 buildRuleItem 的 preview 拼装） =====
 
 /**
- * 规则列表预览行：无 description 时退化为「触发 → 替换」形态；函数引用
- * 显示 fn:<ref>；遗留字符串函数体原样显示；非正则触发式经 escapeText
- * 转可见。
+ * 规则列表预览行：内置规则描述本地化（#19，上游 builtinRuleDescriptions
+ * 模式）——builtinDescriptions[rule.id] 优先于数据态 description；两者皆无
+ * 时退化为「触发 → 替换」形态。函数引用显示 fn:<ref>；遗留字符串函数体
+ * 原样显示；非正则触发式经 escapeText 转可见。builtinDescriptions 由视图
+ * 层传入语言包映射（用户规则 id 不在映射内，天然回落自身 description）。
  */
-export function previewRuleText(rule: SimpleRule): string {
+export function previewRuleText(
+  rule: SimpleRule,
+  builtinDescriptions?: Record<string, string>,
+): string {
+  const localized = rule.id ? builtinDescriptions?.[rule.id] : undefined
+  if (localized) return localized
   if (rule.description) return rule.description
   const opts = RuleEngine.parseOptions(rule.options)
   const render = (text: string): string => RuleEngine.escapeText(text, opts.isRegex)

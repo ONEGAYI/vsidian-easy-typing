@@ -48,7 +48,7 @@
 
 - jsdom 冒烟用 `Event` 模拟拖拽（jsdom 无 DataTransfer）；dataTransfer 空挂在源码侧防御（`if (e.dataTransfer)`），换算逻辑由纯函数矩阵钉住。
 - 状态行 6s 自动清除经计时器注入（测试常显）；跨分组动作共用一条状态行（后写覆盖先写）。
-- 上游 locale 的 `builtinRuleDescriptions`（按规则 id 的内置描述本地化）不移植：内置 description 保持 #1 数据原样（中文），英文界面下内置规则预览显示中文描述——#19 i18n 完整化时按 id 映射补齐。
+- 上游 locale 的 `builtinRuleDescriptions`（按规则 id 的内置描述本地化）已随 #19 移植：两语言字典各带 20 条 id 映射，列表预览经 `previewRuleText(rule, m.builtinRuleDescriptions)` 查表优先（上游 settings_tab 同语义）；数据态 description 保持 #1 中文原样，不随语言改写存储。映射完整性（DEFAULT_BUILTIN_RULES id 全覆盖 + 无孤儿键）由 `test/i18n.test.ts` 钉住。
 
 ## 给后续票的接口提示
 
