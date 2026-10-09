@@ -194,6 +194,11 @@ export class RuleEngine {
   /** 编译后正则缓存：key 为 rule.id（含 null = 已知非法，避免反复编译） */
   private regexCache: Map<string, CachedRegex | null> = new Map();
 
+  /** 「全部规则作用域含 All」惰性缓存（审查 C-P1-1：调用方据此跳过
+   * 作用域计算——scopeHint 不参与命中判定时免全文扫描）；规则集变化
+   *（add/remove/clear/update）置 null 失效 */
+  private unscopedCache: boolean | null = null;
+
   constructor(options: RuleEngineOptions = {}) {
     this.reportError = options.reportError;
     this.functionTable = options.functionTable ?? FUNCTION_TABLE_BY_REF;
@@ -443,6 +448,7 @@ export class RuleEngine {
     const fullRule: ConvertRule = { ...rule, id };
     this.rulesById.set(id, fullRule);
     this.insertSorted(fullRule);
+    this.unscopedCache = null;
     return id;
   }
 
@@ -459,6 +465,7 @@ export class RuleEngine {
     if (!this.rulesById.has(id)) return false;
     this.rulesById.delete(id);
     this.regexCache.delete(id);
+    this.unscopedCache = null;
     const idx = this.sortedRules.findIndex(r => r.id === id);
     if (idx !== -1) this.sortedRules.splice(idx, 1);
     return true;
@@ -471,6 +478,10 @@ export class RuleEngine {
     // 匹配面 / 类型 / flags 变化 → 正则缓存失效
     if (patch.match !== undefined || patch.type !== undefined || patch.regexFlags !== undefined) {
       this.regexCache.delete(id);
+    }
+    // 作用域变化 → 全 All 短路缓存失效
+    if (patch.scope !== undefined) {
+      this.unscopedCache = null;
     }
 
     const priorityChanged = patch.priority !== undefined && patch.priority !== existing.priority;
@@ -493,6 +504,20 @@ export class RuleEngine {
     return this.sortedRules;
   }
 
+  /**
+   * 全部在册规则的作用域均含 All（或规则集为空）——process 对 scopeHint
+   * 的过滤不参与任何命中判定（`scopeHint !== All && !rule.scope.includes(All)
+   * && ...` 对含 All 规则恒短路），调用方可跳过作用域计算直接传
+   * scopeHint = All（审查 C-P1-1 的 All 短路位）。惰性缓存，规则集变化
+   * 时失效。
+   */
+  allRulesUnscoped(): boolean {
+    if (this.unscopedCache === null) {
+      this.unscopedCache = this.sortedRules.every(r => r.scope.includes(RuleScope.All));
+    }
+    return this.unscopedCache;
+  }
+
   getRulesByType(type: RuleType): ConvertRule[] {
     return this.sortedRules.filter(r => r.type === type);
   }
@@ -505,6 +530,7 @@ export class RuleEngine {
     this.rulesById.clear();
     this.sortedRules = [];
     this.regexCache.clear();
+    this.unscopedCache = null;
   }
 
   loadFromFiles(builtinRules: SimpleRule[], userRules: SimpleRule[]): void {

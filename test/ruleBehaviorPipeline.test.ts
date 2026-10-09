@@ -7,7 +7,7 @@
 // tryProcessInput 的规则触发段、delete.backward 分支与 Selection Replace
 // 分支。
 import { describe, expect, it } from 'vitest'
-import { RuleEngine, type SimpleRule } from '../src/rules/rule-engine'
+import { RuleEngine, RuleType, type SimpleRule } from '../src/rules/rule-engine'
 import { DEFAULT_BUILTIN_RULES } from '../src/rules/default-rules'
 import {
   applyResultToPlan,
@@ -666,5 +666,112 @@ describe('保护区注入：SelectKey 管线（票面对称扩展，input 类回
       text: '{{hello}}',
     })
     expect(planSelectKeyRuleModification(engine, ctx, { protectedZone: zone })).toBeNull()
+  })
+})
+
+// ===== 作用域计算去重与 All 短路（审查 C-P1-1 修复） =====
+//
+// 热路径现状：同一输入事务被行为链逐族驱动，各管线对同一 (text, pos)
+// 重复全文 O(L) 扫描。两层去重的断言面：
+// - All 短路：族内全部规则作用域含 All 时（内置 20 条全 All），管线跳过
+//   作用域计算（scopeMemoComputeCount 不增），命中行为与显式判定一致；
+// - memo 复用：非 All 规则在场时的真实判定经单槽缓存，同 (text, pos)
+//   只算一次（跨管线调用共享）。
+import {
+  detectScopeFromTextMemoized,
+  resetScopeMemoForTest,
+  scopeMemoComputeCount,
+} from '../src/ruleScopeFallback'
+
+describe('作用域计算：All 短路与事务级 memo（C-P1-1）', () => {
+  it('All 短路：全 All 族（内置 fw2hw）管线驱动不触发作用域计算', () => {
+    resetScopeMemoForTest()
+    const engine = engineOf(['builtin-fw2hw-double'])
+    expect(engine.allRulesUnscoped()).toBe(true)
+    const plan = planInputRuleModification(engine, inputCtx('。。', 2, 'input.type', '。'))
+    expect(plan?.changes).toEqual([{ offset: 0, length: 2, text: '.' }])
+    expect(scopeMemoComputeCount()).toBe(0)
+  })
+
+  it('All 短路行为等价：全 All 族下短路（scopeHint=All）与显式文本判定的命中一致', () => {
+    const engine = engineOf(['builtin-fw2hw-double'])
+    // 光标 15（文末，代码围栏外的句尾）——fw2hw 左正则尾锚命中 。。[13,15)
+    const ctx = inputCtx('```\ncode\n```\n。。', 15, 'input.type', '。')
+    // 短路形态（管线实际路径）：scopeHint = All
+    const viaPipeline = planInputRuleModification(engine, ctx)
+    // 显式形态：同一文档与光标按文本降级判定（Text）直接喂引擎
+    const scope = detectScopeFromTextMemoized('```\ncode\n```\n。。', 15)
+    expect(scope.scope).not.toBe('code') // 光标在围栏外，文本判定为非代码
+    const explicit = engine.process({
+      kind: RuleType.Input,
+      docText: ctx.snapshot.text,
+      selection: { from: 15, to: 15 },
+      inserted: '。',
+      changeType: 'input.type',
+      scopeHint: scope.scope,
+    })
+    expect(viaPipeline).not.toBeNull()
+    expect(explicit).not.toBeNull()
+    // 两种形态产出同一计划（matchRange [13,15) → .，cursor 落 $0）
+    expect(viaPipeline?.changes).toEqual([{ offset: 13, length: 2, text: '.' }])
+    expect(viaPipeline).toEqual(
+      explicit ? { changes: [{ offset: 13, length: 2, text: '.' }], selection: { anchor: 14, head: 14 } } : null,
+    )
+    expect(explicit?.newText).toBe('.')
+  })
+
+  it('memo 复用：非 All 规则在场时同 (text, pos) 只算一次（跨管线共享）', () => {
+    resetScopeMemoForTest()
+    const engine = new RuleEngine()
+    engine.addSimpleRules([
+      { id: 'user-t', trigger: 'zz', replacement: 'ZZ', options: 't', priority: 1 }, // Text 作用域
+      ...DEFAULT_BUILTIN_RULES.filter((r) => r.id === 'builtin-fw2hw-double'),
+    ])
+    expect(engine.allRulesUnscoped()).toBe(false)
+    // 同一事务两次驱动（族链多族形态）：同 (text, pos) memo 命中
+    const ctx = inputCtx('a zz', 4, 'input.type', 'z')
+    const first = planInputRuleModification(engine, ctx)
+    const second = planInputRuleModification(engine, ctx)
+    expect(first?.changes).toEqual([{ offset: 2, length: 2, text: 'ZZ' }])
+    expect(second?.changes).toEqual([{ offset: 2, length: 2, text: 'ZZ' }])
+    expect(scopeMemoComputeCount()).toBe(1)
+  })
+
+  it('memo 失效键：光标变化自然 miss（各算各的）', () => {
+    resetScopeMemoForTest()
+    const engine = new RuleEngine()
+    engine.addSimpleRules([{ id: 'user-t', trigger: 'zz', replacement: 'ZZ', options: 't' }])
+    const ctxA = inputCtx('a zz', 4)
+    const ctxB = inputCtx('a zz', 2)
+    planInputRuleModification(engine, ctxA)
+    planInputRuleModification(engine, ctxB)
+    expect(scopeMemoComputeCount()).toBe(2)
+  })
+
+  it('Delete / SelectKey 管线同享 All 短路与 memo', () => {
+    resetScopeMemoForTest()
+    // Delete 全 All 内置族：短路不计算
+    const deleteEngine = engineOf(DELETE_RULE_IDS)
+    planDeleteRuleModification(
+      deleteEngine,
+      inputCtx('', 0, 'delete.backward', '', [{ anchor: 0, head: 0 }], { from: 0, to: 1, text: '【' }),
+    )
+    expect(scopeMemoComputeCount()).toBe(0)
+    // SelectKey 全 All 内置族：短路不计算
+    const selectEngine = engineOf(SELECTKEY_RULE_IDS)
+    planSelectKeyRuleModification(
+      selectEngine,
+      inputCtx('·', 1, 'input.type', '·', [{ anchor: 1, head: 1 }], { from: 0, to: 5, text: 'hello' }),
+    )
+    expect(scopeMemoComputeCount()).toBe(0)
+  })
+
+  it('allRulesUnscoped 惰性缓存：规则集变化后失效重算', () => {
+    const engine = new RuleEngine()
+    expect(engine.allRulesUnscoped()).toBe(true) // 空集 = 短路
+    engine.addSimpleRules([{ id: 'user-t', trigger: 'zz', replacement: 'ZZ', options: 't' }])
+    expect(engine.allRulesUnscoped()).toBe(false)
+    engine.removeRule('user-t')
+    expect(engine.allRulesUnscoped()).toBe(true)
   })
 })

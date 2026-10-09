@@ -29,7 +29,10 @@
 // 表格不另判——依赖平台门控，记录于规格）。行内代码/公式作为分区由
 // lineFormatter 处理，无需行级跳过；光标落在其内时 detectScopeFromText
 // 的近似（误判 Formula/Code → 跳过整行）继承 #25 已知边界。
-import { detectScopeFromText } from './ruleScopeFallback'
+// 【作用域判定经 memo】（审查 C-P1-1）：autoformat 与规则族在同一输入
+// 事务被驱动，detectScopeFromTextMemoized 同 (text, pos) 复用单槽缓存
+//（autoformat 真实消费 scope 值——要求 Text 才格式化，不做 All 短路）。
+import { detectScopeFromTextMemoized } from './ruleScopeFallback'
 import { RuleScope } from './rules/rule-engine'
 import {
   pipelineConsumesUserEvent,
@@ -96,7 +99,7 @@ export function planAutoFormatLineModification(
   if (fromB < 0) return null // 防御：inputText 与光标失配（多选区拼接等）
 
   // 作用域门控（文本降级版）：Code / Formula / frontmatter 行不格式化
-  if (detectScopeFromText(text, head).scope !== RuleScope.Text) return null
+  if (detectScopeFromTextMemoized(text, head).scope !== RuleScope.Text) return null
   if (isInsideFrontmatter(text, fromB)) return null
 
   // 行定位与行内坐标（上游 formatLineOfDoc 的 offsetToPos 换算）

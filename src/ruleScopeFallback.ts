@@ -17,6 +17,14 @@
 // 误判 Formula）；嵌套围栏里的 `` `` 内层围栏等极端形态不追求一致。
 // 20 条内置规则作用域全为 All，本判定当前仅影响未来用户规则（#14）与
 // Delete/SelectKey 管线（#9）。
+//
+// 【事务级 memo（审查 C-P1-1 修复）】同一输入事务会被行为链逐族驱动多次
+//（5 Input 族 + autoformat），每次管线都取同一 (text, pos) 判作用域——
+// 全文 O(L) 扫描重复 6 次。detectScopeFromTextMemoized 以 (text, pos) 为
+// 键做模块级单槽缓存：同键直接返回上次结果（JS 单线程无并发；webview
+// 全程同步调用，无 async 交错污染——最坏情形是 miss 重算，语义不变）。
+// 键用字符串值相等（===）：V8 长度不同即 false、同长度 memcmp，远廉于
+// 状态机扫描；跨事务文本或光标变化自然失效。
 import { RuleScope } from './rules/rule-engine'
 
 /** 判定结果（对齐上游 ScopeInfo：scope + 可选代码语言） */
@@ -103,4 +111,32 @@ export function detectScopeFromText(docText: string, pos: number): FallbackScope
     return { scope: RuleScope.Formula }
   }
   return { scope: RuleScope.Text }
+}
+
+// ===== 事务级 memo（审查 C-P1-1 修复） =====
+
+/** memo 单槽（同 (text, pos) 复用上次判定结果） */
+let scopeMemo: { text: string; pos: number; result: FallbackScopeInfo } | null = null
+
+/** memo 化的作用域判定：管线与 autoformat 统一经此调用（形态键 = text + pos） */
+export function detectScopeFromTextMemoized(text: string, pos: number): FallbackScopeInfo {
+  if (scopeMemo !== null && scopeMemo.pos === pos && scopeMemo.text === text) {
+    return scopeMemo.result
+  }
+  memoComputeCount++
+  const result = detectScopeFromText(text, pos)
+  scopeMemo = { text, pos, result }
+  return result
+}
+
+// ---- 测试探针（生产零消费；断言缓存命中/miss 计数） ----
+
+let memoComputeCount = 0
+/** 真实计算次数（每次穿透 memo 调 detectScopeFromText +1；测试前 reset 归零） */
+export function scopeMemoComputeCount(): number {
+  return memoComputeCount
+}
+export function resetScopeMemoForTest(): void {
+  scopeMemo = null
+  memoComputeCount = 0
 }

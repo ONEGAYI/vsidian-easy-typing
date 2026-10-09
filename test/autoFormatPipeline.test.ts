@@ -281,3 +281,32 @@ describe('间谍形态核验（consumePlainPaste 单次性）', () => {
     expect(consume).toHaveBeenCalledTimes(1)
   })
 })
+
+// ===== 作用域判定经事务级 memo（审查 C-P1-1 修复） =====
+//
+// autoformat 与规则族在同一输入事务被行为链驱动，作用域判定统一经
+// detectScopeFromTextMemoized（autoformat 真实消费 scope 值——要求 Text
+// 才格式化，不做 All 短路）：同 (text, pos) 的重复驱动复用单槽缓存。
+
+import { resetScopeMemoForTest, scopeMemoComputeCount } from '../src/ruleScopeFallback'
+
+describe('作用域判定 memo：同 (text, pos) 只算一次（C-P1-1）', () => {
+  it('同一事务两次驱动（规则族 + autoformat 形态）只触发一次真实计算', () => {
+    resetScopeMemoForTest()
+    const ctxA = ctx('中文a', 3, 'a')
+    const first = planAutoFormatLineModification(ctxA, options())
+    expect(first).not.toBeNull()
+    expect(scopeMemoComputeCount()).toBe(1)
+    // 同 (text, head) 的第二次（autoformat 或规则管线同事务再驱动）：memo 命中
+    const second = planAutoFormatLineModification(ctx('中文a', 3, 'a'), options())
+    expect(second).toEqual(first)
+    expect(scopeMemoComputeCount()).toBe(1)
+  })
+
+  it('文档变化自然失效（下一事务重算）', () => {
+    resetScopeMemoForTest()
+    planAutoFormatLineModification(ctx('中文a', 3, 'a'), options())
+    planAutoFormatLineModification(ctx('中文ab', 4, 'b'), options())
+    expect(scopeMemoComputeCount()).toBe(2)
+  })
+})

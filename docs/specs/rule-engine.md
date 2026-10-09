@@ -142,6 +142,15 @@
 - **`$0` 字面标记**：#1 已知边界延续——替换体占位符保留为字面文本（如 `（$0）`），#14 解析落地后恢复上游语义，届时矩阵与管线断言同步更新。
 - **中英空格**：规则面零命中基线（集成测试钉住），转换本体归 #26 格式化管线消费。
 
+### 作用域计算优化：All 短路与事务级 memo（审查 C-P1-1 修复落档）
+
+**问题**：同一输入事务被行为链逐族驱动（5 Input 族 + Delete/SelectKey 族 + autoformat），各管线对同一 `(text, pos)` 各调一次 `detectScopeFromText`——全文 O(L) 逐字符扫描重复至多 6 次；且内置 20 条规则作用域全 All 时该计算不影响命中。
+
+**两层去重**（`src/ruleBehaviorPipeline.ts` 的 `resolveScopeForEngine` + `src/ruleScopeFallback.ts` 的 `detectScopeFromTextMemoized`）：
+
+1. **All 短路**：`RuleEngine.allRulesUnscoped()`（惰性缓存，规则集变化失效）为真——族内全部规则作用域含 All（内置 20 条全 All）——时管线直接传 `scopeHint: All`，跳过扫描。行为等价依据（引擎 `process` 源码核对）：作用域过滤条件 `ctx.scopeHint !== All && !rule.scope.includes(All) && !rule.scope.includes(scopeHint)` 对含 All 规则恒短路；语言过滤仅在 `scopeHint === Code` 且 `rule.scope.includes(Code)` 时才查——传 All 后两道门都自然放行，与真实判定结果一致（测试钉住等价性）。autoformat **不适用**短路：它真实消费 scope 值（要求 Text 才格式化）。
+2. **事务级 memo**：真实判定统一经 `detectScopeFromTextMemoized`——模块级单槽缓存，键 `(text, pos)` 值相等（字符串 `===`：长度不同即 false、同长度 memcmp，远廉于状态机扫描；跨事务文本或光标变化自然失效）。跨族共享（5 Input 族 + Delete/SelectKey + autoformat 同事务复用同一判定）。JS 单线程无并发问题；async 交错最坏 miss 重算，语义不变。测试探针 `scopeMemoComputeCount` / `resetScopeMemoForTest`（生产零消费）。
+
 ## #9 Delete/SelectKey 触发接入（delete.* 联动删除 + 选区替换包裹）
 
 剩余两类触发的执行内核接入：`planDeleteRuleModification`（Delete 类）与 `planSelectKeyRuleModification`（SelectKey 类）落在 `src/ruleBehaviorPipeline.ts`，族注册（`06-delete-rules` / `07-selectkey-rules`）与接线落在 `src/ruleBehaviorIntercept.ts` 与 `src/page-editor.ts` 的 #9 增量块。上游对照 `cm_extensions.ts` 的 delete.backward 分支（L327-369）与 Selection Replace 分支（L61-110）。
