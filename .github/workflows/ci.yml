@@ -48,7 +48,9 @@ jobs:
         env:
           VSIDIAN_SOURCE_REPO: /tmp/vsidian
       - name: VSIX 打包
-        # 依赖前面 compile 产出的 dist/；与 vsidian 主仓发布脚本同款命令
+        # 与本地 npm run package（#24，scripts/release.mjs）同款 vsce 命令；
+        # 前面 compile 已产 dist/，vsce 另经 vscode:prepublish 自动重建（双保险）。
+        # 体积红线与内容检查归 #24 发布脚本，本工作流只构建与上传。
         run: npx @vscode/vsce package --no-dependencies
       - name: 上传 VSIX 产物
         uses: actions/upload-artifact@v4
