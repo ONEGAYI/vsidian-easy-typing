@@ -25,6 +25,10 @@
 // 规则启停只有 per-rule enabled + 规则管理器）——#3 生效面 23 键中无
 // ruleTriggerEnabled 类键，故插件侧不另建总门；内置规则逐条开关 = 平台
 // 行为管理的族粒度开关。本层消费设置面仅 debug（引擎 ctx.debug 日志）。
+//
+// 【#9 接缝】onInput 适配器透传 ctx.replaced：Input 管线对选区替换形态
+//（replaced 非空）返回 null（上游 changedStr.length < 1 同口径），把该
+// 触发面让给 #9 的 SelectKey 族——见 ruleBehaviorPipeline.ts 头注。
 import type {
   AddonBehaviorRegistration,
   AddonInputContext,
@@ -221,6 +225,7 @@ export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): Rul
           {
             userEvent: ctx.userEvent,
             inputText: ctx.inputText,
+            replaced: ctx.replaced,
             snapshot: { text: ctx.snapshot.text, selections: ctx.snapshot.selections },
           },
           { debug: gate.debug() },
