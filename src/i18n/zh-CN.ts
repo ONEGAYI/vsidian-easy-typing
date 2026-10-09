@@ -97,6 +97,8 @@ const zhMessages = {
     },
   },
   noHost: '当前扩展宿主中未找到 Vsidian（onegayi.vsidian）',
+  // 「选择当前块」命令标题（工单 #11；文案对齐上游 locale commands.selectBlock）
+  commandSelectBlock: '选择当前文本块',
 }
 
 export { zhMessages }

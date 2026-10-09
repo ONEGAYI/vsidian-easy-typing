@@ -99,4 +99,6 @@ export const enMessages: Messages = {
     },
   },
   noHost: 'Vsidian (onegayi.vsidian) not found in this extension host',
+  // Select-current-block command title (issue #11; wording follows upstream locale commands.selectBlock)
+  commandSelectBlock: 'Select current text block',
 }

@@ -4,6 +4,14 @@
 import { defineAddonPage } from 'vsidian-addon-sdk'
 import type { VsidianAddonPageSdk } from '../types/vendor/shared/addonPage'
 import { taboutCommand } from './taboutIntercept'
+import { pickMessages } from './i18n'
+import { debugLog } from './logging'
+import {
+  buildSelectBlockCommandDefinition,
+  createEnhanceModAGate,
+  createModACommand,
+  createSelectBlockCommandHandler,
+} from './modaIntercept'
 
 /** 本组件声明的扩展 ID（装载器按此核对入口身份） */
 const ADDON_ID = 'ONEGAYI.vsidian-easy-typing'
@@ -25,4 +33,65 @@ defineAddonPage(ADDON_ID, (sdk: VsidianAddonPageSdk) => {
   // 「平台 Tab 冲突核对」节。设置门控（上游 settings.Tabout）随本
   // 组件设置票接线：关闭时不注册本 keymap。
   sdk.registerExtension(cm6.view.keymap.of([{ key: 'Tab', run: taboutCommand }]))
+
+  // ============================================================
+  // 工单 #11 增量块：EnhanceModA 渐进选择 + 「选择当前块」命令。
+  // 独立成块（不动上方既有装配），降低与并行工单（如 #8）的合并冲突。
+  // ============================================================
+
+  // 设置门：装载即拉取 enhanceModA 生效值（#3 设置通道，默认关）；焦点
+  // 回归与透传按键时刷新——设置页改开关后回到编辑器即按新值判定
+  const modAGate = createEnhanceModAGate(sdk.channel)
+  void modAGate.refresh()
+
+  // Mod+A 抢先层（票面评论定案 Prec.high）：平台保留键闸（undo/redo）
+  // 之后、平台普通情境链之前；功能关或状态机失配一律 return false 落穿
+  // ——平台原生 Mod+A 全选照常执行（透传即接管边界）。实验层 keymap 不进
+  // 平台统一快捷键管理；registerExtension 无撤销句柄，采用「恒注册 + 设置
+  // 门控透传」形态（关闭时行为与不注册等价，运行时开关即时生效）。
+  const modARun = createModACommand({ isEnabled: () => modAGate.enabled() })
+  sdk.registerExtension(
+    cm6.state.Prec.high(
+      cm6.view.keymap.of([
+        {
+          key: 'Mod-a',
+          run: (view) => {
+            const handled = modARun(view)
+            // 透传按键顺带拉新设置（fire-and-forget，下一次按键生效——
+            // 关闭→开启运行时翻转的兜底通道，主通道是焦点回归刷新）
+            if (!handled) void modAGate.refresh()
+            return handled
+          },
+        },
+      ]),
+    ),
+  )
+  sdk.registerExtension(
+    cm6.view.EditorView.updateListener.of((update) => {
+      if (update.focusChanged) void modAGate.refresh()
+    }),
+  )
+
+  // 「选择当前块」命令：平台稳定 commands API（统一快捷键管理 + 命令
+  // 面板；默认未绑定——上游无默认热键，绑定入口由平台快捷键管理承担）。
+  // 焦点视图优先（编辑器内触发），命令面板触发（焦点在宿主 UI）回退主
+  // 视图快照路径。
+  const commands = sdk.commands
+  if (commands !== undefined) {
+    const registered = commands.register(
+      buildSelectBlockCommandDefinition(pickMessages(navigator.language)),
+      createSelectBlockCommandHandler({
+        cm6,
+        views: sdk.views,
+        getFocusedView: () => {
+          const active = document.activeElement
+          return active instanceof HTMLElement ? cm6.view.EditorView.findFromDOM(active) : null
+        },
+      }),
+    )
+    if (!registered.ok) {
+      // 普通 API 拒绝不算故障：经 debugLog 留痕便于诊断（logging.ts 约定）
+      debugLog('select-block command register rejected:', registered.reason)
+    }
+  }
 })
