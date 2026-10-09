@@ -327,10 +327,13 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
     // 消费，无残留）。pending 只在 onInput 命中含占位符的计划后非空，
     // 窗口极小——若被无关 docChanged 事务抢先消费，导航态静默不激活，
     // 下次输入即恢复，不视为故障（口径见 tabstop.md「行为链接线」节）。
+    // 消费一致性校验（审查 B-F2 修复）：传 view.state.doc——暂存的计划
+    // 变更未在文档上呈现（applyEdit 回环窗口内用户键入先到、或计划被
+    // stale-snapshot 拒绝）即丢弃，不再以计划后坐标错误激活。
     sdk.registerExtension(
       cm6.view.EditorView.updateListener.of((update) => {
         if (!update.docChanged) return
-        const pending = ruleRuntime.consumePendingTabstops()
+        const pending = ruleRuntime.consumePendingTabstops(update.view.state.doc)
         if (pending.length > 0) tabstopNav.activateTabstops(update.view, pending)
       }),
     )
@@ -363,7 +366,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
     sdk.registerExtension(
       cm6.view.EditorView.updateListener.of((update) => {
         if (!update.docChanged) return
-        const pending = triggerRuntime.consumePendingTabstops()
+        const pending = triggerRuntime.consumePendingTabstops(update.view.state.doc)
         if (pending.length > 0) tabstopNav.activateTabstops(update.view, pending)
       }),
     )

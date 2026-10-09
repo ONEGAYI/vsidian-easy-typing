@@ -153,6 +153,35 @@ if (result.tabstops.length > 0) {
 - 坐标系：LF 文档绝对坐标（与 `ApplyResult.tabstops` 同源，webview 全程
   LF，无需换算）。
 
+### 消费一致性校验（审查 B-F2 修复落档）
+
+**问题**：平台 `applyEdit` 是异步回环（onInput 返回计划 → runtime `await
+applyEdit` → webview dispatch）。窗口内用户键入的事务会先触发 docChanged
+监听并消费暂存的 tabstop——以「计划应用后坐标」错误激活导航态（光标
+跳错位）。计划被平台拒绝（stale-snapshot 等）后的残留暂存同理。
+
+**校验形态（文本形态比对）**：暂存槽结构化携带 `{tabstops, changes}`
+（changes = 命中计划的变更列表）；`consumePendingTabstops(doc)` 消费时逐
+条核对文档在 `[offset, offset + text.length)` 区间已呈现替换体文本——
+全部符合才返回 tabstop 激活，任一失配即**丢弃**（读即消费语义不变；
+下次输入恢复，不视为故障）。计划确实应用后，替换体必然在位；失配即
+「本组件计划未应用或不符」。
+
+**识别面选型（为何不用事务 origin / snapshot revision）**：核对 vsidian
+`src/webview/addonBehaviors.ts` 与 `liveInstance.ts` @ origin/main——计划
+应用事务的标记 `addonEditOriginTag` 是 CM6 Annotation，定义在 liveInstance
+模块内部、**不随 SDK 暴露**（`experimental.cm6` 仅 state/view/language），
+插件侧 updateListener 拿不到该 Annotation 实例；`AddonEditorSnapshot.revision`
+（快照修订标记）可从 `ctx.snapshot` 读到，但消费时点的当前 revision
+（`liveInstance.docRevision` 私有字段）无插件侧读取面。文本形态比对是
+可校验面中的最简且完备选择（空文本变更——纯删除计划——区间零宽恒通
+过，删除类计划本无 tabstop 携带场景）。
+
+**已知边界**：多编辑器实例（main + embed）共享页面级暂存槽——embed
+命中计划后 main 的无关 docChanged 事务先消费时，校验失配丢弃（安全方
+向：偶尔漏激活，不错位激活）；这与修复前的「错位激活」相比是可接受的
+边界收紧。#25/#9 两通道各自独立暂存槽，互不影响。
+
 ## 已知边界
 
 - **零宽占位符无可见高亮**（差异 6 的直接后果）：`$0` 常为零宽

@@ -24,6 +24,11 @@ import {
   type RuleFamilyDefinition,
 } from '../src/ruleBehaviorIntercept'
 
+/** 消费时点文档 mock（CM6 Text 结构子集——LF 字符串切片；B-F2 校验入参） */
+function docOf(text: string): { sliceString(from: number, to: number): string } {
+  return { sliceString: (from, to) => text.slice(from, to) }
+}
+
 /** 注册载荷观测面（结构即 AddonBehaviorRegistration） */
 type RuleBehaviorRegistrationSubset = AddonBehaviorRegistration
 
@@ -162,7 +167,7 @@ describe('注册形状契约（AddonBehaviorRegistration）', () => {
   it('tabstop 暂存通道（#15×#25 接线）：命中含占位符的计划后可取、读即消费', () => {
     const { registrations, runtime } = registerAll('zh-CN')
     // 基线：无命中后为空
-    expect(runtime.consumePendingTabstops()).toEqual([])
+    expect(runtime.consumePendingTabstops(docOf('（）'))).toEqual([])
     const autopair = registrations.find((r) => r.id === '02-autopair')!
     autopair.onInput({
       userEvent: 'input.type',
@@ -171,12 +176,13 @@ describe('注册形状契约（AddonBehaviorRegistration）', () => {
       docUri: 'file:///a.md',
       snapshot: { text: '（', selections: [{ anchor: 1, head: 1 }], version: 1, revision: 1 },
     })
-    // 命中计划（（）补全）携带 $0 → tabstop 组暂存待取
-    const pending = runtime.consumePendingTabstops()
+    // 命中计划（（）补全）携带 $0 → tabstop 组暂存待取（文档已呈现计划
+    // 替换形态 → B-F2 校验通过）
+    const pending = runtime.consumePendingTabstops(docOf('（）'))
     expect(pending.length).toBeGreaterThan(0)
     expect(pending[0]).toMatchObject({ number: 0 })
     // 读即消费：再取为空
-    expect(runtime.consumePendingTabstops()).toEqual([])
+    expect(runtime.consumePendingTabstops(docOf('（）'))).toEqual([])
   })
 
   it('注册拒绝（duplicate-id）不是故障：结果记录 ok:false，不抛错', () => {
@@ -401,7 +407,7 @@ describe('#9 注册形状与 onInput 全链', () => {
 
   it('tabstop 暂存通道：SelectKey 包裹计划后可取 $0 组（覆盖选中文本），读即消费', () => {
     const { registrations, runtime } = registerTriggerAll('zh-CN')
-    expect(runtime.consumePendingTabstops()).toEqual([])
+    expect(runtime.consumePendingTabstops(docOf('`hello`'))).toEqual([])
     const sel = registrations.find((r) => r.id === '07-selectkey-rules')!
     sel.onInput({
       userEvent: 'input.type',
@@ -410,9 +416,9 @@ describe('#9 注册形状与 onInput 全链', () => {
       docUri: 'file:///a.md',
       snapshot: { text: '·', selections: [{ anchor: 1, head: 1 }], version: 1, revision: 1 },
     })
-    const pending = runtime.consumePendingTabstops()
+    const pending = runtime.consumePendingTabstops(docOf('`hello`'))
     expect(pending).toEqual([{ number: 0, from: 1, to: 6 }])
-    expect(runtime.consumePendingTabstops()).toEqual([])
+    expect(runtime.consumePendingTabstops(docOf('`hello`'))).toEqual([])
   })
 
   it('英文语言标签取英文字典名称', () => {
@@ -692,5 +698,88 @@ describe('#27 用户规则尊重保护区：族级端到端', () => {
     const plan = del.onInput(deleteInZone)
     // 联动删除【】：引擎命中事务前 [2,4)，换算快照 to=4-1=3 → 删快照 '】'
     expect(plan?.changes).toEqual([{ offset: 2, length: 1, text: '' }])
+  })
+})
+
+// ===== tabstop 暂存消费一致性校验（审查 B-F2 修复） =====
+
+const inputSnapshot = (text: string, cursor: number) => ({
+  text,
+  selections: [{ anchor: cursor, head: cursor }],
+  version: 1,
+  revision: 1,
+})
+
+describe('tabstop 消费一致性校验（B-F2）', () => {
+  function registerInputForAutopair() {
+    const registrations: RuleBehaviorRegistrationSubset[] = []
+    const runtime = registerRuleInputBehaviors({
+      behaviors: {
+        register: (reg) => {
+          registrations.push(reg)
+          return { ok: true as const, key: reg.id }
+        },
+        onChanged: () => () => {},
+      },
+      channel: { request: async () => ({ ok: false as const, reason: 'timeout' as const }) },
+      language: 'zh-CN',
+    })
+    return { registrations, runtime }
+  }
+
+  it('#25：applyEdit 回环窗口内用户键入先到（文档未呈现计划形态）→ 丢弃不激活', () => {
+    const { registrations, runtime } = registerInputForAutopair()
+    const autopair = registrations.find((r) => r.id === '02-autopair')!
+    autopair.onInput({
+      userEvent: 'input.type',
+      inputText: '（',
+      replaced: null,
+      docUri: 'file:///a.md',
+      snapshot: inputSnapshot('（', 1),
+    })
+    // 用户键入 x 的事务先到：文档 '（x'（计划未应用，applyEdit 将被
+    // stale-snapshot 拒绝）→ 坐标处不是替换体 → 丢弃
+    expect(runtime.consumePendingTabstops(docOf('（x'))).toEqual([])
+    // 丢弃后槽已清空（正确形态到来也不再激活本次）
+    expect(runtime.consumePendingTabstops(docOf('（）'))).toEqual([])
+  })
+
+  it('#25：计划应用后（文档呈现替换形态）→ 正常激活', () => {
+    const { registrations, runtime } = registerInputForAutopair()
+    const autopair = registrations.find((r) => r.id === '02-autopair')!
+    autopair.onInput({
+      userEvent: 'input.type',
+      inputText: '（',
+      replaced: null,
+      docUri: 'file:///a.md',
+      snapshot: inputSnapshot('（', 1),
+    })
+    expect(runtime.consumePendingTabstops(docOf('（）'))).toEqual([{ number: 0, from: 1, to: 1 }])
+  })
+
+  it('#9 SelectKey：包裹计划失配文档 → 丢弃', () => {
+    const registrations: RuleBehaviorRegistrationSubset[] = []
+    const runtime = registerRuleDeleteSelectKeyBehaviors({
+      behaviors: {
+        register: (reg) => {
+          registrations.push(reg)
+          return { ok: true as const, key: reg.id }
+        },
+        onChanged: () => () => {},
+      },
+      channel: { request: async () => ({ ok: false as const, reason: 'timeout' as const }) },
+      language: 'zh-CN',
+    })
+    const sel = registrations.find((r) => r.id === '07-selectkey-rules')!
+    sel.onInput({
+      userEvent: 'input.type',
+      inputText: '·',
+      replaced: { from: 0, to: 5, text: 'hello' },
+      docUri: 'file:///a.md',
+      snapshot: { text: '·', selections: [{ anchor: 1, head: 1 }], version: 1, revision: 1 },
+    })
+    // 窗口内用户键入把 · 后追加 z（未应用包裹）→ 失配丢弃
+    expect(runtime.consumePendingTabstops(docOf('·z'))).toEqual([])
+    expect(runtime.consumePendingTabstops(docOf('`hello`'))).toEqual([])
   })
 })

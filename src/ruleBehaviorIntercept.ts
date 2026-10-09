@@ -238,8 +238,47 @@ export interface RuleBehaviorRuntime {
    * 读即消费（返回后清空）；无待激活时返回空数组。页面装配层在计划应用
    * 后的 docChanged 事务里调用——坐标为应用后文档绝对坐标，可直接喂
    * tabstopNav.activateTabstops。
+   * 消费一致性校验（审查 B-F2 修复）：入参 doc 为消费时点的文档读取面
+   *（CM6 Text 结构子集，页面侧传 view.state.doc）。暂存时同记计划变更
+   *（changes）；消费时逐条核对文档在 [offset, offset + text.length) 处
+   * 已呈现替换体——失配（applyEdit 异步回环窗口内用户键入的事务先到、
+   * 或计划被平台 stale-snapshot 拒绝）即丢弃本次 tabstop，不激活导航态。
+   * 识别面选型（为何不用事务 origin / snapshot revision）见
+   * docs/specs/tabstop.md「给 #25 的接线接口」节。
    */
-  readonly consumePendingTabstops: () => readonly TabstopSpec[]
+  readonly consumePendingTabstops: (doc: PendingDocText) => readonly TabstopSpec[]
+}
+
+/** 消费时点文档读取面（CM6 Text 的结构子集；webview 全程 LF 坐标） */
+export interface PendingDocText {
+  sliceString(from: number, to: number): string
+}
+
+/** 暂存槽：tabstop 组 + 计划变更（消费一致性校验的比对基准） */
+interface PendingTabstopEntry {
+  readonly tabstops: readonly TabstopSpec[]
+  readonly changes: ReadonlyArray<{ offset: number; length: number; text: string }>
+}
+
+/**
+ * 暂存条目消费：读即消费 + 一致性校验。计划应用后文档在每条变更的
+ * [offset, offset + text.length) 区间应恰为替换体文本——任一失配即丢弃
+ *（不激活导航态；下次输入恢复，不视为故障）。校验通过的语义等价于
+ * 「本组件计划已确实应用」：计划被拒（stale-snapshot/conflict）或被
+ * 无关事务抢先消费时，文档不会呈现该形态。
+ */
+function consumePendingEntry(
+  state: { pending: PendingTabstopEntry | null },
+  doc: PendingDocText,
+): readonly TabstopSpec[] {
+  const entry = state.pending
+  state.pending = null
+  if (entry === null) return []
+  // 空文本变更（纯删除计划）区间恒零宽，sliceString(x, x) === '' 天然通过
+  const applied = entry.changes.every(
+    (c) => doc.sliceString(c.offset, c.offset + c.text.length) === c.text,
+  )
+  return applied ? entry.tabstops : []
 }
 
 export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): RuleBehaviorRuntime {
@@ -248,8 +287,9 @@ export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): Rul
   void gate.refresh()
   const reportRuleError = createRuleErrorReporter(deps.channel, { now: deps.now })
 
-  // 独占组保证一次输入至多一族命中——单一暂存槽足够
-  let pendingTabstops: readonly TabstopSpec[] = []
+  // 独占组保证一次输入至多一族命中——单一暂存槽足够（B-F2 起：暂存时
+  // 同记计划变更，消费时按文档形态校验一致性）
+  const pendingState = { pending: null as PendingTabstopEntry | null }
 
   const outcome: RuleBehaviorRegisterOutcome[] = []
   for (const family of INPUT_RULE_FAMILIES) {
@@ -275,7 +315,7 @@ export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): Rul
         )
         if (withTabstops === null) return null
         if (withTabstops.tabstops.length > 0) {
-          pendingTabstops = withTabstops.tabstops
+          pendingState.pending = { tabstops: withTabstops.tabstops, changes: withTabstops.plan.changes }
         }
         return withTabstops.plan
       },
@@ -297,11 +337,7 @@ export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): Rul
   })
   return {
     outcomes: outcome,
-    consumePendingTabstops: () => {
-      const pending = pendingTabstops
-      pendingTabstops = []
-      return pending
-    },
+    consumePendingTabstops: (doc: PendingDocText) => consumePendingEntry(pendingState, doc),
   }
 }
 
@@ -369,8 +405,9 @@ export function registerRuleDeleteSelectKeyBehaviors(deps: RegisterRuleBehaviors
   void gate.refresh()
   const reportRuleError = createRuleErrorReporter(deps.channel, { now: deps.now })
 
-  // 独占组保证一次输入至多一族命中——单一暂存槽足够
-  let pendingTabstops: readonly TabstopSpec[] = []
+  // 独占组保证一次输入至多一族命中——单一暂存槽足够（B-F2 起：暂存时
+  // 同记计划变更，消费时按文档形态校验一致性）
+  const pendingState = { pending: null as PendingTabstopEntry | null }
 
   const outcome: RuleBehaviorRegisterOutcome[] = []
   for (const family of DELETE_SELECTKEY_RULE_FAMILIES) {
@@ -397,7 +434,9 @@ export function registerRuleDeleteSelectKeyBehaviors(deps: RegisterRuleBehaviors
           protectedZone: gate.userRulesZone(),
         })
         if (deleteResult !== null) {
-          if (deleteResult.tabstops.length > 0) pendingTabstops = deleteResult.tabstops
+          if (deleteResult.tabstops.length > 0) {
+            pendingState.pending = { tabstops: deleteResult.tabstops, changes: deleteResult.plan.changes }
+          }
           return deleteResult.plan
         }
         const selectKeyResult = planSelectKeyRuleModification(engine, pipelineCtx, {
@@ -405,7 +444,9 @@ export function registerRuleDeleteSelectKeyBehaviors(deps: RegisterRuleBehaviors
           protectedZone: gate.userRulesZone(),
         })
         if (selectKeyResult !== null) {
-          if (selectKeyResult.tabstops.length > 0) pendingTabstops = selectKeyResult.tabstops
+          if (selectKeyResult.tabstops.length > 0) {
+            pendingState.pending = { tabstops: selectKeyResult.tabstops, changes: selectKeyResult.plan.changes }
+          }
           return selectKeyResult.plan
         }
         return null
@@ -426,10 +467,6 @@ export function registerRuleDeleteSelectKeyBehaviors(deps: RegisterRuleBehaviors
   })
   return {
     outcomes: outcome,
-    consumePendingTabstops: () => {
-      const pending = pendingTabstops
-      pendingTabstops = []
-      return pending
-    },
+    consumePendingTabstops: (doc: PendingDocText) => consumePendingEntry(pendingState, doc),
   }
 }
