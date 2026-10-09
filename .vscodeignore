@@ -1,0 +1,27 @@
+# bundle 后产物自包含（dist/ 由 esbuild 打包），源码、测试、工程设施与
+# 过程留档不进入 VSIX。对齐 vsidian 主仓的黑名单模式；VSIX 体积红线与
+# 发布期内容检查归 #24 发布脚本，CI（#23）只负责构建与上传。
+.github/**
+.vscode/**
+.vscode-test/**
+.agents/**
+scripts/**
+tools/**
+node_modules/**
+src/**
+test/**
+types/**
+docs/**
+build.mjs
+tsconfig.json
+vitest.config.ts
+out/**
+CONTEXT.md
+CLAUDE.md
+AGENTS.md
+.gitignore
+.git/**
+package-lock.json
+*.vsix
+**/*.map
+**/*.log

@@ -2,6 +2,7 @@
 node_modules/
 dist/
 out/
+*.vsix
 
 # 测试运行残留
 .vscode-test/

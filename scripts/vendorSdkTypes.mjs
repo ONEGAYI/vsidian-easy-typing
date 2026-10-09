@@ -349,7 +349,10 @@ if (args.check) {
     const diskPath = path.join(outDir, rel)
     const disk = statSync(diskPath, { throwIfNoEntry: false })
     if (!disk) problems.push(`缺失：types/vendor/${rel}`)
-    else if (readFileSync(diskPath, 'utf8') !== text) problems.push(`漂移：types/vendor/${rel}（源已变或生成器已改，重跑 npm run vendor:sdk）`)
+    // 行尾归一后对比：Windows 下 core.autocrlf=true 的 checkout 会把仓库内
+    // LF 快照转成 CRLF，字节级严格对比会全量伪漂移（生成器恒写 LF）——
+    // 行尾差异不是语义漂移，语义对比在任一平台行为一致（#23 实证）。
+    else if (readFileSync(diskPath, 'utf8').replaceAll('\r\n', '\n') !== text) problems.push(`漂移：types/vendor/${rel}（源已变或生成器已改，重跑 npm run vendor:sdk）`)
   }
   for (const rel of existing) {
     if (!generated.has(rel)) problems.push(`多余：types/vendor/${rel}（生成器不再产出，请删除）`)

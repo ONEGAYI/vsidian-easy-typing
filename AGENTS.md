@@ -26,6 +26,7 @@ Vsidian（VSCode 扩展 [onegayi.vsidian](https://github.com/ONEGAYI/vsidian)）
 ## 工程设施（#22 落档）
 
 - **命令速查**：`npm run compile` = 三产物构建（`npm run build`）+ `tsc --noEmit`；`npm run test`（vitest 冒烟与结构契约）；`npm run vendor:sdk` / `npm run vendor:check`（SDK 类型快照生成 / 漂移校验）。构建即双防线：SDK 构建桥拒绝 `@codemirror/*` 值导入 + 逐产物扫描（CM6 运行时标记 / vsidian 内部路径 / 裸 require）。
+- **CI（#23 落档）**：`.github/workflows/ci.yml` 单 job `ci`——push(main)/PR/手动触发，node 22 + `cache: npm` + `npm ci`，串行 compile（esbuild 三产物 + tsc）、vitest 单测（json 报告失败时上传留证，artifact 名带 attempt 号防 rerun 覆盖）、vendor 防漂移（CI 无本地源仓，先 partial clone vsidian 再以 `VSIDIAN_SOURCE_REPO` 指向；锚定 commit 不可达必须失败）、VSIX 打包上传（`npx @vscode/vsce package --no-dependencies`，产物排除清单在 `.vscodeignore`，体积红线归 #24）。触发与步骤链由 `test/ci-workflow.test.ts` 钉住。
 - **vendor 快照纪律**：`types/vendor/` 是从 vsidian 仓生成的类型快照（文件头标注来源 commit），**禁止手改**；源码只允许 `import type` 消费（`test/scaffold.test.ts` 钉住）。升级锚定提交：改 `scripts/vendorSdkTypes.mjs` 的 `DEFAULT_COMMIT` 重跑生成，快照与脚本同 PR。生成机制与选型见 [ADR-0001](docs/adr/0001-scaffold-build-bridge-and-vendor.md)。
 - **源码导入纪律**：`@codemirror/*` 仅 type-only 导入（运行时实例经 `sdk.experimental.cm6` 取得）；宿主入口的 `activate`/`deactivate` 必须 `module.exports` 显式赋值（esbuild 死代码消除坑）；导入语句单行书写（结构契约测试的判定粒度）。
 - **清单红线**：`vsidianAddon.api` 与 `experimental` 各项**必须用 `^` 范围**（精确版本在宿主升级即判不兼容，测试钉死）；依赖版本一律精确无前缀。

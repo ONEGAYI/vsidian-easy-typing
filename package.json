@@ -5,6 +5,10 @@
   "description": "Input experience add-on for Vsidian: smart CJK/Latin spacing, punctuation and pair conversion, editable enhancements, and a customizable text transform rule engine. Ported from easy-typing-obsidian.",
   "version": "0.1.0",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ONEGAYI/vsidian-easy-typing.git"
+  },
   "engines": {
     "vscode": "^1.82.3"
   },
