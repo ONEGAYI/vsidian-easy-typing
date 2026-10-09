@@ -22,3 +22,11 @@ Vsidian（VSCode 扩展 [onegayi.vsidian](https://github.com/ONEGAYI/vsidian)）
 - **产物形态**：独立 VSCode 扩展（VSIX）——宿主 CJS（node18 / external vscode）+ 编辑器页面与设置页面 chrome114 IIFE（对齐 VSCode 1.82.3 下界），`vsidianAddon` 清单声明 + `extensionDependencies`。
 - **构建桥**：复制 vsidian `test/examples/` 模式（`@codemirror/*` 值导入拒绝 + 产物 CM6 标记扫描双防线）；SDK 类型 vendor 快照（标注来源 `vsidian@<commit>`，re-vendor 流程脚本化）。
 - **依赖**：一律精确版本，提交 lockfile。
+
+## 工程设施（#22 落档）
+
+- **命令速查**：`npm run compile` = 三产物构建（`npm run build`）+ `tsc --noEmit`；`npm run test`（vitest 冒烟与结构契约）；`npm run vendor:sdk` / `npm run vendor:check`（SDK 类型快照生成 / 漂移校验）。构建即双防线：SDK 构建桥拒绝 `@codemirror/*` 值导入 + 逐产物扫描（CM6 运行时标记 / vsidian 内部路径 / 裸 require）。
+- **vendor 快照纪律**：`types/vendor/` 是从 vsidian 仓生成的类型快照（文件头标注来源 commit），**禁止手改**；源码只允许 `import type` 消费（`test/scaffold.test.ts` 钉住）。升级锚定提交：改 `scripts/vendorSdkTypes.mjs` 的 `DEFAULT_COMMIT` 重跑生成，快照与脚本同 PR。生成机制与选型见 [ADR-0001](docs/adr/0001-scaffold-build-bridge-and-vendor.md)。
+- **源码导入纪律**：`@codemirror/*` 仅 type-only 导入（运行时实例经 `sdk.experimental.cm6` 取得）；宿主入口的 `activate`/`deactivate` 必须 `module.exports` 显式赋值（esbuild 死代码消除坑）；导入语句单行书写（结构契约测试的判定粒度）。
+- **清单红线**：`vsidianAddon.api` 与 `experimental` 各项**必须用 `^` 范围**（精确版本在宿主升级即判不兼容，测试钉死）；依赖版本一律精确无前缀。
+- **目录**：`src/` 三入口（extension 宿主 / page-editor 编辑器页 / page-settings 设置页）+ `tools/` 构建桥 + `scripts/` 工具脚本 + `types/vendor/` 快照 + `test/` 冒烟；规格落 `docs/specs/`（约定见其 README），领域词汇先登记 [CONTEXT.md](CONTEXT.md) 再入票。

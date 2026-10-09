@@ -25,6 +25,17 @@
 
 上游 [easy-typing](https://github.com/Yaozhuwa/easy-typing-obsidian)（MIT，作者 Yaozhuwa）五年持续打磨的成果是本项目的起点，功能语义以其文档与源码为事实源。本项目同样采用 MIT 许可并保留上游版权声明（LICENSE 随 [#22](https://github.com/ONEGAYI/vsidian-easy-typing/issues/22) 落地）。
 
+## 开发
+
+```bash
+npm install        # 安装 devDependencies（精确版本，无运行时依赖）
+npm run compile    # 三产物构建（宿主 CJS + 编辑器/设置页 chrome114 IIFE）+ tsc 类型检查
+npm run test       # vitest 冒烟与结构契约
+npm run vendor:check  # 校验 types/vendor SDK 类型快照无漂移
+```
+
+工程设施细节（构建桥双防线、vendor 类型快照、清单红线）见 [AGENTS.md](AGENTS.md) 的「工程设施」节与 [ADR-0001](docs/adr/0001-scaffold-build-bridge-and-vendor.md)。
+
 ## 相关
 
 - 宿主扩展：[vsidian](https://github.com/ONEGAYI/vsidian)（类 Obsidian 的 Markdown 双视图编辑器）
