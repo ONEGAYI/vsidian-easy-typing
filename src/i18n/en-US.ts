@@ -6,6 +6,9 @@ import type { Messages } from './index'
 export const enMessages: Messages = {
   commands: {
     pastePlainTitle: 'Paste as plain text (skip auto formatting)',
+    // Issue #2 comment toggle title (upstream locale commands.toggleComment,
+    // annotated to distinguish from the platform built-in HTML comment op)
+    toggleCommentTitle: 'Toggle comment (by language in code blocks, %% in body text)',
   },
   settings: {
     tabout: {

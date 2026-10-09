@@ -22,5 +22,6 @@
 - [smart-paste.md](smart-paste.md)——SmartPaste 智能粘贴续接与纯文本粘贴标记（工单 #12）：列表/引用前缀续接算法、粘贴拦截（实验 cm6 domEventHandlers 让位序）、纯文本粘贴命令（平台稳定 API + #417 规范键序）与平台粘贴冲突核对。
 - [new-line-below.md](new-line-below.md)——NewLineBelow 当前行下方新建行（工单 #13）：Mod+Enter 行尾插入 + 列表/引用前缀延续算法（列位置语义核对结论）、抢先层接管平台 defaultKeymap `insertBlankLine` 的仲裁核对、`newLineBelow` 设置门；严格换行（同票决策项）裁剪至 [ADR-0002](../adr/0002-strict-line-break-mapping.md) 待用户决策。
 - [auto-format.md](auto-format.md)——自动格式化（工单 #26）：语言对间距/前缀词典/自动大写/软空格符号的行级算法（上游差异化验证矩阵）、onInput 管线（格式化当前行口径、#27 保护区注入缝、作用域文本降级）与 06-autoformat 行为族（input-rules 独占组链序、#12 粘贴联动）。
+- [comment-toggle.md](comment-toggle.md)——注释切换命令（工单 #2）：语言注释符表（上游 26 键逐条）与行/块切换、Markdown `%%` 切换、围栏语言感知复用 #25 降级版（#5 升级点）、平台键位冲突核对（与内建 htmlComment 同弦并存）与视图登记表共享决策（供 #28 对照）。
 
 里程碑与工单总览见 [README](../../README.md) 与 [Issues](https://github.com/ONEGAYI/vsidian-easy-typing/issues)。
