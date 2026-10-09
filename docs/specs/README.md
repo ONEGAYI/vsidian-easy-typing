@@ -11,7 +11,7 @@
 
 ## 索引
 
-- [rule-engine.md](rule-engine.md) —— 规则引擎内核与内置规则（#1：三触发类建模、Input 类执行内核、20 条内置数据、匹配矩阵；#14 起 Tabstop 语法解析已接入）
+- [rule-engine.md](rule-engine.md) —— 规则引擎内核与内置规则（#1：三触发类建模、Input 类执行内核、20 条内置数据、匹配矩阵；#14 起 Tabstop 语法解析已接入）+ 行为链接入（#25：onInput 触发管线、五功能族注册与默认链序、joinPrevious 全量核对、多选区结论与设置门核对）。
 - [rules-storage.md](rules-storage.md)——规则存储与数据链（#14）：builtin/user/state 三文件持久化、宿主 storage 单写点服务、外部变化自动重载（watcher + revision 轮询）与通道协议（双作用域）。
 - [settings-mapping.md](settings-mapping.md)——设置字段映射表（#3）：上游 30 字段四去向、进 schema 的 23 项总表、形态变换口径与实施落档约定；默认值单一事实源在 `src/settings/defaults.ts`。
 - [tabout.md](tabout.md)——Tab 跳出配对符（工单 #7）：22 对配符栈匹配算法、Tab 按键拦截（实验 cm6 keymap 落穿层）与平台 Tab 冲突核对。

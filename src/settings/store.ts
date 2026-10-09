@@ -23,6 +23,12 @@ export const SETTINGS_TOPIC = {
   clearOverride: 'easyTyping.settings.clearOverride',
 } as const
 
+/** 规则错误通知通道 topic（工单 #25）：页面侧规则引擎 reportError 上报 →
+ * 宿主显示 i18n 警告。payload { ruleId: string; message: string }，返回
+ * null（尽力而为通道，页面侧节流）。宿主与页面共用同一常量源（对齐
+ * SETTINGS_TOPIC 的落位约定）。 */
+export const RULE_ERROR_TOPIC = 'easyTyping.ruleError.notify'
+
 /** 门面对外视图（生效值只读） */
 export type EffectiveSettingsView = Readonly<EffectiveEasyTypingSettings>
 
