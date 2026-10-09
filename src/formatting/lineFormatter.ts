@@ -13,6 +13,9 @@
 // - 行级重排的 \0 光标标记、$\\qquad$ 计为文本空隔、链接智能空格双分支
 //   等行为语义逐行保留。
 import { InlinePart, InlineType, SpaceState, splitLineIntoParts, type ProtectedInlineRange } from './inlineParts'
+
+/** 保护区注入缝类型再导出（管线与接入层经 lineFormatter 单一入口消费） */
+export type { ProtectedInlineRange }
 import {
   applyLanguagePairSpacing,
   capitalizeFirstLetter,

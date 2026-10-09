@@ -131,6 +131,12 @@ export const enMessages: Messages = {
       desc: 'Typing > or 》 converts to the Markdown quote marker; a space is added after the marker',
       examples: ['line-start > → > '],
     },
+    // Issue #26 auto-format family (upstream Formater: pair spacing / prefix dict / capitalization / soft space)
+    autoFormat: {
+      name: 'Auto format on typing (CJK-Latin spacing, etc.)',
+      desc: 'Insert spaces at language-pair boundaries (e.g. CJK-Latin); prefix-dictionary words stay unspaced inside; capitalization and soft-space symbols are configured on the settings page (an input handled by the rule chain is not formatted)',
+      examples: ['中文a → 中文 a', 'n8n kept unspaced inside', '中文`a` → 中文 `a`'],
+    },
   },
   // Rule error notification template (issue #25; {id} rule id, {message} engine-reported detail)
   ruleError: {
