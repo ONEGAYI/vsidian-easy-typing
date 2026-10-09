@@ -1,4 +1,4 @@
-# 规则引擎内核与内置规则（工单 #1）+ 行为链接入（工单 #25）+ Delete/SelectKey 触发接入（工单 #9）+ 函数替换体预注册（工单 #17）
+# 规则引擎内核与内置规则（工单 #1）+ 行为链接入（工单 #25）+ Delete/SelectKey 触发接入（工单 #9）+ 函数替换体预注册（工单 #17）+ compose 去重核验（工单 #6）
 
 规则引擎纯逻辑内核（三触发类建模、Input 类执行）与内置规则数据全量移植。事实源模块：`src/rules/rule-engine.ts`（内核）、`src/rules/default-rules.ts`（数据）与 `src/rules/function-table.ts`（#17 预注册函数表）；测试矩阵：`test/rule-engine-core.test.ts`（机制）、`test/rules-matrix.test.ts`（内置规则）与 `test/function-table.test.ts`（函数表）。#25 行为链接入：`src/ruleBehaviorPipeline.ts`（onInput 触发管线）、`src/ruleBehaviorIntercept.ts`（功能族注册）、`src/ruleScopeFallback.ts`（作用域判定降级）；测试：`test/ruleBehaviorPipeline.test.ts`、`test/ruleBehaviorIntercept.test.ts`、`test/ruleScopeFallback.test.ts`。#9 Delete/SelectKey 触发接入：管线函数与族注册落在上述同两模块（`planDeleteRuleModification` / `planSelectKeyRuleModification` + `06-delete-rules` / `07-selectkey-rules` 族），页面接线在 `src/page-editor.ts` 的 #9 增量块。
 
@@ -120,7 +120,7 @@
 ### compose 事务与 #6/#26 挂接面
 
 - **本票直接消费**：`userEvent='input.type.compose'`（IME 定稿，#399）与 `input.type` 同路径进管线（引擎对两者不区分——`changeType` 仅用于 Tab 触发模式判定）。上游对 compose 定稿与普通输入同样共用 `tryProcessInput`。
-- **#6（compose 去重）挂接点**：`userEvent` 原样保留在管线入口（`RuleInputPipelineContext`），管线为纯函数（无跨调用状态）——#6 可在管线外层包裹去重判定，零侵入。
+- **#6（compose 去重）定稿结论**：核验平台实现（vsidian `liveInstance.ts` @ origin/main）后确认 IME 定稿不会双发——插件侧**不设**显式去重，理由、防御性测试与 IME 验证口径见下文「#6 compose 去重核验」节。`userEvent` 原样保留在管线入口（`RuleInputPipelineContext`）的设计保留：纯函数形态（无跨调用状态）正是「无需去重」的前提，也为未来万一需要包裹保留零侵入缝。
 - **#26（格式化管线）挂接点**：中英空格等自动格式化归上游 `Formater`（非规则引擎），本票集成测试钉住「中文后键入半角字母规则面零命中」基线；#26 经同一 `RuleInputPipelineContext` 形状另注册行为族消费，管线入口不改。
 - **#9（Delete/SelectKey）挂接点**：`pipelineConsumesUserEvent` 只放行 `input.type` / `input.type.compose`；delete.* 事件与选区替换形态（replaced 非空）在本链返回 null。#9 已随独立管线函数接入（见下节），复用 `applyResultToPlan` 与 `detectScopeFromText`，SelectKey 的包裹目标从 `AddonInputContext.replaced` 读回后组 TxContext（`key` + `selection`）。
 
@@ -176,3 +176,44 @@ Input 管线（`planInputRuleWithTabstops`）新增 `replaced !== null → retur
 - **`delete.selection / cut / line` 光标近似**：虚拟光标统一取区间右端（backward 口径）；上游未实现这三类，无法对照。联动删除规则面向「删空对的一端」场景，选区/整行删除下命中与否均由引擎左右正则自然裁定。
 - **IME 定稿不适用 SelectKey**：平台对 compose 补驱动 replaced 恒 null（组合事务先于 compositionend，替换侧无法归因）——组合输入选中文本的包裹不可达，属平台边界，非本插件可修。
 - **CSP 函数体规则边界延续**：#25 的 #405 处置对 #9 同样适用——`autopair-delete` 与三条 sel-wrap 函数体规则（sF 旗标）在真实 webview 装载期编译失败降级；vitest 环境全量验证（本票矩阵即此形态）。`builtin-sel-wrap-backtick`（'s' 旗标，字符串替换体）不受影响——真实页面选中包裹仅 `·` 键可用，#17 预注册函数表落地后消除。#21 按此口径核对。
+
+## #6 compose 去重核验与 IME 验证口径
+
+本票原始定位（实验 cm6 入口自建 compose 感知管线）随 vsidian#399 在稳定行为链实现定稿驱动而作废，行为链接入已由 #25 承载（`pipelineConsumesUserEvent` 直接消费 `input.type.compose`，净定稿文本经 `inputText` 直达引擎）。本票收口剩余三点：同一定稿只触发一次的去重核对（票面 open question）、浏览器 IME 端到端验证口径（交付口径文档，真实执行归 #21）、实验 cm6 依赖清单核对。
+
+### 去重核对结论：平台保证单发，插件侧不设防线
+
+事实源：vsidian `src/webview/liveInstance.ts` @ origin/main（2026-10-09 核对）。「同一 IME 定稿同时产生 `input.type.compose` 与普通 `input.type` 两个驱动」的窗口**不存在**，依据三面：
+
+- **两条驱动路径物理分离**：普通键入驱动走事务路径（`maybeDriveAddonBehaviors`，updateListener 逐事务调用），IME 定稿驱动走 `compositionend` DOM 钩子补发（`maybeDriveAddonBehaviorsForComposeCommit`）——无共享入口，不存在同一路径双发。
+- **事务路径双重门**：`userEvent.includes('.compose')` 显式排除在前；组合期门控（`composing` / `blankComposition` 在场）在后。Chromium 实证（平台 #399，CDP）：定稿事务（`insertCompositionText`）**先于** `compositionend` 派发、恒处于组合期门控窗口内——即便定稿事务的 userEvent 标记异常缺失，组合期门控也兜住。两道门至少一道拦截。
+- **补发路径单次 + 端到端实证**：每次 `compositionend` 至多补发一次（净定稿文本 `event.data`，微任务派发）。平台 `test/browser/addonT07Behaviors.mjs` 场景 4 以真实 CDP IME 流（`Input.imeSetComposition` + `Input.insertText`）断言「定稿驱动计数恰好 +1、inputText 为定稿文本」。
+
+`compositionend` 之后的普通 `input.type` 事务（定稿后按键、个别 IME 提交后的修正输入）是**独立键入**，本应各自驱动规则——不属同一定稿的双发，插件不拦截。
+
+**插件侧不设显式去重**（如最近定稿文本 + 时间窗比对）：管线为纯函数、无跨调用状态，「无需去重」正是该设计的前提；引入比对状态面反而制造新的失真源。防御性钉住以测试承载（`test/ruleBehaviorPipeline.test.ts`「工单 #6」节，3 例）：
+
+- **单次驱动内三管线对 compose 互斥**：Delete 管线白名单不含 compose（即便异常携带删除侧 replaced 形态）；SelectKey 管线仅认 `input.type`（即便异常携带 replaced）。compose 事件只进 Input 管线——独占组 `input-rules`「一条输入至多一族生效」的结构前提。
+- **异常双发下的行为安全**：第一次命中产计划后，修饰事务在链首次 `applyEdits` 的 await 求值时**同步 dispatch**（平台时序保证，早于任何后续驱动微任务）——万一同一定稿又以普通 `input.type` 到达，第二次以演进后文档进管线不再命中（测试以 fw2hw-double 钉住：`。。` 命中转 `.` 后，重复驱动返回 null），无双重转换。
+
+### 浏览器 IME 端到端验证口径（#21 人工验证落点）
+
+插件仓无浏览器测试设施，本票交付操作口径（对齐 vsidian CDP `Input.imeSetComposition` 模式——真实驱动 compositionstart..compositionend），真实执行归 #21：
+
+1. **宿主准备**：VSIX 安装态（或 F5 dev 宿主）打开 Markdown 文档，Vsidian 与 easy-typing 组件均启用，Live 模式焦点在正文（非表格网格、非代码块）。
+2. **候选期零误触**：CDP `Input.imeSetComposition`（如 `{ text: '，', selectionStart: 1, selectionEnd: 1 }`）→ 停顿观察：文档无任何规则修饰（无标点转换、无配对展开）——组合中间态不是行为输入。
+3. **拼音定稿不误触普通词**：`Input.imeSetComposition`（候选串）→ `Input.insertText`（定稿文本，如 `你好`）→ 定稿照常上屏、无修饰（普通中文词不命中 20 条内置规则）。
+4. **定稿标点转换（核心验收）**：仿平台 addonT07 场景 4 的组合流驱动连续定稿两个全角句号 → 预期 `。。` 转为 `.`（fw2hw-double 经 compose 路径命中，与普通键入同结果）；候选期中（`imeSetComposition` 后、`insertText` 前）核对零修饰。
+5. **取消路径**：`imeSetComposition` 后以 CDP `Input.dispatchKeyEvent`（Esc）取消组合 → 无驱动、无修饰、无残留。
+6. **每步后核对两件事**：文本面（转换/配对正确且只发生一次——「只触发一次」的观察口径）；撤销面（一次 Ctrl+Z 回退修饰、再撤回退定稿输入）。
+
+CDP 用法注意（平台 `embedLiveCloseout.mjs` 实证注释）：`imeSetComposition` 的文本以已提交形态落 DOM（无真实 preedit 渲染）——组合流不要在 `imeSetComposition` 之后再对同一文本 `insertText`（会双份）；「候选期 → 定稿」两段式以「`imeSetComposition` 停顿 → `insertText` 定稿」表达。
+
+### 实验 cm6 依赖清单核对结论
+
+`package.json` `vsidianAddon.experimental` 现声明两项，均为其他票所需，**无本票（IME 自建管线）残留**：
+
+- `cm6: ^1.1.0`——消费者：#7 Tabout keymap、#8 BetterBackspace、#15 tabstop 导航、#12 粘贴 domEventHandlers、#18 折叠回车 keymap 与视图跟踪扩展（`src/page-editor.ts` 统一取 `sdk.experimental.cm6`）。
+- `headingFold: ^1.0.0`——消费者：#18 foldEnter（折叠判定经 `sdk.experimental.headingFold.folds()`）。
+
+本票 IME 语义全部经稳定行为链（`sdk.behaviors.register` 的 onInput 消费 `input.type.compose`）：不经 cm6、不注册 composition 钩子、不自建 updateListener 管线——清单无本票增项，亦无需移除项。

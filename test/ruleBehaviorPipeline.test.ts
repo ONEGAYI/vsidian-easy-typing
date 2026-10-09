@@ -456,6 +456,76 @@ describe('SelectKey 管线：触发面门控与边界', () => {
   })
 })
 
+// ===== 工单 #6：compose 去重核验（平台单发结论 + 双发防御性钉住） =====
+//
+// 平台核验结论（vsidian liveInstance.ts @ origin/main，2026-10-09 核对）：
+// IME 定稿不会双发——两条驱动路径物理分离且互斥：
+// 1. 事务路径（maybeDriveAddonBehaviors）双重门：userEvent 含 '.compose'
+//    显式排除在前，组合期门控（composing / blankComposition 在场）在后
+//    ——Chromium 实证定稿事务先于 compositionend 派发、恒处于组合期
+//    窗口内，两道门至少一道拦截；
+// 2. compositionend 钩子（maybeDriveAddonBehaviorsForComposeCommit）：
+//    每次组合结束至多补发一次 'input.type.compose'（净定稿文本）。
+// 端到端实证：平台 test/browser/addonT07Behaviors.mjs 场景 4（真实 CDP
+// Input.imeSetComposition + insertText）断言「定稿驱动恰好一次」。compositionend
+// 之后的普通 input.type 事务是独立键入（如定稿后按键），本应各自驱动——
+// 不属同一定稿的双发。插件侧无需显式去重（管线纯函数、无跨调用状态）；
+// 本节测试钉住两道边界：同一次驱动内三管线对 compose 互斥，与异常双发
+// 下修饰已生效的重复驱动不二次改写（真实时序：链首次 applyEdits 在其
+// await 求值时同步 dispatch 修饰事务，早于任何后续驱动微任务——第二次
+// 驱动到达时文档已演进）。
+
+describe('工单 #6：compose 事件单次驱动内三管线互斥（不重复处理）', () => {
+  const engine = engineOf([...DELETE_RULE_IDS, ...SELECTKEY_RULE_IDS, 'builtin-fw2hw-double'])
+
+  it('Delete 管线白名单不含 compose：input.type.compose（即便携带删除侧形态）→ null', () => {
+    expect(
+      planDeleteRuleModification(
+        engine,
+        inputCtx('。。', 2, 'input.type.compose', '。'),
+      ),
+    ).toBeNull()
+    expect(
+      planDeleteRuleModification(
+        engine,
+        inputCtx('。', 0, 'input.type.compose', '', [{ anchor: 0, head: 0 }], { from: 0, to: 2, text: '。。' }),
+      ),
+    ).toBeNull()
+  })
+
+  it('SelectKey 管线仅认 input.type：compose 事件即便异常携带 replaced → null', () => {
+    // 平台对 compose 补驱动 replaced 恒 null（组合事务先于 compositionend，
+    // 替换侧无法归因）——本例防御性模拟「上游异常给 compose 事件携带
+    // replaced」的形态，钉住 userEvent 门独立于 replaced 形态生效
+    const r = planSelectKeyRuleModification(
+      engine,
+      inputCtx('·', 1, 'input.type.compose', '·', [{ anchor: 1, head: 1 }], { from: 0, to: 1, text: 'x' }),
+    )
+    expect(r).toBeNull()
+  })
+})
+
+describe('工单 #6：异常双发下的行为安全（修饰已生效后的重复驱动不二次改写）', () => {
+  it('同一 IME 定稿双发（compose 补发 + 普通事务重复到达）：第二次以演进后文档进管线 → 不再命中', () => {
+    const engine = engineOf(['builtin-fw2hw-double'])
+    // 第一次：compositionend 补发路径（input.type.compose，净定稿文本）
+    const first = planInputRuleModification(engine, inputCtx('。。', 2, 'input.type.compose', '。'))
+    expect(first?.changes).toEqual([{ offset: 0, length: 2, text: '.' }])
+    // 平台应用计划后的文档演进（changes[0] 落盘）
+    const change = first?.changes[0]
+    expect(change).toBeDefined()
+    const applied =
+      change !== undefined
+        ? '。。'.slice(0, change.offset) + change.text + '。。'.slice(change.offset + change.length)
+        : ''
+    expect(applied).toBe('.')
+    // 万一同一定稿又以普通 input.type 双发：第二次驱动到达时修饰事务已
+    // 落盘（平台时序保证），以演进后快照进管线——文档中已无全角句号，
+    // 规则不再命中 → null，无第二次改写（无双重转换）
+    expect(planInputRuleModification(engine, inputCtx(applied, 1, 'input.type', '。'))).toBeNull()
+  })
+})
+
 // ===== 工单 #27：保护区 × 规则触发（「用户规则尊重保护区」的管线注入位） =====
 //
 // 语义锚点：上游 rule_processor.ts:22-29——检查列 = 事件类为 input（前缀）

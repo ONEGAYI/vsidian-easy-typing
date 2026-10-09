@@ -10,8 +10,10 @@
 // 组合中间态 / 表格格区 / 代码上下文 / paste·drop·undo）不在此重复。
 //
 // 【userEvent 原样保留在入口】区分普通键入（input.type）与 IME 定稿
-// （input.type.compose）的信息不在此丢失——#6 compose 去重、#26 格式化
-// 管线都从同一入口形状挂接。
+// （input.type.compose）的信息不在此丢失——#6 核验结论：平台保证定稿
+// 单发（事务路径双重门与 compositionend 补发路径物理分离），插件侧
+// 无需去重（管线纯函数形态即前提，结论与防御测试见规格「#6 compose
+// 去重核验」节）；#26 格式化管线从同一入口形状挂接。
 //
 // 【选区语义】快照 selections 不含主选区标记（平台 AddonEditorSnapshot
 // 不携带 mainIndex）：管线取首个（最左）选区，上游取 asSingle().main

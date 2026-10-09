@@ -11,7 +11,7 @@
 
 ## 索引
 
-- [rule-engine.md](rule-engine.md) —— 规则引擎内核与内置规则（#1：三触发类建模、Input 类执行内核、20 条内置数据、匹配矩阵；#14 起 Tabstop 语法解析已接入）+ 行为链接入（#25：onInput 触发管线、五功能族注册与默认链序、joinPrevious 全量核对、多选区结论与设置门核对）+ Delete/SelectKey 触发接入（#9：delete.* 联动删除与选区替换包裹管线、事务前重建与坐标换算、06/07 族与独占组结论、Input 管线 replaced 门）+ 函数替换体预注册（#17：函数表与引用形态、规则语法基础节，决策见 ADR-0003）。
+- [rule-engine.md](rule-engine.md) —— 规则引擎内核与内置规则（#1：三触发类建模、Input 类执行内核、20 条内置数据、匹配矩阵；#14 起 Tabstop 语法解析已接入）+ 行为链接入（#25：onInput 触发管线、五功能族注册与默认链序、joinPrevious 全量核对、多选区结论与设置门核对）+ Delete/SelectKey 触发接入（#9：delete.* 联动删除与选区替换包裹管线、事务前重建与坐标换算、06/07 族与独占组结论、Input 管线 replaced 门）+ 函数替换体预注册（#17：函数表与引用形态、规则语法基础节，决策见 ADR-0003）+ compose 去重核验（#6：平台单发结论——事务路径双重门与 compositionend 补发路径物理分离、插件不设去重、三管线互斥与双发防御测试、浏览器 IME 端到端验证口径与实验 cm6 清单核对）。
 - [rules-storage.md](rules-storage.md)——规则存储与数据链（#14）：builtin/user/state 三文件持久化、宿主 storage 单写点服务、外部变化自动重载（watcher + revision 轮询）与通道协议（双作用域）。
 - [rules-ui.md](rules-ui.md)——规则管理设置页自绘（#16）：mountRoot 内规则列表/编辑表单/测试编辑器/导入导出，写后刷新策略、内置规则边界（逐条开关走平台行为冲突管理）与函数替换体引用选择（#17 解锁）。
 - [settings-mapping.md](settings-mapping.md)——设置字段映射表（#3）：上游 30 字段四去向、进 schema 的 24 项总表（23 上游映射键 + #13 新增本仓键 `newLineBelow`）、形态变换口径与实施落档约定；默认值单一事实源在 `src/settings/defaults.ts`。
