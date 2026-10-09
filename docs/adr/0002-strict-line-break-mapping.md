@@ -1,7 +1,7 @@
 # ADR-0002：严格换行（StrictModeEnter）的 Vsidian 映射——三方案对比与决策门槛
 
-- 状态：**提议（待用户决策）**——工单 #13 产品决策门槛项；决策通过前不实施，本文档即交付物
-- 日期：2026-10-09（工单 #13）
+- 状态：**已接受（C 先行 + 插件侧等待接线）**——2026-10-09 用户决策：平台先开渲染设置（ONEGAYI/vsidian#423），编辑侧三模式补偿转 wait-for-upstreaming 增量票（#30），#423 落地后含 `strictLineBreaks` 门控实施
+- 日期：2026-10-09（工单 #13；同日决策落账）
 - 关联：上游 `src/keyboard_handlers.ts:222-297`（enterStrictLineBreak）与 `:728-762`（goNewLineAfterCurLine 严格分支）；设置键 `strictModeEnter`/`strictLineMode` 已在 #3 schema（默认 `false`/`'enter_twice'`，本票未接线生效逻辑）
 
 ## 一、上游语义（代码核实口径）
@@ -99,20 +99,20 @@
 （对齐上游 `strictLineBreaks` 条件的原意）。若用户不接受文本改写且平台
 短期无 C 计划，则按 A 裁剪并留档本文理由。
 
-## 四、决策后的影响
+## 四、决策记录（2026-10-09，覆盖 §三预设分支）
 
-- 选 B：另开增量票（实施前置 = §三.B.2 仲裁定案 + #21 端到端含严格模式
-  键序）；本仓 `newLineBelow.ts` 的 Mod+Enter 严格分支预留接点（当前注释
-  已标）。
-- 选 A：本 ADR 转为「已接受（裁剪）」，`strictModeEnter`/`strictLineMode`
-  两键的去留（保留占位或移出 schema）随裁剪票定案。
-- 选 C：本 ADR 转为「已接受（平台路线）」，追踪 vsidian 仓 feature request；
-  B 不再实施。
+用户选定路线：**C 先行 + 插件侧等待接线**（非 §三任一单选）——
+
+- **平台票**：ONEGAYI/vsidian#423（阅读渲染 breaks 用户设置，对齐 VSCode `markdown.preview.breaks` 形态）
+- **插件票**：#30（编辑侧三模式补偿，标 `wait-for-upstreaming`，等待 #423）——即 §三.B 的实施内容，但门控补「仅严格渲染生效」判定（#423 的 breaks = false 时），对齐上游 `strictLineBreaks` 条件原意
+- **生效顺序**：#423 落地 → #30 re-vendor + 实施三模式 + 渲染态门控；此前 `strictModeEnter`/`strictLineMode` 两键保持注册未接线
+
+§三.A/§三.C 原文保留作对比档案；§四原预设分支描述已被本节覆盖。
 
 ## 五、给 #21（浏览器端到端）的提示
 
 无论决策如何，本票已交付的「下方新建行」需要 #21 覆盖：真实键盘
 Mod-Enter 键序（含 Ctrl+Enter/Cmd+Enter 双平台形态）、撤销单笔回退、
 `newLineBelow` 设置开关运行时翻转（开 = 前缀延续版、关 = 回退平台
-insertBlankLine 的行为对照）、多光标透传路径。若决策选 B，#21 另需覆盖
-Enter 三模式键序与「下一行非空白不处理」的段中边界。
+insertBlankLine 的行为对照）、多光标透传路径。#30（决策路线的编辑侧补偿）
+实施时，#21 另需覆盖 Enter 三模式键序与「下一行非空白不处理」的段中边界。
