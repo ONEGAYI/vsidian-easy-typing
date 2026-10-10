@@ -1,4 +1,4 @@
-// vendored from ONEGAYI/vsidian@7651616e466d4950ee40880079634e3a78424162 — src/shared/addonEditApi.ts
+// vendored from ONEGAYI/vsidian@9107e2f0554d8b5c1637d16e1d1b375543b01c1c — src/shared/addonEditApi.ts
 // 类型快照：由 scripts/vendorSdkTypes.mjs 自动生成——仅保留类型声明与被
 // 类型引用的常量，值级导出（校验函数、运行时数据）已剥离。不要手改；
 // re-vendor：npm run vendor:sdk（升级锚定提交改脚本 DEFAULT_COMMIT 后重跑）。
@@ -121,4 +121,14 @@ export interface AddonViewsFacet {
   get(instanceId: string): AddonViewHandle | null
   onCreated(callback: (info: AddonViewInfo) => void): () => void
   onDisposed(callback: (info: AddonViewInfo) => void): () => void
+}
+
+/** #426 视图身份反查面（experimental.viewIdentity 的内容）：CM6
+ *  EditorView → 平台实例 ID。keymap/扩展回调拿到的是 view，按 ID 寻址
+ *  的 API（headingFold 等）经此换算——不再依赖「扩展槽仅挂主正文」的
+ *  装配范围推定。方法为闭包实现（无 this 依赖，解构裸传安全） */
+export interface AddonViewIdentityFacet {
+  /** 反查实例 ID：装配在平台 Live 实例（main/embed）上的 view 返回其
+   *  views 面句柄 ID；未装配身份的 view（非平台实例或尚未注册）null */
+  instanceIdOf(view: import('@codemirror/view').EditorView): string | null
 }

@@ -45,9 +45,15 @@ describe('manifest 契约（vsidianAddon 清单与依赖锁定）', () => {
   it('vsidianAddon 声明：api 与 experimental 范围一律用 ^', () => {
     expect(pkg.vsidianAddon.manifestVersion).toBe(1)
     expect(pkg.vsidianAddon.api).toBe('^1.0.0')
-    // #18 起消费 experimental.headingFold（folds() 折叠查询；版本事实源
-    // 是 vsidian addonApiCatalog 实验表，范围必须 ^）
-    expect(pkg.vsidianAddon.experimental).toEqual({ cm6: '^1.1.0', headingFold: '^1.0.0' })
+    // #18 起消费 experimental.headingFold（folds() 折叠查询）；防御链拆除
+    //（vsidian PR #432 对接线）起消费 experimental.viewIdentity（命令目标
+    // 句柄与折叠寻址的反查面）。版本事实源是 vsidian addonApiCatalog 实验
+    // 表，范围必须 ^
+    expect(pkg.vsidianAddon.experimental).toEqual({
+      cm6: '^1.1.0',
+      headingFold: '^1.0.0',
+      viewIdentity: '^1.0.0',
+    })
   })
 
   it('宿主依赖与下界对齐', () => {

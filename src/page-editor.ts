@@ -3,7 +3,6 @@
 // test/examples/input-behavior/src/page-editor.ts。
 import { defineAddonPage } from 'vsidian-addon-sdk'
 import type { VsidianAddonPageSdk } from '../types/vendor/shared/addonPage'
-import type { EditorView } from '@codemirror/view'
 import { createBetterBackspaceCommand } from './backspaceIntercept'
 import { buildToggleCommentCommandDefinition, createToggleCommentCommandHandler } from './commentToggle'
 import { createCollapseEnterGate, createFoldEnterCommand } from './foldEnter'
@@ -231,20 +230,13 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
 
   // 「选择当前块」命令：平台稳定 commands API（统一快捷键管理 + 命令
   // 面板；默认未绑定——上游无默认热键，绑定入口由平台快捷键管理承担）。
-  // 焦点视图优先（编辑器内触发），命令面板触发（焦点在宿主 UI）回退主
-  // 视图快照路径。
+  // 目标视图句柄由平台命令回调携带（PR #432）：快照决策 + setSelection，
+  // 无活动视图无动作。
   const commands = sdk.commands
   if (commands !== undefined) {
     const registered = commands.register(
       buildSelectBlockCommandDefinition(pickMessages(navigator.language)),
-      createSelectBlockCommandHandler({
-        cm6,
-        views: sdk.views,
-        getFocusedView: () => {
-          const active = document.activeElement
-          return active instanceof HTMLElement ? cm6.view.EditorView.findFromDOM(active) : null
-        },
-      }),
+      createSelectBlockCommandHandler({ cm6 }),
     )
     if (!registered.ok) {
       // 普通 API 拒绝不算故障：经 debugLog 留痕便于诊断（logging.ts 约定）
@@ -275,18 +267,18 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
     }),
   )
 
-  // 视图捕获（命令回调无 view 入参）：ViewPlugin 登记挂载本组件扩展的在
-  // 场编辑器——当前平台附加组件扩展槽仅挂主正文 Live 实例（嵌入/悬停视图
-  // 不经此登记，登记面以平台装配事实为准），命令按聚焦者优先取目标。
-  const viewRegistry = createEditorViewRegistry()
+  // 视图捕获（命令目标句柄 → 本页 CM6 视图解析）：ViewPlugin 登记挂载本
+  // 组件扩展的在场编辑器——当前平台附加组件扩展槽仅挂主正文 Live 实例
+  //（嵌入/悬停视图不经此登记，登记面以平台装配事实为准）；命令回调的
+  // 目标句柄（PR #432 平台解析）经视图身份反查匹配登记视图。identityOf
+  // 经箭头包装注入（不裸传方法引用，规避 this 绑定假设）；宿主不提供
+  // 反查面（清单已声明 viewIdentity，缺席即平台违约）时登记表恒解析
+  // null，命令族按登记面外目标口径降级。
+  const viewIdentity = sdk.experimental.viewIdentity
+  const viewRegistry = createEditorViewRegistry(
+    (view) => (viewIdentity !== undefined ? viewIdentity.instanceIdOf(view) : null),
+  )
   sdk.registerExtension(createViewTrackerExtension(cm6.view.ViewPlugin, viewRegistry))
-  // 焦点 CM6 视图探测（findFromDOM 对嵌入/悬停实例同样命中）：供命令族做
-  // 「聚焦视图不在登记表 = 嵌入实例」的拒绝口径（审查 B-F3）——聚焦嵌入
-  // 视图时命令拒绝执行，不误写主文档兜底。
-  const getFocusedView = (): EditorView | null => {
-    const active = document.activeElement
-    return active instanceof HTMLElement ? (cm6.view.EditorView.findFromDOM(active) as EditorView | null) : null
-  }
 
   // 纯文本粘贴命令（工单 #12，**平台稳定 API**——统一快捷键管理 + 命令面
   // 板）：Mod+Shift+V（规范键序，避开 vsidian#417 形态）置纯文本标记后合
@@ -301,7 +293,6 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       createPlainPasteCommandHandler({
         marker: pasteMarker,
         views: viewRegistry,
-        getFocusedView,
         readClipboardText: buildPlainPasteClipboardReader({
           webReadText: defaultWebReadText(),
           channelRequest: (topic) => sdk.channel.request(topic, null),
@@ -318,11 +309,12 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   // 独立成块（不动上方既有装配），降低与并行工单的合并冲突。
   // ============================================================
 
-  // 折叠查询消费 experimental.headingFold（清单已声明 ^1.0.0）。入口缺席
-  //（宿主旧版）时本功能静默不注册——防御性处理，不算故障（清单兼容判定
-  // 已在装载期拦住不匹配宿主，此处是防御深度）。
+  // 折叠查询消费 experimental.headingFold（清单已声明 ^1.0.0）+ 视图身份
+  // 反查 experimental.viewIdentity（清单已声明 ^1.0.0——折叠寻址经反查面，
+  // PR #432 契约）。任一入口缺席（宿主旧版）时本功能静默不注册——防御性
+  // 处理，不算故障（清单兼容判定已在装载期拦住不匹配宿主，此处是防御深度）。
   const headingFold = sdk.experimental.headingFold
-  if (headingFold !== undefined) {
+  if (headingFold !== undefined && viewIdentity !== undefined) {
     // collapsePersistentEnter 设置门（#3 通道，上游默认关）：装载拉取 +
     // 焦点回归刷新（对齐 #11 modAGate 形态——设置页改开关后回到编辑器
     // 即按新值判定）。
@@ -334,7 +326,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
     // 的 ATX 标题行（folds() 命中，查询前有零开销行门槛）；命中在折叠
     // 区间末尾新建同级标题行（折叠保持）；其余 return false 落穿。仲裁
     // 核对见 docs/specs/fold-enter.md「层归属与平台 Enter 仲裁」节。
-    // 方法经箭头包装注入（不裸传方法引用，规避 this 绑定假设）。
+    // 方法与反查面均经箭头包装注入（不裸传方法引用，规避 this 绑定假设）。
     sdk.registerExtension(
       cm6.state.Prec.high(
         cm6.view.keymap.of([
@@ -342,6 +334,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
             key: 'Enter',
             run: createFoldEnterCommand({
               folds: (instanceId) => headingFold.folds(instanceId),
+              instanceIdOf: (view) => viewIdentity.instanceIdOf(view),
               isEnabled: () => collapseEnterGate.enabled(),
             }),
           },
@@ -492,9 +485,9 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   // ============================================================
   // 工单 #2 增量块：注释切换命令（语言注释符表 + Markdown %%）——上游
   // comment_toggle.ts 的 Mod+/ 命令，**平台稳定 commands API**（统一快捷
-  // 键管理 + 命令面板）。视图路由复用 #12 的 viewRegistry（登记表共享
-  // 决策，供并行工单 #28 对照）；与平台内建 htmlComment 同弦并存的核对
-  // 见 docs/specs/comment-toggle.md「平台键位冲突核对」节。
+  // 键管理 + 命令面板）。目标视图句柄由平台命令回调携带（PR #432），经
+  // #12 的 viewRegistry 解析本页视图派发；与平台内建 htmlComment 同弦
+  // 并存的核对见 docs/specs/comment-toggle.md「平台键位冲突核对」节。
   // ============================================================
 
   if (commands !== undefined) {
@@ -502,7 +495,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       buildToggleCommentCommandDefinition(
         pickMessages(navigator.language).commands.toggleCommentTitle,
       ),
-      createToggleCommentCommandHandler({ views: viewRegistry, getFocusedView }),
+      createToggleCommentCommandHandler({ views: viewRegistry }),
     )
     // 页面释放时注销命令（平台随代次回收，此处显式闭环）
     sdk.onDispose(() => registration.dispose())
@@ -512,9 +505,10 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   // 工单 #28 增量块：格式化命令族——五命令经平台稳定 commands API 注册
   //（统一快捷键管理 + 命令面板）。格式化全文/选区、删除空行、选区转代码
   // 块为视图写命令（writes=true 仅 Live 正文接管宿主绑定），切换自动格式
-  // 化为双模式非写命令（写 #3 生效值）。视图捕获共享 #12 块的 viewRegistry
-  //（同工厂作用域、位置在前——评估结论见 docs/specs/formatting-commands.md
-  //「视图路由」节）；命令面板无聚焦入口回退 views 面 main 句柄
+  // 化为双模式非写命令（写 #3 生效值）。目标视图句柄由平台命令回调携带
+  //（PR #432）——视图路径共享 #12 块的 viewRegistry（句柄 → 本页视图解
+  // 析，同工厂作用域、位置在前——评估结论见 docs/specs/formatting-
+  // commands.md「视图路由」节）；登记面外的主正文句柄走快照提交
   //（applyEdits 单请求）。文件排除（ExcludeFiles）命中 → 不执行 + 通知。
   // ============================================================
 
@@ -525,8 +519,6 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       channel: sdk.channel,
       gate: formattingGate,
       views: viewRegistry,
-      getFocusedView,
-      ...(sdk.views !== undefined ? { facetViews: sdk.views } : {}),
       notify: (request) => {
         // 尽力而为通道（上游 Notice 等价）；失败静默——通知不阻断命令语义
         void sdk.channel.request(NOTICE_TOPIC, request).catch(() => {})

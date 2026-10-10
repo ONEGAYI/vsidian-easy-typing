@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { EditorState } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import type { AddonChannelOutcome, VsidianAddonPageSdk } from '../types/vendor/shared/addonPage'
+import type { AddonViewHandle } from '../types/vendor/shared/addonEditApi'
 import { pickMessages } from '../src/i18n'
 import { SETTINGS_TOPIC } from '../src/settings/store'
 import {
@@ -133,81 +134,55 @@ describe('「选择当前块」命令注册契约（平台稳定 commands API）
   })
 })
 
-describe('「选择当前块」命令 handler：目标视图路由', () => {
-  /** fallback 路径的最小 views 面 fake（字面量类型对齐 vendor 形状） */
-  function fakeViewsFacade(doc: string, cursor: number, fail = false) {
+describe('「选择当前块」命令 handler：目标句柄决策', () => {
+  /** 目标视图句柄替身（携带快照与 setSelection 面；info 形状对齐 AddonViewInfo） */
+  function fakeHandle(doc: string, cursor: number, fail = false) {
     const setSelectionCalls: Array<Array<{ anchor: number; head: number }>> = []
-    const facade = {
-      get: (_instanceId: string) => ({
-        info: {
-          instanceId: 'main',
-          targetDocUri: 'file:///x.md',
-          mode: 'live' as const,
-          viewType: 'main' as const,
-          editable: true,
+    const handle: AddonViewHandle = {
+      info: {
+        instanceId: 'main',
+        targetDocUri: 'file:///x.md',
+        mode: 'live',
+        viewType: 'main',
+        editable: true,
+      },
+      editor: {
+        getSnapshot: (): { ok: true; snapshot: { text: string; selections: Array<{ anchor: number; head: number }>; version: number; revision: number } } | { ok: false; reason: 'view-disposed' } =>
+          fail
+            ? { ok: false, reason: 'view-disposed' }
+            : { ok: true, snapshot: { text: doc, selections: [{ anchor: cursor, head: cursor }], version: 1, revision: 1 } },
+        setSelection: (ranges: Array<{ anchor: number; head: number }>) => {
+          setSelectionCalls.push(ranges)
+          return true
         },
-        editor: {
-          getSnapshot: (): { ok: true; snapshot: { text: string; selections: Array<{ anchor: number; head: number }>; version: number; revision: number } } | { ok: false; reason: 'view-disposed' } =>
-            fail
-              ? { ok: false, reason: 'view-disposed' }
-              : { ok: true, snapshot: { text: doc, selections: [{ anchor: cursor, head: cursor }], version: 1, revision: 1 } },
-          setSelection: (ranges: Array<{ anchor: number; head: number }>) => {
-            setSelectionCalls.push(ranges)
-            return true
-          },
-        },
-      }),
+      } as AddonViewHandle['editor'],
     }
-    return { facade, setSelectionCalls }
+    return { handle, setSelectionCalls }
   }
 
-  it('焦点视图在场：直接派发纯选区事务（零写回）', () => {
-    const { view, calls } = fakeView(EditorState.create({ doc: 'aaa\nbbb', selection: { anchor: 1 } }))
-    const handler = createSelectBlockCommandHandler({
-      cm6: { state: { EditorState } },
-      getFocusedView: () => view,
-    })
-    handler()
-    expect(calls).toHaveLength(1)
-    expect(calls[0]!.selection).toEqual({ anchor: 0, head: 7 })
-    expect(calls[0]!.changes).toBeUndefined()
-  })
-
-  it('无焦点视图（命令面板触发）：主视图快照回退 + setSelection', () => {
-    const { facade, setSelectionCalls } = fakeViewsFacade('aaa\nbbb\n\nc', 1)
-    const handler = createSelectBlockCommandHandler({
-      cm6: { state: { EditorState } },
-      views: facade,
-      getFocusedView: () => null,
-    })
-    handler()
+  it('目标句柄：快照决策 + setSelection（零文本变更事务）', () => {
+    const { handle, setSelectionCalls } = fakeHandle('aaa\nbbb', 1)
+    const handler = createSelectBlockCommandHandler({ cm6: { state: { EditorState } } })
+    handler(handle)
     expect(setSelectionCalls).toEqual([[{ anchor: 0, head: 7 }]])
   })
 
-  it('空行无操作（两条路径均不派发）', () => {
-    const { view, calls } = fakeView(EditorState.create({ doc: 'aaa\n\nbbb', selection: { anchor: 4 } }))
-    const focused = createSelectBlockCommandHandler({ cm6: { state: { EditorState } }, getFocusedView: () => view })
-    focused()
-    expect(calls).toHaveLength(0)
+  it('无活动视图（target null）→ 无动作', () => {
+    const handler = createSelectBlockCommandHandler({ cm6: { state: { EditorState } } })
+    expect(() => handler(null)).not.toThrow()
+  })
 
-    const { facade, setSelectionCalls } = fakeViewsFacade('aaa\n\nbbb', 4)
-    const fallback = createSelectBlockCommandHandler({
-      cm6: { state: { EditorState } },
-      views: facade,
-      getFocusedView: () => null,
-    })
-    fallback()
+  it('空行无操作（不派发）', () => {
+    const { handle, setSelectionCalls } = fakeHandle('aaa\n\nbbb', 4)
+    const handler = createSelectBlockCommandHandler({ cm6: { state: { EditorState } } })
+    handler(handle)
     expect(setSelectionCalls).toHaveLength(0)
   })
 
-  it('主视图快照失败（view-disposed）→ 无操作不抛错', () => {
-    const { facade, setSelectionCalls } = fakeViewsFacade('aaa', 0, true)
-    const handler = createSelectBlockCommandHandler({
-      cm6: { state: { EditorState } },
-      views: facade,
-      getFocusedView: () => null,
-    })
-    expect(() => handler()).not.toThrow()
+  it('快照失败（view-disposed）→ 无操作不抛错', () => {
+    const { handle, setSelectionCalls } = fakeHandle('aaa', 0, true)
+    const handler = createSelectBlockCommandHandler({ cm6: { state: { EditorState } } })
+    expect(() => handler(handle)).not.toThrow()
     expect(setSelectionCalls).toHaveLength(0)
   })
 })

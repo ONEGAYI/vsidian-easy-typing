@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest'
 import { EditorState } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
+import type { AddonViewHandle } from '../types/vendor/shared/addonEditApi'
 import {
   buildToggleCommentCommandDefinition,
   COMMENT_SYMBOLS,
@@ -362,7 +363,7 @@ describe('命令定义契约（稳定 API 注册形状）', () => {
 
 // ------------------------------------------------------------ 命令 handler
 
-describe('命令 handler（视图路由 + 守卫 + 单事务派发）', () => {
+describe('命令 handler（目标句柄路由 + 守卫 + 单事务派发）', () => {
   interface FakeSpec {
     changes: unknown
     selection?: { anchor: number; head: number }
@@ -382,6 +383,7 @@ describe('命令 handler（视图路由 + 守卫 + 单事务派发）', () => {
     })
     const dispatched: FakeSpec[] = []
     const view = {
+      id: 'main',
       state,
       compositionStarted: false,
       ...overrides,
@@ -392,21 +394,30 @@ describe('命令 handler（视图路由 + 守卫 + 单事务派发）', () => {
     return { view, dispatched }
   }
 
-  function setup(
-    view: EditorView | null,
-    options: Partial<{ getFocusedView: () => EditorView | null }> = {},
-  ) {
-    const registry = createEditorViewRegistry()
+  /** 平台命令回调的目标视图句柄替身（info 形状对齐 AddonViewInfo） */
+  function fakeHandle(instanceId: string, viewType: 'main' | 'embed' = 'main'): AddonViewHandle {
+    return {
+      info: {
+        instanceId,
+        targetDocUri: `doc:${instanceId}`,
+        mode: 'live',
+        viewType,
+        editable: true,
+      },
+      editor: {} as AddonViewHandle['editor'],
+    }
+  }
+
+  /** 登记表替身：登记视图恒映射实例 ID 'main'（扩展槽只挂主正文） */
+  function setup(view: EditorView | null) {
+    const registry = createEditorViewRegistry((v) => (v as unknown as { id: string }).id)
     if (view !== null) registry.register(view)
-    return createToggleCommentCommandHandler({
-      views: registry,
-      ...(options.getFocusedView !== undefined ? { getFocusedView: options.getFocusedView } : {}),
-    })
+    return createToggleCommentCommandHandler({ views: registry })
   }
 
   it('命中：单事务派发（changes + selection + userEvent input.comment）', () => {
     const { view, dispatched } = fakeCmdView('hello', 2)
-    setup(view)()
+    setup(view)(fakeHandle('main'))
     expect(dispatched).toHaveLength(1)
     expect(dispatched[0]!.changes).toEqual([{ from: 2, to: 2, insert: '%%  %%' }])
     expect(dispatched[0]!.selection).toEqual({ anchor: 5, head: 5 })
@@ -415,41 +426,42 @@ describe('命令 handler（视图路由 + 守卫 + 单事务派发）', () => {
 
   it('代码块内按语言派发（python 行注释，单事务单变更）', () => {
     const { view, dispatched } = fakeCmdView('```python\nx = 1\n```', 12)
-    setup(view)()
+    setup(view)(fakeHandle('main'))
     expect(dispatched).toHaveLength(1)
     expect(dispatched[0]!.changes).toEqual([{ from: 10, to: 10, insert: '# ' }])
     expect(dispatched[0]!.userEvent).toBe('input.comment')
   })
 
-  it('无在场视图 / IME 组合中 / 只读 → 静默不动作', () => {
-    const noView = setup(null)
-    noView()
+  it('无活动视图（target null）/ IME 组合中 / 只读 → 静默不动作', () => {
+    const noTarget = setup(fakeCmdView('hello', 2).view)
+    noTarget(null)
     for (const overrides of [{ compositionStarted: true }, { readOnly: true }] as const) {
       const { view, dispatched } = fakeCmdView('hello', 2, 2, overrides)
-      setup(view)()
+      setup(view)(fakeHandle('main'))
       expect(dispatched).toHaveLength(0)
     }
   })
 
   it('未知语言 → 计划为 null，不派发（上游 return false 口径）', () => {
     const { view, dispatched } = fakeCmdView('```xyz\ncode\n```', 10)
-    setup(view)()
+    setup(view)(fakeHandle('main'))
     expect(dispatched).toHaveLength(0)
   })
 
-  it('聚焦视图不在登记表（嵌入 Live 视图）→ 拒绝执行，不误写主文档兜底（审查第 2 轮复核 P1，B-F3 同型）', () => {
-    // 平台事实：附加组件扩展槽仅挂主正文 Live 实例，嵌入视图不经
-    // viewRegistry 登记——焦点在嵌入视图时用户意图是嵌入文档，唯一在场
-    // 视图兜底会把命令写到主文档（误目标），拒绝执行并留痕
+  it('目标为嵌入实例句柄（扩展槽未装配、登记面外）→ 无动作，不误写主文档', () => {
+    // 嵌入实例无本组件扩展实例（平台装配契约），登记表解析不到视图即
+    // 无执行载体；句柄目标保持嵌入文档语义，不向主文档兜底派发
     const { view: main, dispatched } = fakeCmdView('hello', 2)
-    const { view: embed } = fakeCmdView('embed', 1)
-    setup(main, { getFocusedView: () => embed })()
+    setup(main)(fakeHandle('embed:host-1', 'embed'))
     expect(dispatched).toHaveLength(0)
   })
 
-  it('聚焦视图即登记主视图 → 正常派发（探针不破坏正常路径）', () => {
+  it('平台违约传 undefined（旧签名宿主零参调用形态）→ 按无活动视图静默无动作不抛错', async () => {
+    // 防御深度对齐 viewIdentity 缺席守卫：handler 抛错会被平台 reportFault
+    // 升级为整组件回收——违约输入按无目标降级而非异常
     const { view, dispatched } = fakeCmdView('hello', 2)
-    setup(view, { getFocusedView: () => view })()
-    expect(dispatched).toHaveLength(1)
+    const handler = setup(view)
+    expect(() => handler(undefined as unknown as AddonViewHandle | null)).not.toThrow()
+    expect(dispatched).toHaveLength(0)
   })
 })

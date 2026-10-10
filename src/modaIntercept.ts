@@ -14,23 +14,14 @@
 import type { EditorView } from '@codemirror/view'
 import type { VsidianAddonPageSdk } from '../types/vendor/shared/addonPage'
 import type { AddonCommandDefinition } from '../types/vendor/shared/addonCommands'
+import type { AddonViewHandle } from '../types/vendor/shared/addonEditApi'
 import { planModASelection, planSelectBlock } from './modaSelection'
 import { SETTINGS_TOPIC } from './settings/store'
 import type { Messages } from './i18n'
 
-/** 无焦点回退路径所需的最小 cm6 状态面（结构子集——测试可注入假体） */
+/** 快照决策路径所需的最小 cm6 状态面（结构子集——测试可注入假体） */
 export type Cm6StateSubset = {
   readonly EditorState: (typeof import('@codemirror/state'))['EditorState']
-}
-
-/** 无焦点回退路径所需的最小 views 面（结构子集——真实 AddonViewsFacet 结构兼容） */
-export interface SelectBlockViewsSubset {
-  get(instanceId: string): {
-    editor: {
-      getSnapshot(): { ok: true; snapshot: { text: string; selections: Array<{ anchor: number; head: number }>; version: number; revision: number } } | { ok: false; reason: string }
-      setSelection(ranges: Array<{ anchor: number; head: number }>): boolean
-    }
-  } | null
 }
 
 /**
@@ -95,33 +86,23 @@ export function buildSelectBlockCommandDefinition(messages: Pick<Messages, 'comm
 
 /** select-block 命令 handler 依赖（page-editor 注入，测试可替换） */
 export interface SelectBlockCommandDeps {
-  /** 实验 cm6 运行时状态面（无焦点路径构造临时 EditorState 用——值只经实验入口） */
+  /** 实验 cm6 运行时状态面（快照决策构造临时 EditorState 用——值只经实验入口） */
   readonly cm6: { readonly state: Cm6StateSubset }
-  /** views 面（无焦点路径的主视图回退；缺省则无焦点时不动作）真实 facet 结构兼容本子集 */
-  readonly views?: SelectBlockViewsSubset
-  /** 当前焦点 CM6 视图（page-editor 经 EditorView.findFromDOM(document.activeElement) 注入） */
-  readonly getFocusedView: () => EditorView | null
 }
 
 /**
- * 「选择当前块」命令 handler（上游 selectBlockInCursor 决策）：焦点视图
- * 在场（编辑器内快捷键/菜单触发）直接派发纯选区事务；无焦点（命令面板
- * 触发，焦点在宿主 UI）经主视图快照决策 + setSelection（零文本变更事务）。
- * 空白行无操作（上游语义）。
+ * 「选择当前块」命令 handler（上游 selectBlockInCursor 决策）：目标
+ * 视图句柄（平台命令回调携带，PR #432）快照决策 + setSelection（零文本
+ * 变更事务）。空白行无操作（上游语义）；无活动视图（target null）或
+ * 快照失败（view-disposed）无动作不抛错。
  */
-export function createSelectBlockCommandHandler(deps: SelectBlockCommandDeps): () => void {
-  return () => {
-    const focused = deps.getFocusedView()
-    if (focused !== null) {
-      const plan = planSelectBlock(focused.state)
-      if (plan !== null) {
-        focused.dispatch({ selection: { anchor: plan.anchor, head: plan.head } })
-      }
-      return
-    }
-    const main = deps.views?.get('main')
-    if (!main) return
-    const snap = main.editor.getSnapshot()
+export function createSelectBlockCommandHandler(
+  deps: SelectBlockCommandDeps,
+): (target: AddonViewHandle | null) => void {
+  return (target) => {
+    // 违约防御深度：undefined 按无活动视图降级（同 plainPaste 口径）
+    if (target === null || target === undefined) return
+    const snap = target.editor.getSnapshot()
     if (!snap.ok) return
     const primary = snap.snapshot.selections[0]
     if (primary === undefined) return
@@ -131,7 +112,7 @@ export function createSelectBlockCommandHandler(deps: SelectBlockCommandDeps): (
     })
     const plan = planSelectBlock(state)
     if (plan !== null) {
-      main.editor.setSelection([{ anchor: plan.anchor, head: plan.head }])
+      target.editor.setSelection([{ anchor: plan.anchor, head: plan.head }])
     }
   }
 }

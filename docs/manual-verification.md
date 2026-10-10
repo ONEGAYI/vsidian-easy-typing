@@ -34,7 +34,7 @@
 
 ### 维度一：vsidian 宿主版本（API 基线）
 
-本组件清单声明 `vsidianAddon.api ^1.0.0`（1.0.0 候选，未对外发行）+ 实验入口 `cm6 ^1.1.0` 与 `headingFold ^1.0.0`。SDK 类型 vendor 快照锚定 vsidian 主仓 commit **`7651616e466d4950ee40880079634e3a78424162`**（`scripts/vendorSdkTypes.mjs` 的 `DEFAULT_COMMIT`；含 headingFold 进 main 的平台 PR #416）。矩阵基线即此 commit 构建的 vsidian VSIX；vsidian 升级后先跑本仓 `npm run vendor:check` 确认类型快照未漂移，再开新一轮矩阵。
+本组件清单声明 `vsidianAddon.api ^1.0.0`（1.0.0 候选，未对外发行）+ 实验入口 `cm6 ^1.1.0`、`headingFold ^1.0.0` 与 `viewIdentity ^1.0.0`（防御链拆除起消费——命令目标句柄解析与折叠寻址反查）。SDK 类型 vendor 快照锚定 vsidian 主仓 commit **`9107e2f0554d8b5c1637d16e1d1b375543b01c1c`**（`scripts/vendorSdkTypes.mjs` 的 `DEFAULT_COMMIT`；含视图身份基座的平台 PR #432——命令回调句柄、viewIdentity 反查面与 folds 共享缓存）。矩阵基线即此 commit 构建的 vsidian VSIX；vsidian 升级后先跑本仓 `npm run vendor:check` 确认类型快照未漂移，再开新一轮矩阵。
 
 ### 维度二：VSIX 安装态（对齐 vsidian `test/integration/runInstalled.mjs` 模式）
 

@@ -1,11 +1,12 @@
 // 格式化命令族测试（工单 #28）：五命令契约（注册形状/键位规范序）、
 // 行分类跳过口径、四 planner 的真实 EditorState 状态迁移断言（上游
-// formatting_commands.ts 逐条对照）、handler 执行流（聚焦视图派发单事务 /
-// 命令面板 main 回退 / 文件排除 / 切换设置写回）。
+// formatting_commands.ts 逐条对照）、handler 执行流（目标句柄视图派发
+// 单事务 / 主正文句柄快照提交 / 文件排除 / 切换设置写回）。
 import { describe, expect, it } from 'vitest'
 import { EditorState } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import type { TransactionSpec } from '@codemirror/state'
+import type { AddonViewHandle } from '../types/vendor/shared/addonEditApi'
 import {
   buildConvertCodeBlockCommandDefinition,
   buildDeleteBlankLinesCommandDefinition,
@@ -26,11 +27,9 @@ import {
   planFormatArticle,
   planFormatSelection,
   registerFormattingCommands,
-  resolveDocUriForView,
   TOGGLE_AUTO_FORMAT_COMMAND_ID,
   TOGGLE_AUTO_FORMAT_DEFAULT_BINDINGS,
   type FormattingCommandRegistration,
-  type FormattingFacetViewsSubset,
   type FormattingNoticeRequest,
 } from '../src/formattingCommands'
 import { createEditorViewRegistry, type EditorViewRegistry } from '../src/plainPasteCommand'
@@ -351,6 +350,7 @@ function fakeCmdView(options: {
   })
   const specs: TransactionSpec[] = []
   const view = {
+    id: 'main',
     state,
     compositionStarted: options.compositionStarted ?? false,
     dispatch: (spec: TransactionSpec) => {
@@ -369,11 +369,11 @@ function stubGate(engine: Partial<AutoFormatEngineSettings> = {}): AutoFormatGat
   }
 }
 
-/** views 面替身：多视图 + 快照/写回捕获 */
-function fakeFacetViews(
-  entries: ReadonlyArray<{ id: string; uri: string; text: string; editable?: boolean; sel?: number }>,
+/** 目标视图句柄替身（info 形状对齐 AddonViewInfo；快照/写回捕获） */
+function fakeTargetHandle(
+  entry: { id: string; uri: string; text: string; editable?: boolean; sel?: number },
 ): {
-  facet: FormattingFacetViewsSubset
+  handle: AddonViewHandle
   applyEditsCalls: Array<{
     instanceId: string
     request: { revision: number; changes: unknown; selection?: unknown; history?: string }
@@ -383,83 +383,62 @@ function fakeFacetViews(
     instanceId: string
     request: { revision: number; changes: unknown; selection?: unknown; history?: string }
   }> = []
-  const facet: FormattingFacetViewsSubset = {
-    list: () =>
-      entries.map((e) => ({
-        instanceId: e.id,
-        targetDocUri: e.uri,
-        mode: 'live' as const,
-        viewType: (e.id === 'main' ? 'main' : 'embed') as 'main' | 'embed',
-        editable: e.editable ?? true,
-      })),
-    get: (instanceId: string) => {
-      const entry = entries.find((e) => e.id === instanceId)
-      if (entry === undefined) return null
-      return {
-        info: {
-          instanceId: entry.id,
-          targetDocUri: entry.uri,
-          mode: 'live' as const,
-          editable: entry.editable ?? true,
-        },
-        editor: {
-          getSnapshot: () => ({
-            ok: true as const,
-            snapshot: {
-              text: entry.text,
-              selections: [{ anchor: entry.sel ?? 0, head: entry.sel ?? 0 }],
-              version: 1,
-              revision: 7,
-            },
-          }),
-          applyEdits: (request: {
-            revision: number
-            changes: unknown
-            selection?: unknown
-            history?: string
-          }) => {
-            applyEditsCalls.push({ instanceId: entry.id, request })
-            return Promise.resolve({ ok: true as const, credential: {} })
-          },
-        },
-      }
+  const handle: AddonViewHandle = {
+    info: {
+      instanceId: entry.id,
+      targetDocUri: entry.uri,
+      mode: 'live',
+      viewType: entry.id === 'main' ? 'main' : 'embed',
+      editable: entry.editable ?? true,
     },
+    editor: {
+      getSnapshot: () => ({
+        ok: true as const,
+        snapshot: {
+          text: entry.text,
+          selections: [{ anchor: entry.sel ?? 0, head: entry.sel ?? 0 }],
+          version: 1,
+          revision: 7,
+        },
+      }),
+      applyEdits: (request: {
+        revision: number
+        changes: unknown
+        selection?: unknown
+        history?: string
+      }) => {
+        applyEditsCalls.push({ instanceId: entry.id, request })
+        return Promise.resolve({ ok: true as const, credential: {} })
+      },
+    } as AddonViewHandle['editor'],
   }
-  return { facet, applyEditsCalls }
+  return { handle, applyEditsCalls }
 }
 
 /** commands 面替身（可选拒绝集合模拟注册失败） */
 function fakeCommands(rejectIds: ReadonlySet<string> = new Set()) {
-  const defs: Array<{ def: { id: string }; handler: () => void }> = []
+  const defs: Array<{ def: { id: string }; handler: (target: AddonViewHandle | null) => void }> = []
   const disposed: string[] = []
-  return {
-    facet: {
-      register: (def: { id: string }, handler: () => void) => {
-        if (rejectIds.has(def.id)) {
-          return { ok: false, reason: 'duplicate-command', dispose: () => {} }
-        }
-        defs.push({ def, handler })
-        return { ok: true, commandId: `ONEGAYI.vsidian-easy-typing.${def.id}`, dispose: () => disposed.push(def.id) }
-      },
+  const facet = {
+    register: (def: { id: string }, handler: (target: AddonViewHandle | null) => void) => {
+      if (rejectIds.has(def.id)) {
+        return { ok: false, reason: 'duplicate-command', dispose: () => {} }
+      }
+      defs.push({ def, handler })
+      return { ok: true, commandId: `ONEGAYI.vsidian-easy-typing.${def.id}`, dispose: () => disposed.push(def.id) }
     },
-    defs,
-    disposed,
   }
+  return { facet, defs, disposed }
 }
 
 /** handler 级组装：注册 + 视图登记 + 通道/通知捕获 */
 function harness(options: {
   engine?: Partial<AutoFormatEngineSettings>
-  entries?: ReadonlyArray<{ id: string; uri: string; text: string; editable?: boolean; sel?: number }>
   views?: EditorViewRegistry
-  getFocusedView?: () => EditorView | null
 }) {
   const commands = fakeCommands()
   const channelCalls: Array<{ topic: string; payload: unknown }> = []
   const notices: FormattingNoticeRequest[] = []
-  const { facet, applyEditsCalls } = fakeFacetViews(
-    options.entries ?? [{ id: 'main', uri: 'file:///v/free/a.md', text: '中文a' }],
-  )
   const registration = registerFormattingCommands({
     commands: commands.facet,
     channel: {
@@ -469,20 +448,17 @@ function harness(options: {
       },
     },
     gate: stubGate(options.engine),
-    views: options.views ?? createEditorViewRegistry(),
-    ...(options.getFocusedView !== undefined ? { getFocusedView: options.getFocusedView } : {}),
-    facetViews: facet,
+    views: options.views ?? createEditorViewRegistry((view) => (view as unknown as { id?: string }).id ?? null),
     notify: (request) => notices.push(request),
     messages: pickMessages('zh-CN'),
   })
-  const handlerOf = (id: string): (() => void) | undefined =>
+  const handlerOf = (id: string): ((target: AddonViewHandle | null) => void) | undefined =>
     commands.defs.find((d) => d.def.id === id)?.handler
   return {
     outcomes: registration.outcomes as readonly FormattingCommandRegistration[],
     handlerOf,
     notices,
     channelCalls,
-    applyEditsCalls,
     disposed: commands.disposed,
     dispose: registration.dispose,
   }
@@ -508,13 +484,11 @@ describe('registerFormattingCommands：注册面', () => {
 
   it('单命令注册失败记录 ok:false 不是故障（其余继续）', () => {
     const commands = fakeCommands(new Set([FORMAT_ARTICLE_COMMAND_ID]))
-    const { facet } = fakeFacetViews([{ id: 'main', uri: 'u', text: '' }])
     const registration = registerFormattingCommands({
       commands: commands.facet,
       channel: { request: () => Promise.resolve({ ok: true, result: null }) },
       gate: stubGate(),
-      views: createEditorViewRegistry(),
-      facetViews: facet,
+      views: createEditorViewRegistry(() => null),
       messages: pickMessages('zh-CN'),
     })
     expect(registration.outcomes.find((o) => o.localId === FORMAT_ARTICLE_COMMAND_ID)).toMatchObject({
@@ -525,16 +499,16 @@ describe('registerFormattingCommands：注册面', () => {
   })
 })
 
-describe('视图命令执行流：聚焦视图单事务派发', () => {
+describe('视图命令执行流：目标句柄视图单事务派发', () => {
   function harnessWithView(options: {
     doc: string
     anchor: number
     head?: number
-    entries?: ReadonlyArray<{ id: string; uri: string; text: string }>
+    uri?: string
     engine?: Partial<AutoFormatEngineSettings>
     viewOverrides?: { compositionStarted?: boolean; readOnly?: boolean }
   }) {
-    const registry = createEditorViewRegistry()
+    const registry = createEditorViewRegistry((view) => (view as unknown as { id: string }).id)
     const { view, specs } = fakeCmdView({
       doc: options.doc,
       anchor: options.anchor,
@@ -542,18 +516,19 @@ describe('视图命令执行流：聚焦视图单事务派发', () => {
       ...options.viewOverrides,
     })
     registry.register(view)
-    const h = harness({
-      engine: options.engine,
-      entries: options.entries ?? [{ id: 'main', uri: 'file:///v/free/a.md', text: options.doc }],
-      views: registry,
+    const { handle } = fakeTargetHandle({
+      id: 'main',
+      uri: options.uri ?? 'file:///v/free/a.md',
+      text: options.doc,
     })
-    return { view, specs, ...h }
+    const h = harness({ engine: options.engine, views: registry })
+    return { view, specs, handle, ...h }
   }
 
   it('格式化全文：单事务派发（撤销一步还原）+ 真实 EditorState 状态迁移', async () => {
     const doc = '中文a\n中文b'
-    const { view, specs, handlerOf } = harnessWithView({ doc, anchor: doc.length })
-    handlerOf(FORMAT_ARTICLE_COMMAND_ID)!()
+    const { view, specs, handle, handlerOf } = harnessWithView({ doc, anchor: doc.length })
+    handlerOf(FORMAT_ARTICLE_COMMAND_ID)!(handle)
     await flush()
     expect(specs).toHaveLength(1) // 单笔事务 = 单撤销单位（票面验收）
     const tr = view.state.update(specs[0]!)
@@ -566,15 +541,15 @@ describe('视图命令执行流：聚焦视图单事务派发', () => {
     expect((specs[0]! as { userEvent?: string }).userEvent).toBe('input.easyTyping.formatArticle')
   })
 
-  it('文件排除命中：不派发 + command-file-excluded 通知', async () => {
+  it('文件排除命中（句柄 targetDocUri 权威归属）：不派发 + command-file-excluded 通知', async () => {
     const doc = '中文a'
-    const { specs, handlerOf, notices } = harnessWithView({
+    const { specs, handle, handlerOf, notices } = harnessWithView({
       doc,
       anchor: 0,
-      entries: [{ id: 'main', uri: 'file:///v/DailyNote/a.md', text: doc }],
+      uri: 'file:///v/DailyNote/a.md',
       engine: { excludeFiles: ['DailyNote/'] },
     })
-    handlerOf(FORMAT_ARTICLE_COMMAND_ID)!()
+    handlerOf(FORMAT_ARTICLE_COMMAND_ID)!(handle)
     await flush()
     expect(specs).toHaveLength(0)
     expect(notices).toEqual([{ kind: 'command-file-excluded' }])
@@ -582,35 +557,34 @@ describe('视图命令执行流：聚焦视图单事务派发', () => {
 
   it('IME 组合中 / 只读视图：不派发不通知', async () => {
     for (const viewOverrides of [{ compositionStarted: true }, { readOnly: true }] as const) {
-      const { specs, handlerOf, notices } = harnessWithView({
+      const { specs, handle, handlerOf, notices } = harnessWithView({
         doc: '中文a',
         anchor: 0,
         viewOverrides,
       })
-      handlerOf(FORMAT_SELECTION_COMMAND_ID)!()
+      handlerOf(FORMAT_SELECTION_COMMAND_ID)!(handle)
       await flush()
       expect(specs).toHaveLength(0)
       expect(notices).toHaveLength(0)
     }
   })
 
-  it('聚焦视图不在登记表（嵌入 Live 视图）→ 拒绝执行：不派发不走 main 回退，不误写主文档（审查 B-F3）', async () => {
-    // 平台事实：附加组件扩展槽仅挂主正文 Live 实例，嵌入/悬停视图不经
-    // viewRegistry 登记——焦点在嵌入视图时用户意图是嵌入文档，登记表兜底
-    //（唯一在场视图 / main 句柄）会把命令写到主文档（误目标），拒绝执行
-    const registry = createEditorViewRegistry()
+  it('目标为嵌入实例句柄（扩展槽未装配、登记面外）→ 无动作：不派发不走句柄回退，不误写主文档', async () => {
+    // 嵌入实例无本组件扩展实例（平台装配契约），登记表解析不到视图；
+    // 句柄路径仅服务主正文句柄，嵌入目标不向主文档兜底
+    const registry = createEditorViewRegistry((view) => (view as unknown as { id: string }).id)
     const { view: main, specs } = fakeCmdView({ doc: '中文a', anchor: 0 })
     registry.register(main)
-    const embed = { state: EditorState.create({ doc: '中文b' }) } as unknown as EditorView
-    const h = harness({
-      views: registry,
-      entries: [{ id: 'main', uri: 'file:///v/free/a.md', text: '中文a' }],
-      getFocusedView: () => embed,
+    const { handle: embedHandle, applyEditsCalls } = fakeTargetHandle({
+      id: 'embed:host-1',
+      uri: 'file:///v/free/b.md',
+      text: '中文b',
     })
-    h.handlerOf(FORMAT_ARTICLE_COMMAND_ID)!()
+    const h = harness({ views: registry })
+    h.handlerOf(FORMAT_ARTICLE_COMMAND_ID)!(embedHandle)
     await flush()
     expect(specs).toHaveLength(0)
-    expect(h.applyEditsCalls).toHaveLength(0)
+    expect(applyEditsCalls).toHaveLength(0)
   })
 
   it('执行链路异常（gate.refresh reject）→ .catch 吞掉：命令可重试，不产生 unhandledrejection（审查 C-P3-2）', async () => {
@@ -627,17 +601,15 @@ describe('视图命令执行流：聚焦视图单事务派发', () => {
         },
       }
       const commands = fakeCommands()
-      const { facet } = fakeFacetViews([{ id: 'main', uri: 'u', text: '中文a' }])
       registerFormattingCommands({
         commands: commands.facet,
         channel: { request: () => Promise.resolve({ ok: true, result: null }) },
         gate,
-        views: createEditorViewRegistry(),
-        facetViews: facet,
+        views: createEditorViewRegistry(() => null),
         messages: pickMessages('zh-CN'),
       })
       const handler = commands.defs.find((d) => d.def.id === FORMAT_ARTICLE_COMMAND_ID)!.handler
-      handler() // 旧形态：void refresh().then(...) 无 .catch → unhandledrejection
+      handler(null) // void refresh().then(...) 无 .catch → unhandledrejection 防回归
       await flush()
       await flush()
       expect(rejections).toEqual([])
@@ -648,7 +620,7 @@ describe('视图命令执行流：聚焦视图单事务派发', () => {
 
   it('切换自动格式化：读现值 → 写 user 层翻转 → 通知新状态（不经视图）', async () => {
     const h = harness({})
-    h.handlerOf(TOGGLE_AUTO_FORMAT_COMMAND_ID)!()
+    h.handlerOf(TOGGLE_AUTO_FORMAT_COMMAND_ID)!(null)
     await flush()
     const update = h.channelCalls.find((c) => c.topic === SETTINGS_TOPIC.update)
     expect(update?.payload).toEqual({ scope: 'user', patch: { autoFormat: false } }) // 默认开 → 翻转关
@@ -663,83 +635,62 @@ describe('视图命令执行流：聚焦视图单事务派发', () => {
       commands: commands.facet,
       channel: { request: () => Promise.resolve(failed) },
       gate: stubGate(),
-      views: createEditorViewRegistry(),
+      views: createEditorViewRegistry(() => null),
       notify: (request) => notices.push(request),
       messages: pickMessages('zh-CN'),
     })
-    commands.defs.find((d) => d.def.id === TOGGLE_AUTO_FORMAT_COMMAND_ID)!.handler()
+    commands.defs.find((d) => d.def.id === TOGGLE_AUTO_FORMAT_COMMAND_ID)!.handler(null)
     await flush()
     expect(notices).toHaveLength(0)
   })
 })
 
-describe('命令面板入口：无聚焦视图的 main 句柄回退', () => {
-  it('registry 无视图 → views 面 main 快照 → applyEdits 单请求（atomic）', async () => {
-    const h = harness({
-      entries: [{ id: 'main', uri: 'file:///v/free/a.md', text: '中文a\n中文b', sel: 7 }],
+describe('句柄路径：登记面外的主正文句柄快照提交', () => {
+  it('登记表无视图（如命令在视图构造前触发）→ 目标句柄快照 → applyEdits 单请求（atomic）', async () => {
+    const { handle, applyEditsCalls } = fakeTargetHandle({
+      id: 'main',
+      uri: 'file:///v/free/a.md',
+      text: '中文a\n中文b',
+      sel: 7,
     })
-    h.handlerOf(FORMAT_ARTICLE_COMMAND_ID)!()
+    const h = harness({})
+    h.handlerOf(FORMAT_ARTICLE_COMMAND_ID)!(handle)
     await flush()
-    expect(h.applyEditsCalls).toHaveLength(1)
-    expect(h.applyEditsCalls[0]!.instanceId).toBe('main')
-    expect(h.applyEditsCalls[0]!.request.history).toBe('atomic')
-    expect(h.applyEditsCalls[0]!.request.revision).toBe(7)
+    expect(applyEditsCalls).toHaveLength(1)
+    expect(applyEditsCalls[0]!.instanceId).toBe('main')
+    expect(applyEditsCalls[0]!.request.history).toBe('atomic')
+    expect(applyEditsCalls[0]!.request.revision).toBe(7)
     // 快照文本逐行重排（两行都在同一请求内）
-    const payload = JSON.stringify(h.applyEditsCalls[0]!.request.changes)
+    const payload = JSON.stringify(applyEditsCalls[0]!.request.changes)
     expect(payload).toContain('中文 a')
     expect(payload).toContain('中文 b')
   })
 
-  it('main 排除命中：不写回 + 通知', async () => {
-    const h = harness({
-      engine: { excludeFiles: ['DailyNote/'] },
-      entries: [{ id: 'main', uri: 'file:///v/DailyNote/a.md', text: '中文a' }],
+  it('句柄目标排除命中：不写回 + 通知', async () => {
+    const { handle, applyEditsCalls } = fakeTargetHandle({
+      id: 'main',
+      uri: 'file:///v/DailyNote/a.md',
+      text: '中文a',
     })
-    h.handlerOf(CONVERT_CODE_BLOCK_COMMAND_ID)!()
+    const h = harness({ engine: { excludeFiles: ['DailyNote/'] } })
+    h.handlerOf(CONVERT_CODE_BLOCK_COMMAND_ID)!(handle)
     await flush()
-    expect(h.applyEditsCalls).toHaveLength(0)
+    expect(applyEditsCalls).toHaveLength(0)
     expect(h.notices).toEqual([{ kind: 'command-file-excluded' }])
   })
 
-  it('无视图且无 views 面：静默无动作（不抛错）', async () => {
+  it('无活动视图（target null）→ 静默无动作（不抛错）', async () => {
     const commands = fakeCommands()
     registerFormattingCommands({
       commands: commands.facet,
       channel: { request: () => Promise.resolve({ ok: true, result: null }) },
       gate: stubGate(),
-      views: createEditorViewRegistry(),
+      views: createEditorViewRegistry(() => null),
       messages: pickMessages('zh-CN'),
     })
     expect(() =>
-      commands.defs.find((d) => d.def.id === DELETE_BLANK_LINES_COMMAND_ID)!.handler(),
+      commands.defs.find((d) => d.def.id === DELETE_BLANK_LINES_COMMAND_ID)!.handler(null),
     ).not.toThrow()
     await flush()
-  })
-})
-
-describe('resolveDocUriForView：多视图 docUri 关联', () => {
-  it('单一可写视图 → 其 URI（多数场景精确）', () => {
-    const { facet } = fakeFacetViews([{ id: 'main', uri: 'file:///v/a.md', text: 'x' }])
-    const { view } = fakeCmdView({ doc: 'x', anchor: 0 })
-    expect(resolveDocUriForView(view, facet)).toBe('file:///v/a.md')
-  })
-
-  it('多视图：快照内容比对关联到实际触发文档（#407 语义）', () => {
-    const { facet } = fakeFacetViews([
-      { id: 'main', uri: 'file:///v/host.md', text: '宿主' },
-      { id: 'embed', uri: 'file:///v/target.md', text: '引用目标' },
-    ])
-    const { view } = fakeCmdView({ doc: '引用目标', anchor: 0 })
-    expect(resolveDocUriForView(view, facet)).toBe('file:///v/target.md')
-  })
-
-  it('关联失败回退 main；无 views 面 → null（fail-open）', () => {
-    const { facet } = fakeFacetViews([
-      { id: 'main', uri: 'file:///v/host.md', text: '宿主' },
-      { id: 'embed', uri: 'file:///v/target.md', text: '引用目标' },
-    ])
-    const { view } = fakeCmdView({ doc: '都不是', anchor: 0 })
-    expect(resolveDocUriForView(view, facet)).toBe('file:///v/host.md')
-    expect(resolveDocUriForView(view, undefined)).toBeNull()
   })
 })

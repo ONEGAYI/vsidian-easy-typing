@@ -27,7 +27,8 @@
     "api": "^1.0.0",
     "experimental": {
       "cm6": "^1.1.0",
-      "headingFold": "^1.0.0"
+      "headingFold": "^1.0.0",
+      "viewIdentity": "^1.0.0"
     }
   },
   "main": "./dist/extension.js",

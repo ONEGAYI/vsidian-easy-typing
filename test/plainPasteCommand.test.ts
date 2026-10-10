@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest'
 import { EditorState } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
+import type { AddonViewHandle } from '../types/vendor/shared/addonEditApi'
 import {
   buildPlainPasteClipboardReader,
   buildPlainPasteCommandDefinition,
@@ -56,49 +57,38 @@ describe('命令定义契约（稳定 API 注册形状）', () => {
 })
 
 describe('createEditorViewRegistry + createViewTrackerExtension：视图捕获', () => {
-  function fakeTrackedView(hasFocus: boolean, id: string) {
-    return { id, hasFocus, state: EditorState.create({ doc: '' }) } as unknown as EditorView
+  function fakeTrackedView(id: string) {
+    return { id, state: EditorState.create({ doc: '' }) } as unknown as EditorView
   }
 
-  it('登记顺序内活跃视图优先取聚焦者；无聚焦且唯一在场视图可兜底', () => {
-    const registry = createEditorViewRegistry()
-    const a = fakeTrackedView(false, 'a')
-    const b = fakeTrackedView(true, 'b')
-    registry.register(a)
-    registry.register(b)
-    expect(registry.activeView()).toBe(b)
-    const registry2 = createEditorViewRegistry()
-    const only = fakeTrackedView(false, 'only')
-    registry2.register(only)
-    expect(registry2.activeView()).toBe(only)
-  })
+  const identityOf = (view: EditorView) => (view as unknown as { id: string }).id
 
-  it('多视图无聚焦 → null（命令面板入口不误指定目标）', () => {
-    const registry = createEditorViewRegistry()
-    registry.register(fakeTrackedView(false, 'a'))
-    registry.register(fakeTrackedView(false, 'b'))
-    expect(registry.activeView()).toBeNull()
+  it('按平台实例 ID 解析登记视图（identityOf 反查匹配）', () => {
+    const registry = createEditorViewRegistry(identityOf)
+    const main = fakeTrackedView('main')
+    registry.register(main)
+    expect(registry.viewForInstance('main')).toBe(main)
+    // 未登记的实例 ID（嵌入/悬停实例——扩展槽未装配，不在登记面）→ null
+    expect(registry.viewForInstance('embed:host-1')).toBeNull()
   })
 
   it('ViewPlugin 构造登记、销毁移除（扩展实例随视图生命周期回收）', () => {
-    const registry = createEditorViewRegistry()
+    const registry = createEditorViewRegistry(identityOf)
     const extension = createViewTrackerExtension(ViewPlugin, registry)
     expect(typeof extension).toBe('object')
     // 扩展形态本身无法在 node 下实例化视图，登记/移除语义经 registry 直测：
-    // dispose 句柄移除后 activeView 不再返回该视图
-    const view = fakeTrackedView(true, 'only')
+    // dispose 句柄移除后按 ID 不再解析到该视图
+    const view = fakeTrackedView('main')
     const handle = registry.register(view)
-    expect(registry.activeView()).toBe(view)
+    expect(registry.viewForInstance('main')).toBe(view)
     handle.dispose()
-    expect(registry.activeView()).toBeNull()
+    expect(registry.viewForInstance('main')).toBeNull()
   })
 
-  it('contains：登记视图 true，未登记视图 false（审查 B-F3 嵌入视图判别面）', () => {
-    const registry = createEditorViewRegistry()
-    const main = fakeTrackedView(false, 'main')
-    registry.register(main)
-    expect(registry.contains(main)).toBe(true)
-    expect(registry.contains(fakeTrackedView(true, 'embed'))).toBe(false)
+  it('identityOf 反查 null 的视图不可解析（非平台实例防御面）', () => {
+    const registry = createEditorViewRegistry(() => null)
+    registry.register(fakeTrackedView('whatever'))
+    expect(registry.viewForInstance('whatever')).toBeNull()
   })
 })
 
@@ -137,85 +127,97 @@ describe('buildPlainPasteClipboardReader：剪贴板读取与宿主回退', () =
   })
 })
 
-describe('命令执行流：标记 → 读剪贴板 → 合成纯文本粘贴事件', () => {
-  function fakeCmdView(overrides: Partial<{ compositionStarted: boolean; readOnly: boolean }> = {}) {
+describe('命令执行流：目标句柄 → 标记 → 读剪贴板 → 合成纯文本粘贴事件', () => {
+  function fakeCmdView(id: string, overrides: Partial<{ compositionStarted: boolean; readOnly: boolean }> = {}) {
     const state = EditorState.create({
       doc: '- item',
       ...(overrides.readOnly ? { extensions: [EditorState.readOnly.of(true)] } : {}),
       selection: { anchor: 6 },
     })
     return {
+      id,
       state,
       compositionStarted: false,
       ...overrides,
     } as unknown as EditorView
   }
 
-  function setup(views: EditorView[], text: string, options: Partial<{ getFocusedView: () => EditorView | null }> = {}) {
+  /** 平台命令回调的目标视图句柄替身（info 形状对齐 AddonViewInfo） */
+  function fakeHandle(instanceId: string): AddonViewHandle {
+    return {
+      info: {
+        instanceId,
+        targetDocUri: `doc:${instanceId}`,
+        mode: 'live',
+        viewType: instanceId === 'main' ? 'main' : 'embed',
+        editable: true,
+      },
+      editor: {} as AddonViewHandle['editor'],
+    }
+  }
+
+  function setup(viewIds: readonly string[], text: string) {
     const marker = createPasteMarker({ now: () => 0 })
-    const registry = createEditorViewRegistry()
-    for (const view of views) registry.register(view)
+    const registry = createEditorViewRegistry((view) => (view as unknown as { id: string }).id)
+    const viewsById = new Map<string, EditorView>()
+    for (const id of viewIds) {
+      const view = fakeCmdView(id)
+      viewsById.set(id, view)
+      registry.register(view)
+    }
     const dispatched: Array<{ view: EditorView; text: string }> = []
     const handler = createPlainPasteCommandHandler({
       marker,
       views: registry,
-      ...(options.getFocusedView !== undefined ? { getFocusedView: options.getFocusedView } : {}),
       readClipboardText: async () => text,
       dispatchPlainPaste: (view, t) => {
         dispatched.push({ view, text: t })
         return true
       },
     })
-    return { marker, handler, dispatched }
+    return { marker, handler, dispatched, viewsById }
   }
 
-  it('完整流：置纯文本标记 → 读剪贴板 → 在聚焦视图派发（CRLF 归一）', async () => {
-    const view = fakeCmdView()
-    const { marker, handler, dispatched } = setup([view], 'aa\r\nbb')
-    handler()
+  it('完整流：置纯文本标记 → 读剪贴板 → 在目标视图派发（CRLF 归一）', async () => {
+    const { marker, handler, dispatched, viewsById } = setup(['main'], 'aa\r\nbb')
+    handler(fakeHandle('main'))
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(marker.plainPasteInProgress).toBe(true)
     expect(marker.pasteDetected).toBe(true)
-    expect(dispatched).toEqual([{ view, text: 'aa\nbb' }])
+    expect(dispatched).toEqual([{ view: viewsById.get('main'), text: 'aa\nbb' }])
   })
 
-  it('聚焦视图不在登记表（嵌入 Live 视图）→ 拒绝执行：不标记不派发、不误写主文档兜底（审查 B-F3）', async () => {
-    // 平台事实：附加组件扩展槽仅挂主正文 Live 实例，嵌入视图不经
-    // viewRegistry 登记——焦点在嵌入视图时用户意图是嵌入文档，唯一在场
-    // 视图兜底会把命令写到主文档（误目标），拒绝执行并留痕
-    const main = fakeCmdView()
-    const embed = fakeCmdView()
-    const { marker, handler, dispatched } = setup([main], 'aa', {
-      getFocusedView: () => embed,
-    })
-    handler()
+  it('目标为嵌入实例句柄（扩展槽未装配、登记面外）→ 静默放弃：不标记不派发', async () => {
+    // 纯文本粘贴须向在场 CM6 视图的 contentDOM 合成 paste 事件（整条粘贴
+    // 链——平台过滤器/SmartPaste/多光标分配——都装配在本页视图上）；
+    // 嵌入目标无本组件扩展实例即无合成载体，不误向主文档兜底派发
+    const { marker, handler, dispatched } = setup(['main'], 'aa')
+    handler(fakeHandle('embed:host-1'))
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(marker.plainPasteInProgress).toBe(false)
     expect(dispatched).toHaveLength(0)
   })
 
-  it('无在场视图 → 全链不动作（不标记不派发）', async () => {
-    const { marker, handler, dispatched } = setup([], 'aa')
-    handler()
+  it('无活动视图（target null）→ 全链不动作（不标记不派发）', async () => {
+    const { marker, handler, dispatched } = setup(['main'], 'aa')
+    handler(null)
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(marker.pasteDetected).toBe(false)
     expect(dispatched).toHaveLength(0)
   })
 
   it('剪贴板无文本（空串）→ 不标记不派发（无文本纯文本粘贴 = 无操作）', async () => {
-    const view = fakeCmdView()
-    const { marker, handler, dispatched } = setup([view], '')
-    handler()
+    const { marker, handler, dispatched } = setup(['main'], '')
+    handler(fakeHandle('main'))
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(marker.pasteDetected).toBe(false)
     expect(dispatched).toHaveLength(0)
   })
 
   it('读取失败 → 静默无动作（不标记不派发）', async () => {
-    const view = fakeCmdView()
     const marker = createPasteMarker({ now: () => 0 })
-    const registry = createEditorViewRegistry()
-    registry.register(view)
+    const registry = createEditorViewRegistry((view) => (view as unknown as { id: string }).id)
+    registry.register(fakeCmdView('main'))
     const dispatched: unknown[] = []
     const handler = createPlainPasteCommandHandler({
       marker,
@@ -228,7 +230,7 @@ describe('命令执行流：标记 → 读剪贴板 → 合成纯文本粘贴事
         return true
       },
     })
-    handler()
+    handler(fakeHandle('main'))
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(marker.pasteDetected).toBe(false)
     expect(dispatched).toHaveLength(0)
@@ -236,9 +238,21 @@ describe('命令执行流：标记 → 读剪贴板 → 合成纯文本粘贴事
 
   it('IME 组合中 / 只读视图 → 不动作（平台粘贴守卫同口径）', async () => {
     for (const overrides of [{ compositionStarted: true }, { readOnly: true }] as const) {
-      const view = fakeCmdView(overrides)
-      const { marker, handler, dispatched } = setup([view], 'aa')
-      handler()
+      const marker = createPasteMarker({ now: () => 0 })
+      const registry = createEditorViewRegistry((view) => (view as unknown as { id: string }).id)
+      const view = fakeCmdView('main', overrides)
+      registry.register(view)
+      const dispatched: unknown[] = []
+      const handler = createPlainPasteCommandHandler({
+        marker,
+        views: registry,
+        readClipboardText: async () => 'aa',
+        dispatchPlainPaste: (v, t) => {
+          dispatched.push({ v, t })
+          return true
+        },
+      })
+      handler(fakeHandle('main'))
       await new Promise((resolve) => setTimeout(resolve, 0))
       expect(marker.pasteDetected).toBe(false)
       expect(dispatched).toHaveLength(0)
