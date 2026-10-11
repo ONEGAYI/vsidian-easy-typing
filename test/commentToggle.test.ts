@@ -18,6 +18,7 @@ import {
   TOGGLE_COMMENT_DEFAULT_BINDINGS,
 } from '../src/commentToggle'
 import { createEditorViewRegistry } from '../src/plainPasteCommand'
+import { makeSyntaxFake } from './syntaxFake'
 
 /** 规范修饰键序（vsidian normalizeChord 归一序：ctrl→alt→shift→meta） */
 const MODIFIER_ORDER = ['ctrl', 'alt', 'shift', 'meta']
@@ -40,7 +41,7 @@ const CSS = { start: '/*', end: '*/' } as const
 /** 决策并应用计划到真实状态，返回结果文本与主光标（head）落点 */
 function applyPlan(doc: string, anchor: number, head = anchor): { doc: string; head: number } {
   const state = EditorState.create({ doc, selection: { anchor, head } })
-  const plan = planCommentToggle(state)
+  const plan = planCommentToggle(state, makeSyntaxFake(doc).query)
   expect(plan).not.toBeNull()
   const tr = state.update({
     changes: plan!.changes,
@@ -284,16 +285,18 @@ describe('代码块语言感知端到端（决策单元，≥3 语言矩阵）',
   it('未知语言与无信息串围栏 → 无操作（上游 return false 口径）', () => {
     for (const doc of ['```xyz\ncode\n```', '```\ncode\n```']) {
       const state = EditorState.create({ doc, selection: { anchor: doc.indexOf('code') + 1 } })
-      expect(planCommentToggle(state)).toBeNull()
+      expect(planCommentToggle(state, makeSyntaxFake(doc).query)).toBeNull()
     }
   })
 
-  it('围栏标记行（开栏行）→ 走 Markdown %% 分支（#25 降级口径，与上游树版差异）', () => {
+  it('围栏标记行（开栏行）→ 走代码块语言分支（#5 树版语义翻转：原 #25 降级口径「按 Text 走 %%」随降级实现删除——树版 lineTypeAt 对开栏行判 code，对齐上游树版把围栏行划入代码块区间）', () => {
     const doc = '```python\nx = 1\n```'
     const state = EditorState.create({ doc, selection: { anchor: 4 } }) // 开栏行内
-    const plan = planCommentToggle(state)
+    const plan = planCommentToggle(state, makeSyntaxFake(doc).query)
     expect(plan).not.toBeNull()
-    expect(plan!.changes).toEqual([{ from: 4, to: 4, insert: '%%  %%' }])
+    // python 单行符 #：开栏行行首插入「# 」（会破坏围栏——上游树版同款
+    // 行为，原降级版「更稳」的 %% 分支是降级特有，已随 #5 消除）
+    expect(plan!.changes).toEqual([{ from: 0, to: 0, insert: '# ' }])
   })
 
   it('正文（非代码块）→ Markdown %% 分支', () => {
@@ -304,7 +307,7 @@ describe('代码块语言感知端到端（决策单元，≥3 语言矩阵）',
     const doc = '```python\naa\nbb\n\ncc\n```'
     // 选 line2 行内 到 line5 行尾（line4 空白行应跳过）
     const state = EditorState.create({ doc, selection: { anchor: 11, head: 19 } })
-    const plan = planCommentToggle(state)
+    const plan = planCommentToggle(state, makeSyntaxFake(doc).query)
     expect(plan).not.toBeNull()
     expect(plan!.selection).toBeUndefined() // 批量分支不带显式选区（光标随变更映射）
     expect(plan!.changes).toEqual([
@@ -322,14 +325,14 @@ describe('代码块语言感知端到端（决策单元，≥3 语言矩阵）',
   it('选区终点恰在行首 → 该行仍计入（上游 lineAt(to) 口径）', () => {
     const doc = '```python\naa\nbb\ncc\n```'
     const state = EditorState.create({ doc, selection: { anchor: 11, head: 16 } }) // head = line4 行首
-    const plan = planCommentToggle(state)
+    const plan = planCommentToggle(state, makeSyntaxFake(doc).query)
     expect(plan!.changes).toHaveLength(3) // aa、bb、cc 三行
   })
 
   it('全空白行选区 → 空 changes 计划（派发无操作事务，上游同样派发）', () => {
     const doc = '```python\n\n\n```'
     const state = EditorState.create({ doc, selection: { anchor: 10, head: 11 } })
-    const plan = planCommentToggle(state)
+    const plan = planCommentToggle(state, makeSyntaxFake(doc).query)
     expect(plan).not.toBeNull()
     expect(plan!.changes).toEqual([])
   })
@@ -408,11 +411,15 @@ describe('命令 handler（目标句柄路由 + 守卫 + 单事务派发）', ()
     }
   }
 
-  /** 登记表替身：登记视图恒映射实例 ID 'main'（扩展槽只挂主正文） */
+  /** 登记表替身：登记视图恒映射实例 ID 'main'（扩展槽只挂主正文）；
+   *  语法查询按视图文档同文构造（#5 接线形态） */
   function setup(view: EditorView | null) {
     const registry = createEditorViewRegistry((v) => (v as unknown as { id: string }).id)
     if (view !== null) registry.register(view)
-    return createToggleCommentCommandHandler({ views: registry })
+    return createToggleCommentCommandHandler({
+      views: registry,
+      queryOf: () => (view !== null ? makeSyntaxFake(view.state.doc.toString()).query : null),
+    })
   }
 
   it('命中：单事务派发（changes + selection + userEvent input.comment）', () => {

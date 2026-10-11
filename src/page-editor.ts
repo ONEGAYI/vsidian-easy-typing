@@ -1,8 +1,10 @@
 // 编辑器页入口（工单 #22 脚手架 + #7/#8/#11/#12/#14/#18 功能接入）：经
 // SDK 构建桥打成 chrome114 IIFE。消费形态参照 vsidian
 // test/examples/input-behavior/src/page-editor.ts。
+import type { EditorView } from '@codemirror/view'
 import { defineAddonPage } from 'vsidian-addon-sdk'
 import type { VsidianAddonPageSdk } from '../types/vendor/shared/addonPage'
+import type { SyntaxQuery } from './syntaxTreeQuery'
 import { createBetterBackspaceCommand } from './backspaceIntercept'
 import { buildToggleCommentCommandDefinition, createToggleCommentCommandHandler } from './commentToggle'
 import { createCollapseEnterGate, createFoldEnterCommand } from './foldEnter'
@@ -191,6 +193,57 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   //（test/tabstopNav.test.ts）。
 
   // ============================================================
+  // 工单 #5 增量块：语法查询装配（experimental.syntax，清单已声明
+  // ^1.0.0）——树版判定统一注入源（ModA 懒查询、规则作用域、行内分区、
+  // 命令行分类四消费面）。形态对齐 #18 headingFold 先例：syntax 面或
+  // viewIdentity 反查面缺席（宿主旧版/平台违约——装载期清单兼容判定已
+  // 拦，此处防御深度）时查询工厂返回 null，消费方按「不接管」透传平台
+  // 原生行为（不 fallback 正则，#33 拆防御链先例）。
+  // ============================================================
+
+  // 语法查询工厂：instanceId 闭包绑定平台位置查询（SyntaxQuery 形态，
+  // src/syntaxTreeQuery.ts 消费）。查询对象按 instanceId 单槽缓存复用——
+  // 闭包仅绑定 instanceId（查询实时发往平台，无文档快照依赖），热路径
+  //（行为链一次输入驱动多族）不重复构造对象。
+  const syntax = sdk.experimental.syntax
+  let cachedQuery: { instanceId: string; query: SyntaxQuery } | null = null
+  const queryOfInstance = (instanceId: string | null): SyntaxQuery | null => {
+    if (syntax === undefined || instanceId === null) return null
+    if (cachedQuery !== null && cachedQuery.instanceId === instanceId) return cachedQuery.query
+    const query: SyntaxQuery = {
+      lineTypeAt: (pos) => syntax.lineTypeAt(instanceId, pos),
+      inlineAt: (pos) => syntax.inlineAt(instanceId, pos),
+    }
+    cachedQuery = { instanceId, query }
+    return query
+  }
+  // 方法与反查面均经箭头包装（不裸传方法引用，规避 this 绑定假设——
+  // headingFold 同款形态）
+  const viewIdentity = sdk.experimental.viewIdentity
+  const queryOfView = (view: EditorView): SyntaxQuery | null =>
+    queryOfInstance(viewIdentity !== undefined ? viewIdentity.instanceIdOf(view) : null)
+
+  // 活动视图追踪：行为链 onInput 回调无视图句柄（AddonInputContext 只带
+  // docUri 与快照）——本组件扩展槽视图的 ViewPlugin 生命周期钩维持
+  // 「当前视图」，输入事务发生时活动视图即触发视图（当前平台扩展槽仅
+  // 挂主正文 Live 实例）。视图销毁即置空（无悬挂查询源）。
+  const activeViewRef: { view: EditorView | null } = { view: null }
+  sdk.registerExtension(
+    cm6.view.ViewPlugin.fromClass(
+      class {
+        constructor(view: EditorView) {
+          activeViewRef.view = view
+        }
+        destroy() {
+          activeViewRef.view = null
+        }
+      },
+    ),
+  )
+  const queryOfActiveView = (): SyntaxQuery | null =>
+    activeViewRef.view !== null ? queryOfView(activeViewRef.view) : null
+
+  // ============================================================
   // 工单 #11 增量块：EnhanceModA 渐进选择 + 「选择当前块」命令。
   // 独立成块（不动上方既有装配），降低与并行工单的合并冲突。
   // ============================================================
@@ -205,7 +258,10 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   // ——平台原生 Mod+A 全选照常执行（透传即接管边界）。实验层 keymap 不进
   // 平台统一快捷键管理；registerExtension 无撤销句柄，采用「恒注册 + 设置
   // 门控透传」形态（关闭时行为与不注册等价，运行时开关即时生效）。
-  const modARun = createModACommand({ isEnabled: () => modAGate.enabled() })
+  const modARun = createModACommand({
+    isEnabled: () => modAGate.enabled(),
+    queryOf: queryOfView,
+  })
   sdk.registerExtension(
     cm6.state.Prec.high(
       cm6.view.keymap.of([
@@ -236,7 +292,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   if (commands !== undefined) {
     const registered = commands.register(
       buildSelectBlockCommandDefinition(pickMessages(navigator.language)),
-      createSelectBlockCommandHandler({ cm6 }),
+      createSelectBlockCommandHandler({ cm6, queryOf: queryOfInstance }),
     )
     if (!registered.ok) {
       // 普通 API 拒绝不算故障：经 debugLog 留痕便于诊断（logging.ts 约定）
@@ -273,8 +329,8 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   // 目标句柄（PR #432 平台解析）经视图身份反查匹配登记视图。identityOf
   // 经箭头包装注入（不裸传方法引用，规避 this 绑定假设）；宿主不提供
   // 反查面（清单已声明 viewIdentity，缺席即平台违约）时登记表恒解析
-  // null，命令族按登记面外目标口径降级。
-  const viewIdentity = sdk.experimental.viewIdentity
+  // null，命令族按登记面外目标口径降级。（viewIdentity 声明已随 #5 语法
+  // 查询装配块前移至 ModA 块之前。）
   const viewRegistry = createEditorViewRegistry(
     (view) => (viewIdentity !== undefined ? viewIdentity.instanceIdOf(view) : null),
   )
@@ -400,6 +456,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       channel: sdk.channel,
       language: navigator.language,
       rulesSource,
+      queryOf: queryOfActiveView,
     })
     for (const outcome of ruleRuntime.outcomes) {
       if (!outcome.ok) {
@@ -439,6 +496,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       channel: sdk.channel,
       language: navigator.language,
       rulesSource,
+      queryOf: queryOfActiveView,
     })
     for (const outcome of triggerRuntime.outcomes) {
       if (!outcome.ok) {
@@ -475,6 +533,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       channel: sdk.channel,
       language: navigator.language,
       marker: pasteMarker,
+      queryOf: queryOfActiveView,
     })
     if (autoFormatOutcome !== undefined && !autoFormatOutcome.ok) {
       // 普通 API 拒绝不算故障：经 debugLog 留痕（logging.ts 约定）
@@ -495,7 +554,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       buildToggleCommentCommandDefinition(
         pickMessages(navigator.language).commands.toggleCommentTitle,
       ),
-      createToggleCommentCommandHandler({ views: viewRegistry }),
+      createToggleCommentCommandHandler({ views: viewRegistry, queryOf: queryOfInstance }),
     )
     // 页面释放时注销命令（平台随代次回收，此处显式闭环）
     sdk.onDispose(() => registration.dispose())
@@ -519,6 +578,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       channel: sdk.channel,
       gate: formattingGate,
       views: viewRegistry,
+      queryOf: queryOfInstance,
       notify: (request) => {
         // 尽力而为通道（上游 Notice 等价）；失败静默——通知不阻断命令语义
         void sdk.channel.request(NOTICE_TOPIC, request).catch(() => {})

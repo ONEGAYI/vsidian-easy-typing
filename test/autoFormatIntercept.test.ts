@@ -14,10 +14,20 @@ import {
   defaultAutoFormatEngineSettings,
   registerAutoFormatBehavior,
 } from '../src/autoFormatIntercept'
+import type { SyntaxQuery } from '../src/syntaxTreeQuery'
+import { makeSyntaxFake } from './syntaxFake'
 import type { AddonBehaviorRegistration } from '../types/vendor/shared/addonBehaviors'
+
+/** 最近一次 inputCtx 的文档文本——reg.onInput(inputCtx(...)) 中 inputCtx
+ *  先求值，queryOf 在 onInput 内部读取（#5 判定源与断言坐标一致） */
+let lastCtxDoc = ''
+
+/** 语法查询工厂（#5 接线形态：活动文档同文 fake） */
+const syntaxQueryOf = (): SyntaxQuery | null => makeSyntaxFake(lastCtxDoc).query
 
 /** AddonInputContext 形状（快照后：text 已含键入） */
 function inputCtx(text: string, head: number, inputText: string, userEvent = 'input.type') {
+  lastCtxDoc = text
   return {
     userEvent,
     inputText,
@@ -57,6 +67,7 @@ function registerAll(options: {
     },
     language: options.language ?? 'zh-CN',
     marker: createPasteMarker(),
+    queryOf: syntaxQueryOf,
   })
   return { registrations, requestedTopics, onChangedCallbacks, outcomes }
 }
@@ -128,12 +139,31 @@ describe('onInput 全链（真实 AddonInputContext 形状）', () => {
       channel: { request: () => Promise.resolve({ ok: true as const, result: { effective: {} } }) },
       language: 'zh-CN',
       marker,
+      queryOf: syntaxQueryOf,
     })
     const reg = registrations[0]!
     expect(reg.onInput(inputCtx('中文a', 3, 'a', 'delete.backward'))).toBeNull()
     marker.markPaste(true)
     expect(reg.onInput(inputCtx('中文a', 3, 'a'))).toBeNull()
     expect(marker.plainPasteInProgress).toBe(false) // 纯文本意图已一次性消费
+  })
+
+  it('语法查询缺席（queryOf 返回 null）→ 恒 null 不格式化（#5：不 fallback）', () => {
+    const registrations: AddonBehaviorRegistration[] = []
+    registerAutoFormatBehavior({
+      behaviors: {
+        register: (reg) => {
+          registrations.push(reg)
+          return { ok: true as const, key: 'k' }
+        },
+        onChanged: () => () => {},
+      },
+      channel: { request: () => Promise.resolve({ ok: true as const, result: { effective: {} } }) },
+      language: 'zh-CN',
+      marker: createPasteMarker(),
+      queryOf: () => null,
+    })
+    expect(registrations[0]!.onInput(inputCtx('中文a', 3, 'a'))).toBeNull()
   })
 
   it('设置门：装载时与每次 onChanged 拉取 effective', () => {
@@ -228,6 +258,7 @@ describe('#27 保护区：设置驱动内置计算', () => {
       },
       language: 'zh-CN',
       marker: createPasteMarker(),
+      queryOf: syntaxQueryOf,
     })
     await Promise.resolve() // gate refresh 微任务
     return registrations[0]!
@@ -275,6 +306,7 @@ describe('#27 保护区：设置驱动内置计算', () => {
       },
       language: 'zh-CN',
       marker: createPasteMarker(),
+      queryOf: syntaxQueryOf,
       // 外部只保护 [0,3)（{{中）：a 与 }} 仍在区外，格式化可发生
       protectedRangesFor: (line) =>
         line.startsWith('{{中')

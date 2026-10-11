@@ -55,6 +55,7 @@ import {
   type TabstopSpec,
 } from './ruleBehaviorPipeline'
 import { isPositionProtected, parseUserDefinedRegExp, type UserDefinedRegexRule } from './userDefinedRegex'
+import type { SyntaxQuery } from './syntaxTreeQuery'
 import { createThrottledRefresh } from './throttle'
 
 // 规则错误通知通道 topic（宿主 extension.ts 挂 handler 显示 i18n 警告；
@@ -286,6 +287,9 @@ export interface RegisterRuleBehaviorsDeps {
   readonly now?: () => number
   /** 动态规则源（缺省 = 出厂数据，兼容存储不可用与既有测试形态） */
   readonly rulesSource?: RuleSnapshotSource
+  /** #5 语法查询工厂（活动视图 → 查询；行为链 onInput 无视图句柄——查询经
+   *  活动视图 instanceId 构造。非 All 规则在场而缺席 → 管线不接管） */
+  readonly queryOf?: () => SyntaxQuery | null
 }
 
 /** 注册结果（逐族；普通 API 拒绝不算故障，经 debugLog 留痕） */
@@ -389,7 +393,7 @@ export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): Rul
             replaced: ctx.replaced,
             snapshot: { text: ctx.snapshot.text, selections: ctx.snapshot.selections },
           },
-          { debug: gate.debug(), protectedZone: gate.userRulesZone() },
+          { debug: gate.debug(), protectedZone: gate.userRulesZone(), scopeQuery: deps.queryOf?.() ?? undefined },
         )
         if (withTabstops === null) return null
         if (withTabstops.tabstops.length > 0) {
@@ -524,6 +528,7 @@ export function registerRuleDeleteSelectKeyBehaviors(deps: RegisterRuleBehaviors
         const deleteResult = planDeleteRuleModification(engines[familyIndex]!, pipelineCtx, {
           debug: gate.debug(),
           protectedZone: gate.userRulesZone(),
+          scopeQuery: deps.queryOf?.() ?? undefined,
         })
         if (deleteResult !== null) {
           if (deleteResult.tabstops.length > 0) {
@@ -534,6 +539,7 @@ export function registerRuleDeleteSelectKeyBehaviors(deps: RegisterRuleBehaviors
         const selectKeyResult = planSelectKeyRuleModification(engines[familyIndex]!, pipelineCtx, {
           debug: gate.debug(),
           protectedZone: gate.userRulesZone(),
+          scopeQuery: deps.queryOf?.() ?? undefined,
         })
         if (selectKeyResult !== null) {
           if (selectKeyResult.tabstops.length > 0) {

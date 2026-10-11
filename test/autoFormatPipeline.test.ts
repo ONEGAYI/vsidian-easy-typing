@@ -1,7 +1,8 @@
-// 自动格式化管线测试（工单 #26）：planAutoFormatLineModification 的坐标
-// 换算（doc↔行内）、上游触发门控矩阵（纯插入/单光标塌缩/粘贴联动/作用域
-// 跳过/Enter 定稿）与计划形状。行级算法等价性由 lineFormatter 上游验证
-// 矩阵承载，此处聚焦管线层。
+// 自动格式化管线测试（工单 #26；#5 切片 B 起作用域判定与行内分区走树版
+// 查询注入）：planAutoFormatLineModification 的坐标换算（doc↔行内）、上游
+// 触发门控矩阵（纯插入/单光标塌缩/粘贴联动/作用域跳过/Enter 定稿）与计
+// 划形状。行级算法等价性由 lineFormatter 上游验证矩阵承载，此处聚焦管
+// 线层。
 import { describe, expect, it, vi } from 'vitest'
 import {
   isInsideFrontmatter,
@@ -11,6 +12,12 @@ import {
 } from '../src/autoFormatPipeline'
 import { SpaceState } from '../src/formatting/inlineParts'
 import type { LineFormatSettings } from '../src/formatting/lineFormatter'
+import { makeRejectingQuery, makeSyntaxFake } from './syntaxFake'
+
+/** 最近一次 ctx() 的文档文本——JS 参数从左到右求值，planAutoFormatLine
+ *  Modification(ctx(...), options()) 中 ctx 先于 options 求值，options 据此
+ *  构造同文 fake 查询（#5 树版判定源与断言坐标一致） */
+let lastCtxDoc = ''
 
 function settings(overrides: Partial<LineFormatSettings> = {}): LineFormatSettings {
   return {
@@ -33,7 +40,7 @@ function settings(overrides: Partial<LineFormatSettings> = {}): LineFormatSettin
 }
 
 function options(o: Partial<AutoFormatLineOptions> = {}): AutoFormatLineOptions {
-  return { settings: settings(), ...o }
+  return { settings: settings(), query: makeSyntaxFake(lastCtxDoc).query, ...o }
 }
 
 /** 快照后形态的输入上下文（text 已含本次键入；head = 光标位） */
@@ -43,6 +50,7 @@ function ctx(
   inputText: string,
   extra: Partial<AutoFormatPipelineContext> = {},
 ): AutoFormatPipelineContext {
+  lastCtxDoc = text
   return {
     userEvent: 'input.type',
     inputText,
@@ -221,7 +229,7 @@ describe('#12 粘贴联动', () => {
   })
 })
 
-describe('作用域跳过（文本降级版 getPosLineType）', () => {
+describe('作用域跳过（#5 树版 detectScopeViaQuery）', () => {
   it('围栏代码块内不格式化', () => {
     const doc = '```js\nconst a = 1中文a\n```\n'
     // 光标在代码内容行尾（键入 a）
@@ -237,6 +245,11 @@ describe('作用域跳过（文本降级版 getPosLineType）', () => {
     expect(planAutoFormatLineModification(ctx(doc, head, 'a'), options())).toBeNull()
   })
 
+  it('行内代码内不格式化（树版升级：inlineAt 判 Code——降级版按区间误判的近似已消除）', () => {
+    // 光标在 `a` 内（键入 x）：detectScopeViaQuery inlineAt=code → Code
+    expect(planAutoFormatLineModification(ctx('中文`ax`后', 5, 'x'), options())).toBeNull()
+  })
+
   it('frontmatter 内不格式化（闭合 --- 行计入，其后不计）', () => {
     // '---\ntitle: x\n---\n正文'：闭合行 [13,16)，其上 pos 计入；pos 17 起（正文）不计
     expect(isInsideFrontmatter('---\ntitle: x\n---\n正文', 4)).toBe(true)
@@ -250,12 +263,19 @@ describe('作用域跳过（文本降级版 getPosLineType）', () => {
 
   it('表格行依赖平台行为链门控，管线不重复判定（规格记录的口径）', () => {
     // 管线对表格行不做行级排除——平台表格格区门控先行；正文管道的表格式
-    // 行照样走格式化（键入 a 于光标 9）
+    // 行照样走格式化（键入 a 于光标 9；detectScopeViaQuery 对 table 行判
+    // Text——#28 口径不在管线侧拦截）
     const plan = planAutoFormatLineModification(ctx('| a | 中文a |', 9, 'a'), options())
     expect(plan).toEqual({
       changes: [{ offset: 0, length: 11, text: '| a | 中文 a |' }],
       selection: { anchor: 10, head: 10 },
     })
+  })
+
+  it('行内分区查询拒绝 → 整体 null 不格式化（#5 拒绝语义）', () => {
+    expect(
+      planAutoFormatLineModification(ctx('中文a', 3, 'a'), options({ query: makeRejectingQuery() })),
+    ).toBeNull()
   })
 })
 
@@ -282,31 +302,8 @@ describe('间谍形态核验（consumePlainPaste 单次性）', () => {
   })
 })
 
-// ===== 作用域判定经事务级 memo（审查 C-P1-1 修复） =====
+// ===== 作用域 memo 已随 #5 切片 B 删除 =====
 //
-// autoformat 与规则族在同一输入事务被行为链驱动，作用域判定统一经
-// detectScopeFromTextMemoized（autoformat 真实消费 scope 值——要求 Text
-// 才格式化，不做 All 短路）：同 (text, pos) 的重复驱动复用单槽缓存。
-
-import { resetScopeMemoForTest, scopeMemoComputeCount } from '../src/ruleScopeFallback'
-
-describe('作用域判定 memo：同 (text, pos) 只算一次（C-P1-1）', () => {
-  it('同一事务两次驱动（规则族 + autoformat 形态）只触发一次真实计算', () => {
-    resetScopeMemoForTest()
-    const ctxA = ctx('中文a', 3, 'a')
-    const first = planAutoFormatLineModification(ctxA, options())
-    expect(first).not.toBeNull()
-    expect(scopeMemoComputeCount()).toBe(1)
-    // 同 (text, head) 的第二次（autoformat 或规则管线同事务再驱动）：memo 命中
-    const second = planAutoFormatLineModification(ctx('中文a', 3, 'a'), options())
-    expect(second).toEqual(first)
-    expect(scopeMemoComputeCount()).toBe(1)
-  })
-
-  it('文档变化自然失效（下一事务重算）', () => {
-    resetScopeMemoForTest()
-    planAutoFormatLineModification(ctx('中文a', 3, 'a'), options())
-    planAutoFormatLineModification(ctx('中文ab', 4, 'b'), options())
-    expect(scopeMemoComputeCount()).toBe(2)
-  })
-})
+// 原 (text,pos) 单槽缓存（审查 C-P1-1）的动机是同一事务 6 次同键重复的
+// 全文 O(L) 正则扫描；树版查询 µs 级无此成本，保留只会增加陈旧风险——
+// 随 ruleScopeFallback 降级实现一并删除（memo 行为用例同删）。

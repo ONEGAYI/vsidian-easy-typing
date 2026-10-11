@@ -42,6 +42,7 @@ import {
   type RulePipelineChannelSubset,
 } from './ruleBehaviorIntercept'
 import { planAutoFormatLineModification } from './autoFormatPipeline'
+import type { SyntaxQuery } from './syntaxTreeQuery'
 import { isDocUriExcluded } from './fileExclusion'
 import { createThrottledRefresh } from './throttle'
 import { SpaceState } from './formatting/inlineParts'
@@ -186,6 +187,9 @@ export interface RegisterAutoFormatDeps {
   readonly language: string
   /** #12 粘贴标记单例（page-editor 装配，经参数注入——勿 import 页面实例） */
   readonly marker: PasteMarker
+  /** #5 语法查询工厂（活动视图 → 查询；null = 反查失败/语法面缺席 → 不
+   *  格式化——行为链 onInput 无视图句柄，查询经活动视图 instanceId 构造） */
+  readonly queryOf?: () => SyntaxQuery | null
   /** 保护区区间计算器（#27 注入缝的接入位；返回行内坐标区间集，缺省无保护区） */
   readonly protectedRangesFor?: (line: string) => readonly ProtectedRangeSeed[]
 }
@@ -238,6 +242,9 @@ export function registerAutoFormatBehavior(deps: RegisterAutoFormatDeps): RuleBe
       // #28 接入）——上游 cm_extensions.ts:417 `!AutoFormat || isCurrentFileExclude` 同序
       if (!engine.autoFormat) return null
       if (isDocUriExcluded(ctx.docUri, engine.excludeFiles)) return null
+      // #5 语法查询源：缺席（反查失败/语法面缺席）不格式化（不 fallback 正则）
+      const query = deps.queryOf?.() ?? null
+      if (query === null) return null
       // #27 保护区：外部注入（#26 注入缝）优先；缺省用设置驱动的内置计算
       //（上游 core.ts:181-183——UserDefinedRegSwitch 开才带 UserDefinedRegExp
       // 进分区解析，关 = 无 user 分区）
@@ -261,6 +268,7 @@ export function registerAutoFormatBehavior(deps: RegisterAutoFormatDeps): RuleBe
         },
         {
           settings: engine.lineFormat,
+          query,
           marker: deps.marker,
           protectedRanges,
         },

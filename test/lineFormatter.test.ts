@@ -9,8 +9,15 @@
 // $qquad$ 计为文本空隔/软空格符号/<br>/转义 $）× 光标位置语义（键入
 // 区间/越界回退）。
 import { describe, expect, it } from 'vitest'
-import { formatLine, type LineFormatSettings } from '../src/formatting/lineFormatter'
+import { formatLine, type LineFormatSettings, type LineSyntaxContext } from '../src/formatting/lineFormatter'
 import { SpaceState } from '../src/formatting/inlineParts'
+import { makeSyntaxFake } from './syntaxFake'
+
+/** 单行文档的树版判定源（#5：fake 判定链，行号恒 1；doc/query 与行文本同源） */
+function syntaxOf(line: string): LineSyntaxContext {
+  const fake = makeSyntaxFake(line)
+  return { doc: fake.doc, query: fake.query, lineNumber: 1 }
+}
 
 /** 矩阵基准设置（上游 DEFAULT_SETTINGS 的行格式化子集，逐键对照） */
 function baseSettings(): LineFormatSettings {
@@ -250,6 +257,7 @@ describe('formatLine 上游验证矩阵', () => {
         entry.curCh,
         entry.prevCh,
         applyOverrides(baseSettings(), entry.settings ?? {}),
+        syntaxOf(entry.line),
       )
       expect(result).toEqual(entry.expected)
     })
@@ -258,38 +266,45 @@ describe('formatLine 上游验证矩阵', () => {
 
 describe('formatLine 结构契约', () => {
   it('空白行早退：原样返回零变更', () => {
-    expect(formatLine('   ', 3, 2, baseSettings())).toEqual({ line: '   ', cursorCh: 3, changes: [] })
+    expect(formatLine('   ', 3, 2, baseSettings(), syntaxOf('   '))).toEqual({ line: '   ', cursorCh: 3, changes: [] })
   })
 
   it('空行早退', () => {
-    expect(formatLine('', 0, undefined, baseSettings())).toEqual({ line: '', cursorCh: 0, changes: [] })
+    expect(formatLine('', 0, undefined, baseSettings(), syntaxOf(''))).toEqual({ line: '', cursorCh: 0, changes: [] })
   })
 
   it('变更表按 begin 升序（多分区行）', () => {
-    const result = formatLine('中文' + String.fromCharCode(96) + 'a' + String.fromCharCode(96) + '中文', 6, 5, baseSettings())
-    const begins = result.changes.map((c) => c.begin)
+    const line = '中文' + String.fromCharCode(96) + 'a' + String.fromCharCode(96) + '中文'
+    const result = formatLine(line, 6, 5, baseSettings(), syntaxOf(line))
+    const begins = result!.changes.map((c) => c.begin)
     expect([...begins].sort((a, b) => a - b)).toEqual(begins)
-    expect(result.changes.length).toBeGreaterThan(0)
+    expect(result!.changes.length).toBeGreaterThan(0)
+  })
+
+  it('查询拒绝返回 null（不格式化——#5 拒绝语义）', () => {
+    const fake = makeSyntaxFake('中文abc')
+    const reject = { lineTypeAt: () => ({ ok: false as const, reason: 'read-only' as const }), inlineAt: () => ({ ok: false as const, reason: 'read-only' as const }) }
+    expect(formatLine('中文abc', 5, 4, baseSettings(), { doc: fake.doc, query: reject, lineNumber: 1 })).toBeNull()
   })
 
   it('保护区注入缝：user 区段内不参与语言对加空格（#27 缝存在性证明）', () => {
     // 行内坐标 [2,5) 的保护区盖住 abc：文|a 边界落在保护区，不加空格
-    const withGuard = formatLine('中文abc', 5, 4, baseSettings(), {
+    const withGuard = formatLine('中文abc', 5, 4, baseSettings(), syntaxOf('中文abc'), {
       protectedRanges: [
         { begin: 2, end: 5, leftSpaceRequire: SpaceState.none, rightSpaceRequire: SpaceState.none },
       ],
     })
-    expect(withGuard.changes).toEqual([])
-    expect(withGuard.line).toBe('中文abc')
+    expect(withGuard!.changes).toEqual([])
+    expect(withGuard!.line).toBe('中文abc')
   })
 
   it('保护区右空格要求参与邻接判定（strict → 后继 text 前置空格）', () => {
     // 中文[abc] 后接 text：user 区段 rightSpaceRequire=strict(2) > text start none
-    const result = formatLine('中文[abc]中文', 10, 9, baseSettings(), {
+    const result = formatLine('中文[abc]中文', 10, 9, baseSettings(), syntaxOf('中文[abc]中文'), {
       protectedRanges: [
         { begin: 2, end: 7, leftSpaceRequire: SpaceState.none, rightSpaceRequire: SpaceState.strict },
       ],
     })
-    expect(result.line).toBe('中文[abc] 中文')
+    expect(result!.line).toBe('中文[abc] 中文')
   })
 })

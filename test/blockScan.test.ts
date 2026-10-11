@@ -26,7 +26,6 @@ function scanOf(texts: readonly string[]): LineInfo[] {
   const { query } = makeSyntaxFake(texts.join('\n'))
   return scanLines(texts, query)
 }
-
 /** kinds 简写断言：逐行核对扫描类型序列 */
 function expectKinds(texts: readonly string[], kinds: readonly LineKind[]): void {
   expect(scanOf(texts).map((l) => l.kind)).toEqual(kinds)
@@ -158,25 +157,25 @@ describe('scanLines：列表续行（fake 缩进近似——真实树按解析�
 })
 
 describe('scanLines：查询适配器边界', () => {
-  it('缺省 query 抛错（哨兵：切片 B 接线前无判定路径，不并存降级实现）', () => {
-    expect(() => scanLines(['plain'])).toThrow(/query/i)
-  })
-
   it('查询拒绝抛错（非 live/已销毁视图——拒绝只发生在不该接管的场景）', () => {
     expect(() => scanLines(['plain'], makeRejectingQuery())).toThrow(/拒绝|reject/i)
   })
+  // query 必选（切片 B 收紧，编译期即拦——原「缺省抛错哨兵」用例随可选
+  // 形态一并删除）
 })
 
 describe('quoteInfoAt：引用块信息（上游 getQuoteInfoInPos 逐字移植）', () => {
+  /** quoteInfoAt 懒查询形态：doc 直传（行文本正则判定，不查行类型） */
+  function quoteOf(texts: readonly string[], lineNumber: number) {
+    return quoteInfoAt(makeSyntaxFake(texts.join('\n')).doc, lineNumber)
+  }
+
   it('单行引用：块即当前行', () => {
-    const texts = ['> hello']
-    const info = quoteInfoAt(texts, scanOf(texts), 1)
-    expect(info).toEqual({ startLine: 1, endLine: 1, contentStart: 2, isCallout: false })
+    expect(quoteOf(['> hello'], 1)).toEqual({ startLine: 1, endLine: 1, contentStart: 2, isCallout: false })
   })
 
   it('多行引用：中间行视角覆盖全块', () => {
-    const texts = ['> a', '> b', '> c', 'plain']
-    expect(quoteInfoAt(texts, scanOf(texts), 2)).toEqual({
+    expect(quoteOf(['> a', '> b', '> c', 'plain'], 2)).toEqual({
       startLine: 1,
       endLine: 3,
       contentStart: 2,
@@ -185,25 +184,41 @@ describe('quoteInfoAt：引用块信息（上游 getQuoteInfoInPos 逐字移植�
   })
 
   it('callout 标题行：内容起点跳过 callout 标记，isCallout=true', () => {
-    const texts = ['> [!note] Title', '> body']
-    const info = quoteInfoAt(texts, scanOf(texts), 1)
     // '> [!note] ' 长度 10
-    expect(info).toEqual({ startLine: 1, endLine: 2, contentStart: 10, isCallout: true })
+    expect(quoteOf(['> [!note] Title', '> body'], 1)).toEqual({
+      startLine: 1,
+      endLine: 2,
+      contentStart: 10,
+      isCallout: true,
+    })
   })
 
   it('callout 体内行的内容起点只跳过 > 前缀（仍归该 callout 块）', () => {
-    const texts = ['> [!note] T', '> body', '> more']
-    const info = quoteInfoAt(texts, scanOf(texts), 2)
-    expect(info).toEqual({ startLine: 1, endLine: 3, contentStart: 2, isCallout: true })
+    expect(quoteOf(['> [!note] T', '> body', '> more'], 2)).toEqual({
+      startLine: 1,
+      endLine: 3,
+      contentStart: 2,
+      isCallout: true,
+    })
   })
 
   it('非引用行返回 null', () => {
-    expect(quoteInfoAt(['plain'], scanOf(['plain']), 1)).toBeNull()
+    expect(quoteOf(['plain'], 1)).toBeNull()
   })
 
   it('引用链中间夹非引用行时下行扩展停止', () => {
-    const texts = ['> a', 'plain', '> b']
-    expect(quoteInfoAt(texts, scanOf(texts), 1)).toEqual({
+    expect(quoteOf(['> a', 'plain', '> b'], 1)).toEqual({
+      startLine: 1,
+      endLine: 1,
+      contentStart: 2,
+      isCallout: false,
+    })
+  })
+
+  it('引用内列表行仍命中（#5 切片 B 对齐上游：门是纯行文本正则，不查行类型）', () => {
+    // 上游 getQuoteInfoInPos 用 quote_regex 匹配行文本——`> - qlist` 照样
+    // 命中（树版行类型投影为 list，但引用分支入口不看行类型）
+    expect(quoteOf(['> - qlist'], 1)).toEqual({
       startLine: 1,
       endLine: 1,
       contentStart: 2,
@@ -212,30 +227,39 @@ describe('quoteInfoAt：引用块信息（上游 getQuoteInfoInPos 逐字移植�
   })
 })
 
-describe('paragraphBlockAt：段块邻行扩展（上游 getBlockLinesInPos 降级）', () => {
+describe('paragraphBlockAt：段块邻行扩展（上游 getBlockLinesInPos；懒查询）', () => {
+  /** paragraphBlockAt 懒查询形态：doc + query 直传（null = 查询拒绝） */
+  function blockOf(texts: readonly string[], lineNumber: number) {
+    const fake = makeSyntaxFake(texts.join('\n'))
+    return paragraphBlockAt(fake.doc, fake.query, lineNumber)
+  }
+
   it('连续文本行聚为一段块', () => {
-    const texts = ['one', 'two', 'three']
-    expect(paragraphBlockAt(texts, scanOf(texts), 2)).toEqual({ startLine: 1, endLine: 3 })
+    expect(blockOf(['one', 'two', 'three'], 2)).toEqual({ startLine: 1, endLine: 3 })
   })
 
   it('空行 / 引用 / 列表 / 围栏是段块边界', () => {
-    const texts = ['para', '', 'quote below', '> q', '- l', '```', 'c', '```']
-    const scan = scanOf(texts)
-    expect(paragraphBlockAt(texts, scan, 1)).toEqual({ startLine: 1, endLine: 1 })
+    expect(blockOf(['para', '', 'quote below', '> q', '- l', '```', 'c', '```'], 1)).toEqual({
+      startLine: 1,
+      endLine: 1,
+    })
   })
 
   it('标题行不并入邻侧段块（上游 reg_headings 排除）', () => {
     const texts = ['para', '# head', 'para2']
-    const scan = scanOf(texts)
     // 标题行自身视角：邻行扩展仍并入两侧文本（上游语义——当前行无排除）
-    expect(paragraphBlockAt(texts, scan, 2)).toEqual({ startLine: 1, endLine: 3 })
+    expect(blockOf(texts, 2)).toEqual({ startLine: 1, endLine: 3 })
     // 文本行视角：上行遇标题即止
-    expect(paragraphBlockAt(texts, scan, 1)).toEqual({ startLine: 1, endLine: 1 })
-    expect(paragraphBlockAt(texts, scan, 3)).toEqual({ startLine: 3, endLine: 3 })
+    expect(blockOf(texts, 1)).toEqual({ startLine: 1, endLine: 1 })
+    expect(blockOf(texts, 3)).toEqual({ startLine: 3, endLine: 3 })
   })
 
   it('首尾行扩展越界安全', () => {
-    const texts = ['only']
-    expect(paragraphBlockAt(texts, scanOf(texts), 1)).toEqual({ startLine: 1, endLine: 1 })
+    expect(blockOf(['only'], 1)).toEqual({ startLine: 1, endLine: 1 })
+  })
+
+  it('查询拒绝返回 null（整体不接管——拒绝语义由消费方解释）', () => {
+    const fake = makeSyntaxFake('aaa\nbbb')
+    expect(paragraphBlockAt(fake.doc, makeRejectingQuery(), 1)).toBeNull()
   })
 })

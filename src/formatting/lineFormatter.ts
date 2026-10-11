@@ -4,8 +4,11 @@
 //
 // 与上游的平台映射差异（记录于 docs/specs/auto-format.md）：
 // - 分区切分：上游 parseLineWithSyntaxTree 经 CM6 syntaxTree 切
-//   code/formula，本移植用文本降级版 splitLineIntoParts（见 inlineParts.ts）
-//   ——保护区（user）区间集经 options.protectedRanges 注入（#27 缝）；
+//   code/formula；本移植 #5 切片 B 起用树版查询 splitLineIntoParts
+//   （平台 experimental.syntax.inlineAt 驱动 + 链接区段剪除，见
+//   inlineParts.ts）——判定源（doc + query + 行号）经 syntax 参数注入，
+//   查询拒绝时返回 null（调用方按不格式化处理）；保护区（user）区间集
+//   经 options.protectedRanges 注入（#27 缝）；
 // - 输入输出：上游 formatLine(state, lineNum, ...) 从 EditorState 取行，
 //   本移植收纯字符串（curCh/prevCh 行内坐标）返回
 //   {line, cursorCh, changes}——坐标换算（doc↔行内）归管线层
@@ -13,6 +16,7 @@
 // - 行级重排的 \0 光标标记、$\\qquad$ 计为文本空隔、链接智能空格双分支
 //   等行为语义逐行保留。
 import { InlinePart, InlineType, SpaceState, splitLineIntoParts, type ProtectedInlineRange } from './inlineParts'
+import type { SyntaxDoc, SyntaxQuery } from '../syntaxTreeQuery'
 
 /** 保护区注入缝类型再导出（管线与接入层经 lineFormatter 单一入口消费） */
 export type { ProtectedInlineRange }
@@ -64,6 +68,13 @@ export interface FormatLineOptions {
   protectedRanges?: readonly ProtectedInlineRange[]
 }
 
+/** 树版行内分区的判定源（#5 切片 B）：行所在文档 + 语法查询 + 行号 */
+export interface LineSyntaxContext {
+  readonly doc: SyntaxDoc
+  readonly query: SyntaxQuery
+  readonly lineNumber: number
+}
+
 const stringInsertAt = (s: string, at: number, ch: string): string =>
   s.substring(0, at) + ch + s.substring(at)
 
@@ -71,22 +82,25 @@ const stringDeleteAt = (s: string, at: number): string =>
   s.substring(0, at) + s.substring(at + 1)
 
 /**
- * 格式化单行：
+ * 格式化单行（查询拒绝返回 null——不格式化）：
  * @param line 行文本（不含换行符）
  * @param curCh 光标行内位置
  * @param prevCh 光标前一时刻行内位置（undefined = 非键入驱动的整行重排）
+ * @param syntax 树版行内分区判定源（#5：doc + query + 行号）
  */
 export function formatLine(
   line: string,
   curCh: number,
   prevCh: number | undefined,
   settings: LineFormatSettings,
+  syntax: LineSyntaxContext,
   options: FormatLineOptions = {},
-): FormatLineResult {
+): FormatLineResult | null {
   if (/^\s*$/.test(line)) return { line, cursorCh: curCh, changes: [] }
 
   // 1. 行内分区（上游 parseLineWithSyntaxTree + splitTextWithLinkAndUserDefined）
-  const lineParts = splitLineIntoParts(line, options.protectedRanges ?? [])
+  const lineParts = splitLineIntoParts(syntax.doc, syntax.query, syntax.lineNumber, options.protectedRanges ?? [])
+  if (lineParts === null) return null // 查询拒绝：不格式化
 
   const linePartsOrigin = lineParts.map((p) => ({ ...p }))
   const inlineChangeList: InlineChange[] = []

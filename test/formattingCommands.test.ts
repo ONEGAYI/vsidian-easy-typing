@@ -38,11 +38,18 @@ import {
   type AutoFormatEngineSettings,
   type AutoFormatGate,
 } from '../src/autoFormatIntercept'
+import type { SyntaxQuery } from '../src/syntaxTreeQuery'
+import { makeSyntaxFake } from './syntaxFake'
 import { SETTINGS_TOPIC } from '../src/settings/store'
 import { pickMessages } from '../src/i18n'
 
 /** 出厂默认行格式化设置（语言对中英/中数/数英；autoCapital 默认关） */
 const SETTINGS = defaultAutoFormatEngineSettings().lineFormat
+
+/** 文档同文的树版查询（#5：行分类/行内分区的判定源注入） */
+function q(doc: string): SyntaxQuery {
+  return makeSyntaxFake(doc).query
+}
 
 /** 规范修饰键序（vsidian normalizeChord 归一序：ctrl→alt→shift→meta） */
 const MODIFIER_ORDER = ['ctrl', 'alt', 'shift', 'meta']
@@ -136,39 +143,49 @@ describe('命令定义契约（稳定 API 注册形状）', () => {
 
 // ===== 行分类（跳过口径） =====
 
-describe('classifyFormatSkipLines：跳过口径（文本降级单遍）', () => {
+/** 查询版行分类入口（fake 判定链；texts 与 doc 同文） */
+function skipOf(texts: readonly string[]): boolean[] {
+  const fake = makeSyntaxFake(texts.join('\n'))
+  return classifyFormatSkipLines(fake.doc, fake.query)
+}
+
+describe('classifyFormatSkipLines：跳过口径（#5 树版平台 kind 投影）', () => {
   it('frontmatter 全区跳过（含首尾边界）；非 --- 起始无 frontmatter', () => {
-    expect(classifyFormatSkipLines(['---', 'title: x', '---', '正文a'])).toEqual([
+    expect(skipOf(['---', 'title: x', '---', '正文a'])).toEqual([
       true,
       true,
       true,
       false,
     ])
-    expect(classifyFormatSkipLines(['正文', '---', 'x', '---'])).toEqual([false, false, false, false])
+    expect(skipOf(['正文', '---', 'x', '---'])).toEqual([false, false, false, false])
   })
 
   it('围栏代码块跳过（标记行与内容行；~~~ 与加长关栏；信息串只认开栏）', () => {
-    expect(classifyFormatSkipLines(['```js', 'const a=1', '````', '正文a'])).toEqual([
+    expect(skipOf(['```js', 'const a=1', '````', '正文a'])).toEqual([
       true,
       true,
       true,
       false,
     ])
-    expect(classifyFormatSkipLines(['~~~', 'x', '~~~', '正文a'])).toEqual([true, true, true, false])
+    expect(skipOf(['~~~', 'x', '~~~', '正文a'])).toEqual([true, true, true, false])
   })
 
   it('块级公式跳过（跨行 $$ 与单行完整 $$...$$）；行内 $ 混排文本不跳过', () => {
-    expect(classifyFormatSkipLines(['$$', 'x=1', '$$', '中文$x$a'])).toEqual([
+    expect(skipOf(['$$', 'x=1', '$$', '中文$x$a'])).toEqual([
       true,
       true,
       true,
       false,
     ])
-    expect(classifyFormatSkipLines(['$$x=1$$', '中文a'])).toEqual([true, false])
+    expect(skipOf(['$$x=1$$', '中文a'])).toEqual([true, false])
   })
 
   it('表格行跳过（含引用块内表格）；单个 | 的行不跳过', () => {
-    expect(classifyFormatSkipLines(['|表a|格|', '--- | ---', '中文a', '> |引a|用|', 'a | b'])).toEqual(
+    // '|---|---|' 为行首管道分隔行（#5 树版：fake 的表格近似认行首 | 形态，
+    // 真实平台树按 GFM 解析归属同样把有效表格的 delimiter 行判 table——
+    // 两口径一致；原「无首管道分隔行」形态是正则状态机特有，真实平台树
+    // 仅在有效表格内才把 delimiter 归 table，此处避开该边界形态）
+    expect(skipOf(['|表a|格|', '|---|---|', '中文a', '> |引a|用|', 'a | b'])).toEqual(
       [true, true, false, true, false],
     )
   })
@@ -198,7 +215,7 @@ describe('planFormatArticle：格式化全文（上游 formatArticle）', () => 
   it('逐行整行重排；代码块/表格行跳过；光标随插入空格平移', () => {
     const doc = '中文a\n```\ncode内x\n```\n|表a|格|\n中文b'
     const cursor = doc.length // 行尾
-    const plan = planFormatArticle(doc, cursor, cursor, SETTINGS)
+    const plan = planFormatArticle(doc, cursor, cursor, SETTINGS, q(doc))
     expect(plan).not.toBeNull()
     const { text, selection } = applyPlan(doc, plan!)
     expect(text).toBe('中文 a\n```\ncode内x\n```\n|表a|格|\n中文 b')
@@ -206,19 +223,19 @@ describe('planFormatArticle：格式化全文（上游 formatArticle）', () => 
   })
 
   it('autoCapital 强制关（上游 {...settings, AutoCapital: false}）：句首不大写', () => {
-    const plan = planFormatArticle('abc. def', 8, 8, { ...SETTINGS, autoCapital: true })
+    const plan = planFormatArticle('abc. def', 8, 8, { ...SETTINGS, autoCapital: true }, q('abc. def'))
     expect(plan).toBeNull() // 无变更即不派发
   })
 
   it('无变更返回 null', () => {
-    expect(planFormatArticle('中文 a', 4, 4, SETTINGS)).toBeNull()
+    expect(planFormatArticle('中文 a', 4, 4, SETTINGS, q('中文 a'))).toBeNull()
   })
 })
 
 describe('planFormatSelection：格式化选区/当前行（上游 formatSelectionOrCurLine）', () => {
   it('无选区 = 光标行；光标 ch 跟踪（上游光标行传真实 ch）', () => {
     const doc = '中文abc'
-    const plan = planFormatSelection(doc, 3, 3, SETTINGS) // 光标在 abc 词内
+    const plan = planFormatSelection(doc, 3, 3, SETTINGS, q(doc)) // 光标在 abc 词内
     expect(plan).not.toBeNull()
     const { text, selection } = applyPlan(doc, plan!)
     expect(text).toBe('中文 abc')
@@ -227,7 +244,7 @@ describe('planFormatSelection：格式化选区/当前行（上游 formatSelecti
 
   it('选区跨行：区间行逐行重排（区间内代码行跳过），前向整区间全选恢复', () => {
     const doc = '中文a\n```\ncode\n```\n中文b'
-    const plan = planFormatSelection(doc, 0, doc.length, SETTINGS)
+    const plan = planFormatSelection(doc, 0, doc.length, SETTINGS, q(doc))
     expect(plan).not.toBeNull()
     const { text, selection } = applyPlan(doc, plan!)
     expect(text).toBe('中文 a\n```\ncode\n```\n中文 b')
@@ -237,7 +254,7 @@ describe('planFormatSelection：格式化选区/当前行（上游 formatSelecti
 
   it('同行选区恢复为整行反向全选（上游 L86-91 怪癖原样保留）', () => {
     const doc = '中文ab'
-    const plan = planFormatSelection(doc, 2, 4, SETTINGS) // 前向选 'ab'
+    const plan = planFormatSelection(doc, 2, 4, SETTINGS, q(doc)) // 前向选 'ab'
     expect(plan).not.toBeNull()
     const { text, selection } = applyPlan(doc, plan!)
     expect(text).toBe('中文 ab')
@@ -247,7 +264,7 @@ describe('planFormatSelection：格式化选区/当前行（上游 formatSelecti
 
   it('反向跨行选区：anchor 侧行尾 → head 侧行首', () => {
     const doc = '中文a\n中文b'
-    const plan = planFormatSelection(doc, doc.length, 0, SETTINGS)
+    const plan = planFormatSelection(doc, doc.length, 0, SETTINGS, q(doc))
     const { text, selection } = applyPlan(doc, plan!)
     expect(text).toBe('中文 a\n中文 b')
     expect(selection.anchor).toBe(text.length)
@@ -255,8 +272,8 @@ describe('planFormatSelection：格式化选区/当前行（上游 formatSelecti
   })
 
   it('区间全为跳过行或无变更 → null', () => {
-    expect(planFormatSelection('|表a|格|', 0, 0, SETTINGS)).toBeNull()
-    expect(planFormatSelection('中文 a', 0, 7, SETTINGS)).toBeNull()
+    expect(planFormatSelection('|表a|格|', 0, 0, SETTINGS, q('|表a|格|'))).toBeNull()
+    expect(planFormatSelection('中文 a', 0, 7, SETTINGS, q('中文 a'))).toBeNull()
   })
 })
 
@@ -435,6 +452,8 @@ function fakeCommands(rejectIds: ReadonlySet<string> = new Set()) {
 function harness(options: {
   engine?: Partial<AutoFormatEngineSettings>
   views?: EditorViewRegistry
+  /** #5 语法查询工厂（缺省 null——需要行分类的 planner 不执行） */
+  queryOf?: (instanceId: string) => SyntaxQuery | null
 }) {
   const commands = fakeCommands()
   const channelCalls: Array<{ topic: string; payload: unknown }> = []
@@ -449,6 +468,7 @@ function harness(options: {
     },
     gate: stubGate(options.engine),
     views: options.views ?? createEditorViewRegistry((view) => (view as unknown as { id?: string }).id ?? null),
+    queryOf: options.queryOf ?? (() => null),
     notify: (request) => notices.push(request),
     messages: pickMessages('zh-CN'),
   })
@@ -489,6 +509,7 @@ describe('registerFormattingCommands：注册面', () => {
       channel: { request: () => Promise.resolve({ ok: true, result: null }) },
       gate: stubGate(),
       views: createEditorViewRegistry(() => null),
+      queryOf: () => null,
       messages: pickMessages('zh-CN'),
     })
     expect(registration.outcomes.find((o) => o.localId === FORMAT_ARTICLE_COMMAND_ID)).toMatchObject({
@@ -521,7 +542,11 @@ describe('视图命令执行流：目标句柄视图单事务派发', () => {
       uri: options.uri ?? 'file:///v/free/a.md',
       text: options.doc,
     })
-    const h = harness({ engine: options.engine, views: registry })
+    const h = harness({
+      engine: options.engine,
+      views: registry,
+      queryOf: () => q(options.doc),
+    })
     return { view, specs, handle, ...h }
   }
 
@@ -606,6 +631,7 @@ describe('视图命令执行流：目标句柄视图单事务派发', () => {
         channel: { request: () => Promise.resolve({ ok: true, result: null }) },
         gate,
         views: createEditorViewRegistry(() => null),
+      queryOf: () => null,
         messages: pickMessages('zh-CN'),
       })
       const handler = commands.defs.find((d) => d.def.id === FORMAT_ARTICLE_COMMAND_ID)!.handler
@@ -636,6 +662,7 @@ describe('视图命令执行流：目标句柄视图单事务派发', () => {
       channel: { request: () => Promise.resolve(failed) },
       gate: stubGate(),
       views: createEditorViewRegistry(() => null),
+      queryOf: () => null,
       notify: (request) => notices.push(request),
       messages: pickMessages('zh-CN'),
     })
@@ -653,7 +680,8 @@ describe('句柄路径：登记面外的主正文句柄快照提交', () => {
       text: '中文a\n中文b',
       sel: 7,
     })
-    const h = harness({})
+    const h = harness({ queryOf: () => q('中文a\n中文b') })
+
     h.handlerOf(FORMAT_ARTICLE_COMMAND_ID)!(handle)
     await flush()
     expect(applyEditsCalls).toHaveLength(1)
@@ -686,6 +714,7 @@ describe('句柄路径：登记面外的主正文句柄快照提交', () => {
       channel: { request: () => Promise.resolve({ ok: true, result: null }) },
       gate: stubGate(),
       views: createEditorViewRegistry(() => null),
+      queryOf: () => null,
       messages: pickMessages('zh-CN'),
     })
     expect(() =>

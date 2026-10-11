@@ -58,27 +58,35 @@ import {
 // intercept 层经本模块取 tabstop 类型（单一来源，避免多点直连引擎内部）
 export type { TabstopSpec } from './rules/rule-engine'
 import { RuleScope } from './rules/rule-engine'
-import { detectScopeFromTextMemoized, type FallbackScopeInfo } from './ruleScopeFallback'
+import { detectScopeViaQuery, docOfLines, type ScopeInfo, type SyntaxQuery } from './syntaxTreeQuery'
 
-// ===== 作用域判定的事务级优化（审查 C-P1-1 修复） =====
+// ===== 作用域判定的注入（#5 切片 B：树版换传） =====
 //
 // 同一输入事务被行为链逐族驱动（5 Input 族 + Delete/SelectKey 族 +
-// autoformat），各管线对同一 (text, pos) 重复全文 O(L) 扫描。两层去重：
+// autoformat）。两层优化/口径：
 // 1. **All 短路**：族内全部规则作用域含 All 时（内置 20 条全 All），
 //    scopeHint 不参与命中判定（引擎 process 的作用域过滤对含 All 规则
 //    恒短路、语言过滤也仅在 scopeHint===Code 时才查）——直接传 All，
-//    跳过扫描。非 All 规则在场（用户规则）时才真实判定。
-// 2. **memo 复用**：真实判定统一经 detectScopeFromTextMemoized——同
-//    (text, pos) 的重复调用复用单槽缓存（跨族共享；autoformat 同源）。
+//    跳过查询。非 All 规则在场（用户规则）时才真实判定。
+// 2. **树版判定**：真实判定走 syntaxTreeQuery.detectScopeViaQuery（平台
+//    experimental.syntax 位置查询 + 链接区段排除 + codeBlockAtViaQuery 语言
+//    提取）；查询经 options.scopeQuery 注入（#5 切片 B，rule-engine 内核
+//    零改动——注入缝换传）。非 All 规则在场而查询缺席（语法面缺席/反查
+//    失败）→ 不接管返回 null，不 fallback 正则（原 (text,pos) memo 随
+//    降级实现一并删除——查询版 µs 级无重复扫描成本，保留只会增加陈旧
+//    风险，#5 切片 B 决策）。
 
-/** 作用域判定（带 All 短路与 memo）：unscoped 时免扫描传 All */
+/** 作用域判定（带 All 短路）：unscoped 时免查询传 All；查询缺席返回 null */
 function resolveScopeForEngine(
   engine: RuleEngine,
   text: string,
+  options: PipelineOptions,
   pos: number,
-): FallbackScopeInfo {
+): ScopeInfo | null {
   if (engine.allRulesUnscoped()) return { scope: RuleScope.All }
-  return detectScopeFromTextMemoized(text, pos)
+  const query = options.scopeQuery
+  if (query === undefined) return null // 非 All 规则在场而查询缺席：不接管
+  return detectScopeViaQuery(docOfLines(text.split('\n')), query, pos)
 }
 
 // ===== 工单 #27：保护区注入（「用户规则尊重保护区」的判定位） =====
@@ -99,6 +107,8 @@ export interface ProtectedZoneProbe {
 interface PipelineOptions {
   debug?: boolean
   protectedZone?: ProtectedZoneProbe
+  /** #5 树版作用域查询源：非 All 规则在场时必得（缺席 = 不接管） */
+  scopeQuery?: SyntaxQuery
 }
 
 /** 行定位 + 检查列换算 + 探针判定（三条管线共用） */
@@ -185,7 +195,8 @@ export function planInputRuleWithTabstops(
   if (from !== to) return null // 非塌缩选区：Input 类不处理（包裹归 SelectKey）
   if (from > ctx.snapshot.text.length) return null // 防御：越界坐标不进引擎
 
-  const scope = resolveScopeForEngine(engine, ctx.snapshot.text, from)
+  const scope = resolveScopeForEngine(engine, ctx.snapshot.text, options, from)
+  if (scope === null) return null // 非 All 规则在场而查询缺席：不接管
   // #27 保护区（上游 triggerCvtRule 同位判定）：检查列回退一列（input.*）
   if (
     options.protectedZone !== undefined &&
@@ -306,7 +317,8 @@ export function planDeleteRuleModification(
   const { docText, cursor } = rebuildPreDeleteState(ctx, replaced)
   if (cursor > docText.length) return null // 防御：越界坐标不进引擎
 
-  const scope = resolveScopeForEngine(engine, docText, cursor)
+  const scope = resolveScopeForEngine(engine, docText, options, cursor)
+  if (scope === null) return null // 非 All 规则在场而查询缺席：不接管
   // #27 保护区（票面对称扩展；delete.* 检查列不回退）：事务前文档 + 虚拟光标
   if (
     options.protectedZone !== undefined &&
@@ -375,7 +387,8 @@ export function planSelectKeyRuleModification(
     ctx.snapshot.text.slice(replaced.from + ctx.inputText.length)
   if (replaced.to > docText.length) return null // 防御：越界坐标不进引擎
 
-  const scope = resolveScopeForEngine(engine, docText, replaced.from)
+  const scope = resolveScopeForEngine(engine, docText, options, replaced.from)
+  if (scope === null) return null // 非 All 规则在场而查询缺席：不接管
   // #27 保护区（票面对称扩展；input.type 检查列回退一列）：事务前文档 + 替换起点
   if (
     options.protectedZone !== undefined &&

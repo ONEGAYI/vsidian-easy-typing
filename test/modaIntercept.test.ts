@@ -8,6 +8,8 @@ import type { EditorView } from '@codemirror/view'
 import type { AddonChannelOutcome, VsidianAddonPageSdk } from '../types/vendor/shared/addonPage'
 import type { AddonViewHandle } from '../types/vendor/shared/addonEditApi'
 import { pickMessages } from '../src/i18n'
+import type { SyntaxQuery } from '../src/syntaxTreeQuery'
+import { makeSyntaxFake } from './syntaxFake'
 import { SETTINGS_TOPIC } from '../src/settings/store'
 import {
   buildSelectBlockCommandDefinition,
@@ -15,6 +17,11 @@ import {
   createModACommand,
   createSelectBlockCommandHandler,
 } from '../src/modaIntercept'
+
+/** view → 同文 fake 查询（#5 切片 B 接线形态：page-editor 注入查询工厂） */
+function fakeQueryOfView(view: EditorView): SyntaxQuery | null {
+  return makeSyntaxFake(view.state.doc.toString()).query
+}
 
 /** 模拟 view：state + dispatch 捕获（对齐 taboutIntercept 测试模式） */
 interface DispatchCall {
@@ -35,14 +42,14 @@ function fakeView(state: EditorState): { view: EditorView; calls: DispatchCall[]
 
 describe('Mod+A Command（抢先层）：门控与派发形态', () => {
   it('功能关 → 全透传（return false 零派发，落穿平台链）', () => {
-    const command = createModACommand({ isEnabled: () => false })
+    const command = createModACommand({ isEnabled: () => false, queryOf: fakeQueryOfView })
     const { view, calls } = fakeView(EditorState.create({ doc: 'aaa\nbbb', selection: { anchor: 1 } }))
     expect(command(view)).toBe(false)
     expect(calls).toHaveLength(0)
   })
 
   it('功能开且命中 → 派发纯选区事务（零写回）并接管（return true）', () => {
-    const command = createModACommand({ isEnabled: () => true })
+    const command = createModACommand({ isEnabled: () => true, queryOf: fakeQueryOfView })
     const { view, calls } = fakeView(EditorState.create({ doc: 'aaa\nbbb', selection: { anchor: 1 } }))
     expect(command(view)).toBe(true)
     expect(calls).toHaveLength(1)
@@ -51,8 +58,15 @@ describe('Mod+A Command（抢先层）：门控与派发形态', () => {
   })
 
   it('功能开但状态机失配（围栏内）→ 透传（return false 零派发）', () => {
-    const command = createModACommand({ isEnabled: () => true })
+    const command = createModACommand({ isEnabled: () => true, queryOf: fakeQueryOfView })
     const { view, calls } = fakeView(EditorState.create({ doc: '```\nc\n```', selection: { anchor: 5 } }))
+    expect(command(view)).toBe(false)
+    expect(calls).toHaveLength(0)
+  })
+
+  it('语法查询缺席（反查失败/语法面缺席）→ 透传（#5：不接管不 fallback）', () => {
+    const command = createModACommand({ isEnabled: () => true, queryOf: () => null })
+    const { view, calls } = fakeView(EditorState.create({ doc: 'aaa\nbbb', selection: { anchor: 1 } }))
     expect(command(view)).toBe(false)
     expect(calls).toHaveLength(0)
   })
@@ -162,26 +176,45 @@ describe('「选择当前块」命令 handler：目标句柄决策', () => {
 
   it('目标句柄：快照决策 + setSelection（零文本变更事务）', () => {
     const { handle, setSelectionCalls } = fakeHandle('aaa\nbbb', 1)
-    const handler = createSelectBlockCommandHandler({ cm6: { state: { EditorState } } })
+    const handler = createSelectBlockCommandHandler({
+      cm6: { state: { EditorState } },
+      queryOf: () => makeSyntaxFake('aaa\nbbb').query,
+    })
     handler(handle)
     expect(setSelectionCalls).toEqual([[{ anchor: 0, head: 7 }]])
   })
 
   it('无活动视图（target null）→ 无动作', () => {
-    const handler = createSelectBlockCommandHandler({ cm6: { state: { EditorState } } })
+    const handler = createSelectBlockCommandHandler({
+      cm6: { state: { EditorState } },
+      queryOf: () => makeSyntaxFake('aaa').query,
+    })
     expect(() => handler(null)).not.toThrow()
   })
 
   it('空行无操作（不派发）', () => {
     const { handle, setSelectionCalls } = fakeHandle('aaa\n\nbbb', 4)
-    const handler = createSelectBlockCommandHandler({ cm6: { state: { EditorState } } })
+    const handler = createSelectBlockCommandHandler({
+      cm6: { state: { EditorState } },
+      queryOf: () => makeSyntaxFake('aaa\n\nbbb').query,
+    })
     handler(handle)
     expect(setSelectionCalls).toHaveLength(0)
   })
 
   it('快照失败（view-disposed）→ 无操作不抛错', () => {
     const { handle, setSelectionCalls } = fakeHandle('aaa', 0, true)
-    const handler = createSelectBlockCommandHandler({ cm6: { state: { EditorState } } })
+    const handler = createSelectBlockCommandHandler({
+      cm6: { state: { EditorState } },
+      queryOf: () => makeSyntaxFake('aaa').query,
+    })
+    expect(() => handler(handle)).not.toThrow()
+    expect(setSelectionCalls).toHaveLength(0)
+  })
+
+  it('语法查询缺席 → 无动作不抛错（#5：不接管）', () => {
+    const { handle, setSelectionCalls } = fakeHandle('aaa\nbbb', 1)
+    const handler = createSelectBlockCommandHandler({ cm6: { state: { EditorState } }, queryOf: () => null })
     expect(() => handler(handle)).not.toThrow()
     expect(setSelectionCalls).toHaveLength(0)
   })

@@ -39,6 +39,8 @@ import { LIST_MARKER_RE, QUOTE_PREFIX_RE } from '../src/syntaxTreeQuery'
 export interface SyntaxFake {
   readonly doc: SyntaxDoc
   readonly query: SyntaxQuery
+  /** 查询调用计数（#5 切片 B 懒查询防回潮断言用；只增计数不改判定语义） */
+  readonly counts: { lineTypeAt: number; inlineAt: number }
 }
 
 /** 从 LF 文本构造平台判定链 fake（fm/围栏/缩进代码/跨行 $$ 表预计算） */
@@ -190,8 +192,10 @@ export function makeSyntaxFake(text: string): SyntaxFake {
   }
   const inMathBlock = (pos: number): boolean => mathBlocks.some((m) => pos >= m.from && pos < m.to)
 
+  const counts = { lineTypeAt: 0, inlineAt: 0 }
   const query: SyntaxQuery = {
     lineTypeAt(pos: number): AddonSyntaxLineTypeResult {
+      counts.lineTypeAt += 1
       const line = lineAtPos(pos)
       const i = line.number - 1
       const ok = (kind: AddonSyntaxLineKind): AddonSyntaxLineTypeResult => ({ ok: true, kind, nodeNames: [`fake:${kind}`] })
@@ -208,6 +212,7 @@ export function makeSyntaxFake(text: string): SyntaxFake {
       return ok('text')
     },
     inlineAt(pos: number): AddonSyntaxInlineResult {
+      counts.inlineAt += 1
       const i = lineAtPos(pos).number - 1
       const ok = (kind: 'code' | 'formula' | 'none'): AddonSyntaxInlineResult => ({ ok: true, kind, nodeNames: [`fake:${kind}`] })
       if (inFmPos(pos)) return ok('none')
@@ -218,7 +223,7 @@ export function makeSyntaxFake(text: string): SyntaxFake {
       return ok('none')
     },
   }
-  return { doc, query }
+  return { doc, query, counts }
 }
 
 /** 反引号等长配对 span（同行为限；未配对按字面跳过） */
