@@ -28,8 +28,8 @@
 // frontmatter 由 isInsideFrontmatter 补判（平台行为链已门控 frontmatter/
 // 块代码/表格格区，此处为管线级防御重复，表格不另判——依赖平台门控，
 // 记录于规格）。行内代码/公式作为分区由 lineFormatter 处理，无需行级跳
-// 过。查询拒绝 → detectScopeViaQuery 恒 Text（A 定稿语义），后续行内分区
-// 的 inlineAt 同拒绝 → formatLine null → 管线整体 null（不格式化）。
+// 过。查询拒绝 → detectScopeViaQuery 返回 null（评审 P3：拒绝不静默归
+// Text）——作用域门控处即拦截不格式化，不待行内分区的 inlineAt 拒绝兜底。
 // 【memo 已删除】（原 (text,pos) 单槽缓存的动机是同一事务 6 次同键重复
 // 全文 O(L) 正则扫描，审查 C-P1-1；查询版 µs 级无此成本，保留只会增加
 // 陈旧风险——#5 切片 B 决策）。
@@ -101,9 +101,11 @@ export function planAutoFormatLineModification(
   const fromB = head - inputText.length
   if (fromB < 0) return null // 防御：inputText 与光标失配（多选区拼接等）
 
-  // 作用域门控（树版）：Code / Formula / frontmatter 行不格式化
+  // 作用域门控（树版）：Code / Formula / frontmatter 行不格式化；查询拒绝
+  //（null，评审 P3）→ 不接管不格式化
   const doc: SyntaxDoc = docOfLines(text.split('\n'))
-  if (detectScopeViaQuery(doc, options.query, head).scope !== RuleScope.Text) return null
+  const scope = detectScopeViaQuery(doc, options.query, head)
+  if (scope === null || scope.scope !== RuleScope.Text) return null
   if (isInsideFrontmatter(text, fromB)) return null
 
   // 行定位与行内坐标（上游 formatLineOfDoc 的 offsetToPos 换算；行结构

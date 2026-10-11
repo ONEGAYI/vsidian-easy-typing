@@ -76,7 +76,12 @@ import { detectScopeViaQuery, docOfLines, type ScopeInfo, type SyntaxQuery } fro
 //    降级实现一并删除——查询版 µs 级无重复扫描成本，保留只会增加陈旧
 //    风险，#5 切片 B 决策）。
 
-/** 作用域判定（带 All 短路）：unscoped 时免查询传 All；查询缺席返回 null */
+/**
+ * 作用域判定（带 All 短路）：unscoped 时免查询传 All；返回 null = 不接管
+ * ——两个来源：查询缺席（options.scopeQuery undefined，语法面缺席/反查
+ * 失败）与查询拒绝（detectScopeViaQuery ok:false——view-disposed 竞态等；
+ * 评审 P3：拒绝不静默归 Text 施加规则修饰，spec §二拒绝口径）。
+ */
 function resolveScopeForEngine(
   engine: RuleEngine,
   text: string,
@@ -196,7 +201,7 @@ export function planInputRuleWithTabstops(
   if (from > ctx.snapshot.text.length) return null // 防御：越界坐标不进引擎
 
   const scope = resolveScopeForEngine(engine, ctx.snapshot.text, options, from)
-  if (scope === null) return null // 非 All 规则在场而查询缺席：不接管
+  if (scope === null) return null // 查询缺席/查询拒绝（评审 P3）：不接管
   // #27 保护区（上游 triggerCvtRule 同位判定）：检查列回退一列（input.*）
   if (
     options.protectedZone !== undefined &&
@@ -318,7 +323,7 @@ export function planDeleteRuleModification(
   if (cursor > docText.length) return null // 防御：越界坐标不进引擎
 
   const scope = resolveScopeForEngine(engine, docText, options, cursor)
-  if (scope === null) return null // 非 All 规则在场而查询缺席：不接管
+  if (scope === null) return null // 查询缺席/查询拒绝（评审 P3）：不接管
   // #27 保护区（票面对称扩展；delete.* 检查列不回退）：事务前文档 + 虚拟光标
   if (
     options.protectedZone !== undefined &&
@@ -388,7 +393,7 @@ export function planSelectKeyRuleModification(
   if (replaced.to > docText.length) return null // 防御：越界坐标不进引擎
 
   const scope = resolveScopeForEngine(engine, docText, options, replaced.from)
-  if (scope === null) return null // 非 All 规则在场而查询缺席：不接管
+  if (scope === null) return null // 查询缺席/查询拒绝（评审 P3）：不接管
   // #27 保护区（票面对称扩展；input.type 检查列回退一列）：事务前文档 + 替换起点
   if (
     options.protectedZone !== undefined &&

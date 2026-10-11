@@ -162,32 +162,12 @@ function planListSelection(
   const childRange: SelectionRange = { anchor: anchorLine.from, head: doc.line(childEndLine).to }
   levels.push(childRange)
   // 档 3：整列表（上方/下方按「列表行或缩进 ≥2」连续扩展；缩进先行短路
-  // 减少查询次数）
-  let startLine = anchorLine.number
-  for (let i = anchorLine.number - 1; i >= 1; i--) {
-    const text = doc.line(i).text
-    if (countIndent(text) >= 2) {
-      startLine = i
-      continue
-    }
-    const isList = isListLine(doc, query, i)
-    if (isList === null) return null // 查询拒绝：不接管
-    if (isList) startLine = i
-    else break
-  }
-  let endLine = anchorLine.number
-  for (let i = anchorLine.number + 1; i <= doc.lines; i++) {
-    const text = doc.line(i).text
-    if (countIndent(text) >= 2) {
-      endLine = i
-      continue
-    }
-    const isList = isListLine(doc, query, i)
-    if (isList === null) return null // 查询拒绝：不接管
-    if (isList) endLine = i
-    else break
-  }
-  const wholeRange: SelectionRange = { anchor: doc.line(startLine).from, head: doc.line(endLine).to }
+  // 减少查询次数——上/下两向同形，提取为 extendListEdge，评审 S2）
+  const upEdge = extendListEdge(doc, query, anchorLine.number, -1)
+  if (upEdge === null) return null // 查询拒绝：不接管
+  const downEdge = extendListEdge(doc, query, anchorLine.number, 1)
+  if (downEdge === null) return null // 查询拒绝：不接管
+  const wholeRange: SelectionRange = { anchor: doc.line(upEdge).from, head: doc.line(downEdge).to }
   if (wholeRange.anchor !== childRange.anchor || wholeRange.head !== childRange.head) {
     levels.push(wholeRange)
   }
@@ -208,6 +188,33 @@ function planListSelection(
 }
 
 // ---- 内部工具 ----
+
+/**
+ * 档 3 的单向边缘扩展（评审 S2 自上/下两同形循环提取；行为逐字等价）：
+ * 从 fromLine 起，列表行或缩进 ≥2 的行（缩进先行短路，减少查询次数）
+ * 连续纳入并推进边缘，其余行停。返回边缘行号；查询拒绝返回 null
+ * （整体不接管）。step=-1 向上（边界 1）、step=1 向下（边界 doc.lines）。
+ */
+function extendListEdge(
+  doc: SyntaxDoc,
+  query: SyntaxQuery,
+  fromLine: number,
+  step: -1 | 1,
+): number | null {
+  let edge = fromLine
+  for (let i = fromLine + step; i >= 1 && i <= doc.lines; i += step) {
+    const text = doc.line(i).text
+    if (countIndent(text) >= 2) {
+      edge = i
+      continue
+    }
+    const isList = isListLine(doc, query, i)
+    if (isList === null) return null // 查询拒绝：不接管
+    if (isList) edge = i
+    else break
+  }
+  return edge
+}
 
 function countIndent(text: string): number {
   const match = text.match(/^\s*/)

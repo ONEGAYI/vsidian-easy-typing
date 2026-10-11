@@ -6,6 +6,7 @@ import {
   codeBlockAtViaQuery,
   codeBlocksViaQuery,
   detectScopeViaQuery,
+  docOfLines,
   FORMAT_SKIP_BY_PLATFORM,
   lineInfoAt,
   LINE_KIND_BY_PLATFORM,
@@ -244,8 +245,29 @@ describe('detectScopeViaQuery：作用域判定（上游 detectRuleScope 查询�
     expect(detectScopeViaQuery(d, query, posOf(8, 2))).toEqual({ scope: RuleScope.Text })
   })
 
-  it('查询拒绝：按 Text 处理（非 live/已销毁视图上判定无意义）', () => {
-    expect(detectScopeViaQuery(d, makeRejectingQuery(), posOf(2, 0))).toEqual({ scope: RuleScope.Text })
+  it('查询拒绝：返回 null（评审 P3——拒绝不静默归 Text，「不接管」由消费方解释）', () => {
+    // 拒绝只发生在非 live/已销毁视图（判定无意义）；spec §二「查询拒绝的
+    // 处理」口径：返回 null/false 透传平台原生行为，不 fallback 正则
+    expect(detectScopeViaQuery(d, makeRejectingQuery(), posOf(2, 0))).toBeNull()
+  })
+})
+
+describe('docOfLines：line(n) 越界守卫（评审 S7）', () => {
+  it('正常行号返回行结构（from/to/text 与 LF 坐标一致）', () => {
+    const doc = docOfLines(['ab', 'cd'])
+    expect(doc.line(1)).toEqual({ number: 1, from: 0, to: 2, text: 'ab' })
+    expect(doc.line(2)).toEqual({ number: 2, from: 3, to: 5, text: 'cd' })
+  })
+
+  it.each([0, 3, 1.5, Number.NaN])('越界/非整数行号 %s → 抛 RangeError（对齐 CM6 Text.line 的越界语义；lineAt 仍钳制）', (n) => {
+    const doc = docOfLines(['ab', 'cd'])
+    expect(() => doc.line(n)).toThrow(RangeError)
+  })
+
+  it('lineAt 越界钳制文末不变（与 line 的抛错语义分工一致）', () => {
+    const doc = docOfLines(['ab', 'cd'])
+    expect(doc.lineAt(999).number).toBe(2)
+    expect(doc.lineAt(-1).number).toBe(1)
   })
 })
 

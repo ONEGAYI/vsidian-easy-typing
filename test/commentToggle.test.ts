@@ -18,7 +18,7 @@ import {
   TOGGLE_COMMENT_DEFAULT_BINDINGS,
 } from '../src/commentToggle'
 import { createEditorViewRegistry } from '../src/plainPasteCommand'
-import { makeSyntaxFake } from './syntaxFake'
+import { makeRejectingQuery, makeSyntaxFake } from './syntaxFake'
 
 /** 规范修饰键序（vsidian normalizeChord 归一序：ctrl→alt→shift→meta） */
 const MODIFIER_ORDER = ['ctrl', 'alt', 'shift', 'meta']
@@ -303,6 +303,15 @@ describe('代码块语言感知端到端（决策单元，≥3 语言矩阵）',
     expect(applyPlan('hello', 2)).toEqual({ doc: 'he%%  %%llo', head: 5 })
   })
 
+  it('查询拒绝 → planCommentToggle 返回 null 无动作（评审 P3：拒绝不静默归 Text 走 %% 分支）', () => {
+    // 查询在场但 ok:false（view-disposed 竞态等）：spec §二「查询拒绝的处理」
+    // 口径——消费面按「不接管」处理（null），不产 %% 计划不派发
+    for (const doc of ['hello', '```python\nx = 1\n```']) {
+      const state = EditorState.create({ doc, selection: { anchor: 2 } })
+      expect(planCommentToggle(state, makeRejectingQuery())).toBeNull()
+    }
+  })
+
   it('多行选区 → 跨到的行逐行切换、空白行跳过、单事务承载', () => {
     const doc = '```python\naa\nbb\n\ncc\n```'
     // 选 line2 行内 到 line5 行尾（line4 空白行应跳过）
@@ -452,6 +461,18 @@ describe('命令 handler（目标句柄路由 + 守卫 + 单事务派发）', ()
   it('未知语言 → 计划为 null，不派发（上游 return false 口径）', () => {
     const { view, dispatched } = fakeCmdView('```xyz\ncode\n```', 10)
     setup(view)(fakeHandle('main'))
+    expect(dispatched).toHaveLength(0)
+  })
+
+  it('查询在场但拒绝（ok:false 竞态）→ 计划 null 不派发（评审 P3 拒绝语义端到端）', () => {
+    const { view, dispatched } = fakeCmdView('hello', 2)
+    const registry = createEditorViewRegistry((v) => (v as unknown as { id: string }).id)
+    registry.register(view)
+    const handler = createToggleCommentCommandHandler({
+      views: registry,
+      queryOf: () => makeRejectingQuery(),
+    })
+    handler(fakeHandle('main'))
     expect(dispatched).toHaveLength(0)
   })
 

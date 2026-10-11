@@ -175,12 +175,14 @@ export interface CommentTogglePlan {
  * 注释切换决策：选区起点处作用域判定（#5 切片 B 树版
  * detectScopeViaQuery——state.doc 即 SyntaxDoc）——代码块内按围栏语言行
  * 切换（未知语言 → null 无操作）；其余（含代码块外的公式/正文）走
- * Markdown `%%` 分支（恒有计划）。多选区只处理主选区（上游口径）；
- * 全部变更单事务承载（撤销一笔）。
+ * Markdown `%%` 分支（恒有计划）；查询拒绝（null，评审 P3：拒绝不静默归
+ * Text 走 %% 分支）→ null 无动作（spec §二拒绝口径）。多选区只处理主选
+ * 区（上游口径）；全部变更单事务承载（撤销一笔）。
  */
 export function planCommentToggle(state: EditorState, query: SyntaxQuery): CommentTogglePlan | null {
   const selection = state.selection.main
   const scope = detectScopeViaQuery(state.doc, query, selection.from)
+  if (scope === null) return null // 查询拒绝：不接管（handler 不派发）
   if (scope.scope === RuleScope.Code) {
     return planCodeBlockCommentToggle(state, scope.language)
   }

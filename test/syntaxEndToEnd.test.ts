@@ -19,11 +19,12 @@ import {
 import type { AddonSyntaxLineKind } from '../types/vendor/shared/addonSyntaxApi'
 import { splitLineIntoParts } from '../src/formatting/inlineParts'
 import { classifyFormatSkipLines } from '../src/formattingCommands'
+import { planCommentToggle } from '../src/commentToggle'
 import {
   planModASelection as planModASelectionImpl,
   type SelectionRange,
 } from '../src/modaSelection'
-import { makeSyntaxFake } from './syntaxFake'
+import { makeRejectingQuery, makeSyntaxFake } from './syntaxFake'
 
 // =====================================================================
 // 文档样本（真实感笔记：frontmatter 真实字段、多级标题、段落、嵌套与
@@ -309,6 +310,30 @@ describe('文档 A：ModA 渐进选择三档决策', () => {
   it('frontmatter 与代码块内：不接管（透传平台全选）', () => {
     expect(planWith(DOC_A, posOf(2, 5))).toBeNull()
     expect(planWith(DOC_A, posOf(30, 3))).toBeNull()
+  })
+})
+
+describe('文档 A：注释切换链抽查（planCommentToggle，评审 P1 补链）', () => {
+  const fake = makeSyntaxFake(DOC_A)
+  const posOf = (lineNo: number, col: number): number => fake.doc.line(lineNo).from + col
+
+  it('代码块内（L30 ts 代码体）→ 语言注释分支：行首缩进后插入「// 」', () => {
+    const state = EditorState.create({ doc: DOC_A, selection: { anchor: posOf(30, 3) } })
+    const plan = planCommentToggle(state, fake.query)
+    expect(plan).not.toBeNull()
+    expect(plan!.changes).toEqual([{ from: posOf(30, 0), to: posOf(30, 0), insert: '// ' }])
+  })
+
+  it('普通文本（L9 段落行）→ Markdown %% 分支：光标处插入「%%  %%」', () => {
+    const state = EditorState.create({ doc: DOC_A, selection: { anchor: posOf(9, 3) } })
+    const plan = planCommentToggle(state, fake.query)
+    expect(plan).not.toBeNull()
+    expect(plan!.changes).toEqual([{ from: posOf(9, 3), to: posOf(9, 3), insert: '%%  %%' }])
+  })
+
+  it('查询拒绝 → 不接管无动作（评审 P3 联动：拒绝不静默归 Text 走 %% 分支）', () => {
+    const state = EditorState.create({ doc: DOC_A, selection: { anchor: posOf(9, 3) } })
+    expect(planCommentToggle(state, makeRejectingQuery())).toBeNull()
   })
 })
 

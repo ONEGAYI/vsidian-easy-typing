@@ -27,6 +27,10 @@
 //   复刻，测试用例避开货币形态；反引号 span 内的 $ 跳过。
 // - 平台树无 wikilink/mdlink 节点（反引号是真 InlineCode）——链接排除由
 //   生产侧 linkSpansOfLine 补齐，本 fake 不模拟（如实返回 code）。
+// - 引用块惰性延续行（`> a` 下一行顶格 `b`，无 `>` 前缀）：真实平台树按
+//   GFM 判 quote，本 fake 按行首形态学判 text，天然不产 quote 延续形态
+//   （评审 P4 近似边界）——生产侧 lineKindOf 的门控行为由矩阵测试直接
+//   构造恒 quote 查询钉住，真实宿主联调归 #21。
 import type {
   AddonSyntaxInlineResult,
   AddonSyntaxLineKind,

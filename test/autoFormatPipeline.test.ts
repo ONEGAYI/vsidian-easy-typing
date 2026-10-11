@@ -272,7 +272,9 @@ describe('作用域跳过（#5 树版 detectScopeViaQuery）', () => {
     })
   })
 
-  it('行内分区查询拒绝 → 整体 null 不格式化（#5 拒绝语义）', () => {
+  it('查询拒绝 → 整体 null 不格式化（评审 P3：作用域门控即拦截——拒绝不静默归 Text）', () => {
+    // makeRejectingQuery 使 detectScopeViaQuery 首查即拒绝（ok:false → null），
+    // 管线在作用域门控处 return null，不再依赖行内分区 inlineAt 拒绝兜底
     expect(
       planAutoFormatLineModification(ctx('中文a', 3, 'a'), options({ query: makeRejectingQuery() })),
     ).toBeNull()

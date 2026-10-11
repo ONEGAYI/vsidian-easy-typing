@@ -19,7 +19,7 @@ import {
   type RuleInputPipelineContext,
 } from '../src/ruleBehaviorPipeline'
 import { isPositionProtected, parseUserDefinedRegExp } from '../src/userDefinedRegex'
-import { makeSyntaxFake } from './syntaxFake'
+import { makeRejectingQuery, makeSyntaxFake } from './syntaxFake'
 
 /** 按内置规则 id 集构造引擎（族拆分在 intercept 层，本文件按需拼装） */
 function engineOf(ruleIds: readonly string[]): RuleEngine {
@@ -221,6 +221,18 @@ describe('作用域注入（树版 detectScopeViaQuery）', () => {
     // options 不带 scopeQuery：无法判定作用域 → 不接管（查询缺席由装配层
     // 解释为「不接管」，管线不猜）
     expect(planInputRuleModification(engine, inputCtx('x。', 2, 'input.type', '。'))).toBeNull()
+  })
+
+  it('非 All 规则在场、查询拒绝（ok:false）→ 不接管返回 null（评审 P3：拒绝不静默归 Text 施加规则修饰）', () => {
+    const engine = new RuleEngine()
+    engine.addSimpleRule({ trigger: '。', replacement: '。!', options: 't' } satisfies SimpleRule)
+    // 若拒绝静默归 Text：本用例的正文命中（'。!'）仍会发生——期望 null 钉住
+    // 「查询拒绝 = 不接管」而非「查询拒绝 = Text」（spec §二拒绝口径）
+    expect(
+      planInputRuleModification(engine, inputCtx('x。', 2, 'input.type', '。'), {
+        scopeQuery: makeRejectingQuery(),
+      }),
+    ).toBeNull()
   })
 })
 
@@ -718,14 +730,15 @@ describe('作用域计算：All 短路（树版查询不触发）', () => {
     const viaPipeline = planInputRuleModification(engine, ctx)
     // 显式形态：同一文档与光标按树版查询判定（Text）直接喂引擎
     const scope = detectScopeViaQuery(makeSyntaxFake(docText).doc, makeSyntaxFake(docText).query, 15)
-    expect(scope.scope).not.toBe('code') // 光标在围栏外，树版判定为非代码
+    expect(scope).not.toBeNull() // fake 查询不会拒绝（评审 P3 后拒绝返回 null）
+    expect(scope!.scope).not.toBe('code') // 光标在围栏外，树版判定为非代码
     const explicit = engine.process({
       kind: RuleType.Input,
       docText: ctx.snapshot.text,
       selection: { from: 15, to: 15 },
       inserted: '。',
       changeType: 'input.type',
-      scopeHint: scope.scope,
+      scopeHint: scope!.scope,
     })
     expect(viaPipeline).not.toBeNull()
     expect(explicit).not.toBeNull()
