@@ -1,6 +1,6 @@
 # 规则引擎内核与内置规则（工单 #1）+ 行为链接入（工单 #25）+ Delete/SelectKey 触发接入（工单 #9）+ 函数替换体预注册（工单 #17）+ compose 去重核验（工单 #6）
 
-规则引擎纯逻辑内核（三触发类建模、Input 类执行）与内置规则数据全量移植。事实源模块：`src/rules/rule-engine.ts`（内核）、`src/rules/default-rules.ts`（数据）与 `src/rules/function-table.ts`（#17 预注册函数表）；测试矩阵：`test/rule-engine-core.test.ts`（机制）、`test/rules-matrix.test.ts`（内置规则）与 `test/function-table.test.ts`（函数表）。#25 行为链接入：`src/ruleBehaviorPipeline.ts`（onInput 触发管线）、`src/ruleBehaviorIntercept.ts`（功能族注册）、`src/ruleScopeFallback.ts`（作用域判定降级）；测试：`test/ruleBehaviorPipeline.test.ts`、`test/ruleBehaviorIntercept.test.ts`、`test/ruleScopeFallback.test.ts`。#9 Delete/SelectKey 触发接入：管线函数与族注册落在上述同两模块（`planDeleteRuleModification` / `planSelectKeyRuleModification` + `06-delete-rules` / `07-selectkey-rules` 族），页面接线在 `src/page-editor.ts` 的 #9 增量块。
+规则引擎纯逻辑内核（三触发类建模、Input 类执行）与内置规则数据全量移植。事实源模块：`src/rules/rule-engine.ts`（内核）、`src/rules/default-rules.ts`（数据）与 `src/rules/function-table.ts`（#17 预注册函数表）；测试矩阵：`test/rule-engine-core.test.ts`（机制）、`test/rules-matrix.test.ts`（内置规则）与 `test/function-table.test.ts`（函数表）。#25 行为链接入：`src/ruleBehaviorPipeline.ts`（onInput 触发管线）、`src/ruleBehaviorIntercept.ts`（功能族注册）——作用域判定自 #5 起走 `src/syntaxTreeQuery.ts` 树版查询（原 `ruleScopeFallback.ts` 降级版已删）；测试：`test/ruleBehaviorPipeline.test.ts`、`test/ruleBehaviorIntercept.test.ts`。#9 Delete/SelectKey 触发接入：管线函数与族注册落在上述同两模块（`planDeleteRuleModification` / `planSelectKeyRuleModification` + `06-delete-rules` / `07-selectkey-rules` 族），页面接线在 `src/page-editor.ts` 的 #9 增量块。
 
 ## 验收口径
 
@@ -66,7 +66,7 @@
 
 ## 平台映射
 
-- **作用域判定可注入**（核心设计决策）：上游 `detectRuleScope` 经 `syntaxTree` 判行类型；vsidian live 编辑器的 `experimental.cm6.language.syntaxTree` 恒为未解析空树（vsidian#406 已知边界）。内核因此不做任何语法树判定——`TxContext.scopeHint` / `scopeLanguage` 由调用方注入：#25 行为链接入时传文本正则降级版判定，#5 语法树版就绪后换传，内核零改动。
+- **作用域判定可注入**（核心设计决策）：上游 `detectRuleScope` 经 `syntaxTree` 判行类型；vsidian live 编辑器的 `experimental.cm6.language.syntaxTree` 恒为未解析空树（vsidian#406 已知边界）。内核因此不做任何语法树判定——`TxContext.scopeHint` / `scopeLanguage` 由调用方注入：#25 行为链接入时传文本正则降级版判定，**#5 起已换传树版**（`syntaxTreeQuery.detectScopeViaQuery`，经管线 options.scopeQuery 注入；查询缺席且非 All 规则在场 → 不接管）。**内核零改动承诺兑现**——换传只动注入缝，引擎侧无任何变更。
 - **`TxContext` 对齐行为链驱动面**（#25 消费）：`docText` ↔ `snapshot.text`（LF 坐标，已含本次输入）、`selection` ↔ 光标区间、`changeType` ↔ `userEvent`（`input.type` / `input.type.compose` / `delete.*` 白名单；Tab 触发模式对应 `changeType: 'tab'`）、`key` ↔ SelectKey 触发键。`replaced` 字段（被替换选区）不进内核——SelectKey 的包裹目标在 #9 管线里转成 `selection` + `key` 传入。
 - **`ApplyResult` 对齐行为链计划**：`matchRange` + `newText` → `changes`（`{offset, length, text}`）；`cursor` / `tabstops` → `selection`（#14 已落地 tabstop 语法解析，#15 把 tabstop 组转多光标选区）。
 - **规则 JSON 持久化**（#14 消费）：`SimpleRule` 即序列化形态，`loadFromFiles` 为装载入口，`ctx.storage` 读写 `builtin-rules.json` / `user-rules.json`。函数引用对象随 JSON 序列化（`sanitizeSimpleRule` 收口见 [rules-storage.md](rules-storage.md)）。
@@ -124,7 +124,7 @@
 - **本票直接消费**：`userEvent='input.type.compose'`（IME 定稿，#399）与 `input.type` 同路径进管线（引擎对两者不区分——`changeType` 仅用于 Tab 触发模式判定）。上游对 compose 定稿与普通输入同样共用 `tryProcessInput`。
 - **#6（compose 去重）定稿结论**：核验平台实现（vsidian `liveInstance.ts` @ origin/main）后确认 IME 定稿不会双发——插件侧**不设**显式去重，理由、防御性测试与 IME 验证口径见下文「#6 compose 去重核验」节。`userEvent` 原样保留在管线入口（`RuleInputPipelineContext`）的设计保留：纯函数形态（无跨调用状态）正是「无需去重」的前提，也为未来万一需要包裹保留零侵入缝。
 - **#26（格式化管线）挂接点**：中英空格等自动格式化归上游 `Formater`（非规则引擎），本票集成测试钉住「中文后键入半角字母规则面零命中」基线；#26 经同一 `RuleInputPipelineContext` 形状另注册行为族消费，管线入口不改。
-- **#9（Delete/SelectKey）挂接点**：`pipelineConsumesUserEvent` 只放行 `input.type` / `input.type.compose`；delete.* 事件与选区替换形态（replaced 非空）在本链返回 null。#9 已随独立管线函数接入（见下节），复用 `applyResultToPlan` 与 `detectScopeFromText`，SelectKey 的包裹目标从 `AddonInputContext.replaced` 读回后组 TxContext（`key` + `selection`）。
+- **#9（Delete/SelectKey）挂接点**：`pipelineConsumesUserEvent` 只放行 `input.type` / `input.type.compose`；delete.* 事件与选区替换形态（replaced 非空）在本链返回 null。#9 已随独立管线函数接入（见下节），复用 `applyResultToPlan` 与作用域判定（#5 起为树版 `detectScopeViaQuery`，经 options.scopeQuery 注入），SelectKey 的包裹目标从 `AddonInputContext.replaced` 读回后组 TxContext（`key` + `selection`）。
 
 ### 设置门控（总门核对结论）
 
@@ -139,7 +139,7 @@
 ### 已知边界（#25 增）
 
 - **代码/公式上下文不驱动**：平台行为链门控先行排除 frontmatter、块级代码（`inCodeContext`）、表格格区与 IME 中间态——上游 20 条内置规则作用域全为 `All`（原在代码块/公式内也触发），平台侧这些情境规则不生效。平台契约「行为只作用于正文」的既定边界，不放宽。
-- **作用域判定为文本降级版**（`src/ruleScopeFallback.ts`）：围栏状态机 + `$`/`$$` 配对近似（`\$` 转义、行内代码跳过、行内 `$` 不跨行）。近似边界：货币写法 `$100` 在同行光标处误判 Formula。20 条内置规则全 All 作用域，当前仅影响 #14 用户规则与 #9；#5 语法树版就绪后换传，降级版保留为无树环境后备。
+- **作用域判定已换传树版**（#5；原 `ruleScopeFallback.ts` 文本降级版已删）：判定走 `syntaxTreeQuery.detectScopeViaQuery`（平台位置查询 + 链接区段排除 + 块语言提取，见 [syntax-line-types.md](syntax-line-types.md)）。降级版的货币 `$100` 误判等近似边界随之消除；20 条内置规则全 All 作用域，真实判定仅影响 #14 用户规则与 #9——非 All 规则在场而查询缺席（语法面缺席/反查失败）时管线不接管（不 fallback 正则）。
 - **用户自定义正则区块跳过顺延**：上游 `triggerCvtRule` 的 `UserDefinedRegSwitch × UserRulesRespectUserDefinedRegexBlocks` 跳过检查依赖 `splitTextWithLinkAndUserDefined`（core.ts ~100 行，未移植）且默认配置下不生效（`userRulesRespectUserDefinedRegexBlocks` 默认 false），归 #14 随用户规则移植。
 - **`$0` 字面标记**：#1 已知边界延续——替换体占位符保留为字面文本（如 `（$0）`），#14 解析落地后恢复上游语义，届时矩阵与管线断言同步更新。
 - **中英空格**：规则面零命中基线（集成测试钉住），转换本体归 #26 格式化管线消费。
@@ -158,14 +158,14 @@
 - **装载过滤语义核对结论**：`enabled=false` 的规则**不**在装载侧过滤（保留在族引擎内，`process` 的 `!rule.enabled` 门控跳过）；被删内置规则天然不在快照 `builtin` 数组（`deleteBuiltinRule` 从文件移除），`deletedBuiltinRuleIds` 仅约束升级补种，行为族消费 `builtin + user` 即正确形状。
 - **已知边界**：T 触发模式（`options` 含 `T`）的用户 Input 规则在 onInput 驱动面永不命中（引擎对 Auto 模式规则要求 `changeType !== 'tab'`、对 Tab 模式要求 `changeType === 'tab'`，而行为链 userEvent 恒为 `input.*`/`delete.*`）——Tab 触发链路无平台承载面，属既有边界（内置无 T 规则），待平台键位面扩展再接。
 
-### 作用域计算优化：All 短路与事务级 memo（审查 C-P1-1 修复落档）
+### 作用域计算优化：All 短路（审查 C-P1-1 修复落档；memo 已随 #5 删除）
 
-**问题**：同一输入事务被行为链逐族驱动（5 Input 族 + Delete/SelectKey 族 + autoformat），各管线对同一 `(text, pos)` 各调一次 `detectScopeFromText`——全文 O(L) 逐字符扫描重复至多 6 次；且内置 20 条规则作用域全 All 时该计算不影响命中。
+**问题（C-P1-1 时的形态）**：同一输入事务被行为链逐族驱动（5 Input 族 + Delete/SelectKey 族 + autoformat），各管线对同一 `(text, pos)` 各调一次 `detectScopeFromText`——全文 O(L) 逐字符扫描重复至多 6 次；且内置 20 条规则作用域全 All 时该计算不影响命中。当时的两层去重 = All 短路 + `(text, pos)` 事务级 memo。
 
-**两层去重**（`src/ruleBehaviorPipeline.ts` 的 `resolveScopeForEngine` + `src/ruleScopeFallback.ts` 的 `detectScopeFromTextMemoized`）：
+**现状（#5 树版换传后）**：
 
-1. **All 短路**：`RuleEngine.allRulesUnscoped()`（惰性缓存，规则集变化失效）为真——族内全部规则作用域含 All（内置 20 条全 All）——时管线直接传 `scopeHint: All`，跳过扫描。行为等价依据（引擎 `process` 源码核对）：作用域过滤条件 `ctx.scopeHint !== All && !rule.scope.includes(All) && !rule.scope.includes(scopeHint)` 对含 All 规则恒短路；语言过滤仅在 `scopeHint === Code` 且 `rule.scope.includes(Code)` 时才查——传 All 后两道门都自然放行，与真实判定结果一致（测试钉住等价性）。autoformat **不适用**短路：它真实消费 scope 值（要求 Text 才格式化）。
-2. **事务级 memo**：真实判定统一经 `detectScopeFromTextMemoized`——模块级单槽缓存，键 `(text, pos)` 值相等（字符串 `===`：长度不同即 false、同长度 memcmp，远廉于状态机扫描；跨事务文本或光标变化自然失效）。跨族共享（5 Input 族 + Delete/SelectKey + autoformat 同事务复用同一判定）。JS 单线程无并发问题；async 交错最坏 miss 重算，语义不变。测试探针 `scopeMemoComputeCount` / `resetScopeMemoForTest`（生产零消费）。
+1. **All 短路（保留）**：`RuleEngine.allRulesUnscoped()`（惰性缓存，规则集变化失效）为真——族内全部规则作用域含 All（内置 20 条全 All）——时管线直接传 `scopeHint: All`，跳过查询。行为等价依据（引擎 `process` 源码核对）：作用域过滤条件 `ctx.scopeHint !== All && !rule.scope.includes(All) && !rule.scope.includes(scopeHint)` 对含 All 规则恒短路；语言过滤仅在 `scopeHint === Code` 且 `rule.scope.includes(Code)` 时才查——传 All 后两道门都自然放行，与真实判定结果一致（测试钉住等价性）。autoformat **不适用**短路：它真实消费 scope 值（要求 Text 才格式化）。
+2. **事务级 memo（已删除）**：原 `detectScopeFromTextMemoized` 单槽缓存随 `ruleScopeFallback.ts` 降级实现一并删除——查询版判定 µs 级，无重复扫描成本可言，保留缓存只会增加陈旧风险（#5 切片 B 决策）。
 
 ## #9 Delete/SelectKey 触发接入（delete.* 联动删除 + 选区替换包裹）
 

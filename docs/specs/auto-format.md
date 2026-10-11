@@ -38,14 +38,15 @@
 - **链序**：`06-autoformat` 加入 #25 五族共用的 `input-rules` 独占组（localId 数值前缀在 01-05 之后 = 平台默认有效序），复刻上游「triggerCvtRule 命中即 return、格式化只在规则零命中后运行」。族级开关（平台行为管理）= 上游 AutoFormat 总门的平台承载；autoCapital 等细粒度经 #3 设置门面（`effective.autoFormat` 在族回调内判定，关 → 恒 null 不占组，规则五族不受影响——与上游「规则先于 AutoFormat 门」一致）。history 一律 atomic（#25 joinPrevious 全量核对结论沿用：键入是外来条目不可并组）。
 - **设置消费**：`SETTINGS_TOPIC.get` 的 effective 拉 9 键（autoFormat / autoCapital / prefixDictionary / softSpaceLeft·RightSymbols / inlineCode·Formula·LinkSpaceMode / inlineLinkSmartSpace），装载时与 `behaviors.onChanged` 刷新（3s 节流窗——C-R4-2，设置改动最迟一个窗口后的下一次键入生效），通道失败保持上次值、值类型失配回默认。languagePairs / customScriptCategories 不在 23 键 schema——出厂种子直取 `RICH_STRUCTURE_DEFAULTS`（富结构持久化与编辑 UI 归后续票，运行时消费面此为单一事实源）。SpaceMode 字符串档 ↔ SpaceState 数字档按下标同构换算。
 
-### 作用域跳过（正则降级版 getPosLineType）
+### 作用域跳过（#5 树版 detectScopeViaQuery）
 
-上游经语法树令牌判行类型（table/frontmatter/formula/codeblock 非 text 不格式化）。平台映射：
+上游经语法树令牌判行类型（table/frontmatter/formula/codeblock 非 text 不格式化）。平台映射（#5 切片 B 换传完毕，正则降级版已删）：
 
-- **代码块 / frontmatter / 表格格区**：平台行为链门控先行排除（#25 记录），管线不重复判定表格；frontmatter 与块级代码另经 `detectScopeFromText`（#25 文本降级：围栏状态机 + `$`/`$$` 配对近似）防御重复——真实 webview 中平台门控已拦，管线级判定是 vitest 集成测试与防御深度。
-- **块级公式**：`detectScopeFromText` Formula 分支（$$ 跨行 + 行内 $ 区间）。
-- **已知近似**（继承 #25）：行内公式 `$x$` 内光标 → 误判 Formula 跳过整行（上游树版仍格式化该行其他 text 分区）；货币写法 `$100` 同源误判；围栏标记行本身不算代码内容（与 detectScopeFromText 口径一致）。语法树版归 #5 换传，管线零改动。
-- **行内代码/公式的天然保护区**：不靠行级跳过，由 `splitLineIntoParts` 文本扫描切成 code/formula 分区（形态学：反引号等长配对、`\$` 转义、`$$` 成对优先、代码先于公式、链接正则只在非 code/formula/user 区段上跑——上游正则逐字）。切分形态学是本移植自有降级（上游走语法树），由 `test/inlineParts.test.ts` 形态断言钉住；分区间格式化等价性由上游验证矩阵承载。
+- **块级代码 / 行内代码**：`detectScopeViaQuery`（平台 `experimental.syntax` 经 `syntaxTreeQuery` 适配——`inlineAt` 判行内 code、`lineTypeAt` 判块级 code，链接区段内排除；映射对照见 [syntax-line-types.md](syntax-line-types.md)）→ Code 跳过。
+- **块级公式 / 行内公式**：同上 Formula 分支（跨行 `$$` 块 + 行内 `$` 区间，含单行闭合 `$$x$$`——升级收益）。
+- **frontmatter**：`isInsideFrontmatter` 补判（平台行为链已门控 fm/块代码/表格格区，此处为管线级防御重复；表格不另判——依赖平台门控，口径不变）。
+- **与上游的已知差异（如实保留，管线测试钉住）**：上游行级门控用 v1 全行校验（行内 code/公式行是 text → 格式化该行）；本管线用位置级作用域——**光标在行内 code/formula 内时跳过整行**（上游仍格式化该行其他 text 分区）。原降级版的货币 `$100` 误判已消除（平台判定链的 `$` 配对语义，无正则区间误判）。
+- **行内代码/公式的天然保护区**：不靠行级跳过的场合由 `splitLineIntoParts` 树版查询分区（`inlineAt` 位置查询驱动 + 链接区段剪除，`linkSpansOfLine` 正则与上游逐字同源；形态学扫描版已随 #5 删除）；分区间格式化等价性由上游验证矩阵承载。
 
 ### #27 注入缝（保护区）——已由 #27 落地为内置默认计算
 
@@ -74,4 +75,4 @@
 
 - **#27（保护区接入）——已落地**：解析与匹配纯逻辑在 `src/userDefinedRegex.ts`，格式化侧内置计算 + 「用户规则尊重保护区」规则管线接入的完整语义见 [protected-zones.md](protected-zones.md)。注入缝两处（管线 `protectedRanges` 与接入 `protectedRangesFor`）形态不变，外部注入优先于内置计算。
 - **#28（格式化命令复用，已落地）**：本节原文写 `formatLine(line, curCh, prevCh=undefined, ...)` 是命令重排入口——**#28 实施勘误**：`prevCh=undefined` 是「跳过间距引擎」形态（`applyLanguagePairSpacing` 早退，实测零变更）；命令整行重排的正确入口是上游同形 `formatLine(line, curCh, 0, settings)`（键入区间 [0, curCh) 覆盖整行前缀，语言对全量生效；autoCapital 恒关——上游 `{...settings, AutoCapital: false}`）。多行/选区重排按行循环调用 + 行首偏移换算（参照 autoFormatPipeline 的坐标换算）。粘贴格式化（AutoFormatPaste 主动侧）经此承载，不经行为链；实施与键位/文件排除记录见 [formatting-commands.md](formatting-commands.md)。
-- **#21（真实 webview 人工验证）**：本族验证点——中文后键入半角字母出空格且光标在词尾；`n8n`/`b站` 词典词条内部无空格、越词后延迟边界补插；规则族命中输入（如 `。。`）本次不格式化（独占组链序）；折叠/展开与 IME 定稿路径；多光标不格式化；Ctrl+Z 两步撤回（键入与格式化分离，平台撤销管线结构性边界）；CSP 无涉（纯算法，无 new Function）。真实 `experimental.cm6.language.syntaxTree` 未解析（vsidian#406）不影响本族——分区走文本降级。
+- **#21（真实 webview 人工验证）**：本族验证点——中文后键入半角字母出空格且光标在词尾；`n8n`/`b站` 词典词条内部无空格、越词后延迟边界补插；规则族命中输入（如 `。。`）本次不格式化（独占组链序）；折叠/展开与 IME 定稿路径；多光标不格式化；Ctrl+Z 两步撤回（键入与格式化分离，平台撤销管线结构性边界）；CSP 无涉（纯算法，无 new Function）。#5 起作用域与行内分区走平台 `experimental.syntax` 位置查询（vsidian#406 的 `cm6.language.syntaxTree` 未解析边界不再影响本族）。

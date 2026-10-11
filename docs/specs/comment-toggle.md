@@ -23,7 +23,7 @@
 | --- | --- | --- |
 | 语言注释符表 | `src/comment_toggle.ts:192-223`（getCommentSymbol 内联表） | `src/commentToggle.ts`（COMMENT_SYMBOLS + getCommentSymbol） |
 | 行/块注释切换 | `src/comment_toggle.ts:64-128`（toggleCodeBlockLineComment） | 同上（planLineCommentToggle，逐字移植） |
-| 代码块判定 | `src/syntax.ts:85-146`（getCodeBlocksInfos，语法树版） | 复用 `src/ruleScopeFallback.ts`（#25 正则降级版，见下节） |
+| 代码块判定 | `src/syntax.ts:85-146`（getCodeBlocksInfos，语法树版） | `syntaxTreeQuery.detectScopeViaQuery`（#5 树版，见下节） |
 | 编排（代码块/正文分流） | `src/comment_toggle.ts:4-13` | 同上（planCommentToggle） |
 | Markdown `%%` 切换 | `src/comment_toggle.ts:130-190` | 同上（planMarkdownCommentToggle） |
 | 命令注册 + 默认热键 | `src/main.ts:186-191`（editorCallback + Mod+/） | `src/page-editor.ts` #2 增量块（稳定 commands API） |
@@ -49,37 +49,28 @@
 - 恒命中型命令：正文路径任何位置都有动作（上游 toggleMarkdownComment 无
   「不命中」分支）；代码块路径的「无动作」仅未知语言一态。
 
-## 围栏语言感知选型（复用 #25 降级版）
+## 围栏语言感知选型（#5 树版换传完毕）
 
-**选型：复用 `src/ruleScopeFallback.ts` 的 `detectScopeFromText`**（工单
-#25 已落地的文本正则降级版），不另建识别器、不复用 #11 `blockScan.ts`
-（后者只给行 kind 不提取语言）。理由：
+**现行形态：复用 `src/syntaxTreeQuery.ts` 的 `detectScopeViaQuery`**（平台
+`experimental.syntax` 位置查询 + `codeBlocksViaQuery` 语言提取）。调用面
+（`{scope, language}` 形状）与 #25 降级版一致，调用侧零改动；`ruleScopeFallback.ts`
+（原正则降级实现）已随 #5 删除，不并存两套判定。映射对照与口径差异见
+[syntax-line-types.md](syntax-line-types.md)。
 
-1. 形状对口：`detectScopeFromText(docText, pos)` 直接返回
-   `{scope: Code, language}`——语言正是本票决策输入，围栏状态机
-   （```/~~~ 同字符关闭、长度不短于开栏、缩进 ≤3 空格）已含语言提取；
-2. #11 `scanLines` 的围栏近似（不校验围栏字符/长度配对）语义弱于 #25 状态
-   机，且无语言通道，取它需扩表；
-3. 单一事实源：#5（语法树版围栏识别）落地后 ruleScopeFallback 整体升级，
-   本票调用面（scope + language 形状）不变，同步零成本。
+### 降级口径差异收敛记录（#5 树版换传，原差异消除）
 
-**#5 升级点（票内记录）**：`planCommentToggle` 的作用域判定换成树版后，
-仅需替换 `detectScopeFromText` 调用；「降级口径」节的差异随 #25 文档同步
-收敛。
-
-### 降级口径（vs 上游树版，沿 #25 已 documented 差异）
-
-- **围栏标记行走 `%%` 分支**：上游树版把开/关围栏行划入代码块区间
-  （`pos >= start_pos && pos <= end_pos`），光标在开栏行会按语言在围栏
-  行上写注释前缀（`// ```python`——破坏围栏的形态）。降级版「光标行本身
-  是围栏标记行 → Text」：开栏行走 `%%` 分支（测试钉住），语义更稳。
-  关栏行行首光标的可见片段为空（扫描只看光标前文本）→ 仍按代码内容处理，
-  与上游树版一致；关栏行末光标（可见整行围栏标记）→ Text，与上游不同
-  ——极端位置差异，不追求一致。
-- **多词信息串取词差异**：上游树版提取围栏后整串 trim（`js copy` →
-  `'js copy'` 查表不中 → 无操作）；降级版取信息串首 token（`js copy` →
-  `js` → 命中切换）。降级版更宽松，也更贴近渲染器按首 token 取语言的
-  习惯——如实保留差异，#5 树版落地时随上游收敛。
+- **开栏围栏行已随上游收敛**：#25 降级版「光标行本身是围栏标记行 → Text
+  → 走 `%%` 分支」的自设口径删除——平台 `lineTypeAt` 对围栏行判 `code`
+  （上游树版把围栏行划入代码块区间），开栏行按围栏语言走代码块注释分支
+  （`// ```python` 会破坏围栏形态——上游树版同款行为，忠实保留；测试已
+  翻转钉住）。关栏行行首光标的可见片段为空 → 仍按代码内容处理，与上游
+  一致；关栏行末光标（可见整行围栏标记）→ Code，与上游树版一致（原降级
+  版判 Text 的极端位置差异消除）。
+- **多词信息串取词已随上游收敛**：语言提取为信息串整串 trim 后小写
+  （`js copy` → `'js copy'` 查表不中 → 无操作——上游 `getCodeBlocksInfos`
+  同款）；#25 降级版「取首 token（`js` 命中切换）」的更宽松口径删除。
+- 围栏开闭配对（``` 与 ~~~ 不互闭）、未闭合围栏延至文末、引用内围栏识别
+  等块级语义由平台树保证（#5 前的围栏状态机近似随之消除）。
 
 ## 平台键位冲突核对（票面「快捷键评估」）
 

@@ -7,10 +7,11 @@
 
 ## 验收口径
 
-- **渐进层级序列端到端以矩阵承载**：`test/modaSelection.test.ts`（31 例，
+- **渐进层级序列端到端以矩阵承载**：`test/modaSelection.test.ts`（34 例，
   真实 `EditorState` 的连续按键模拟——plan 结果回写为新选区再 plan，直至
-  透传）+ `test/blockScan.test.ts`（28 例，降级扫描/引用块/段块）+
-  `test/modaIntercept.test.ts`（15 例，门控命令/设置门/命令注册契约/
+  透传；#5 起经树版查询判定，fake 判定链注入，行为断言不变）+
+  `test/blockScan.test.ts`（36 例，树版查询行扫描/引用块/段块）+
+  `test/modaIntercept.test.ts`（17 例，门控命令/设置门/命令注册契约/
   handler 路由）；浏览器真实键盘端到端归 #21 人工验证。
 - `npm run compile` 通过；全部测试绿。
 - **接管边界清晰**（票面验收项）：见「接管边界」节。
@@ -22,7 +23,7 @@
 | Mod+A 三分支状态机 | `src/keyboard_handlers.ts:509-676`（handleModA） | `src/modaSelection.ts`（planModASelection） |
 | 段块邻行扩展 | `src/keyboard_handlers.ts:783-809`（getBlockLinesInPos） | `src/blockScan.ts`（paragraphBlockAt） |
 | 引用块信息 | `src/syntax.ts:155-201`（getQuoteInfoInPos——上游本就纯正则） | `src/blockScan.ts`（quoteInfoAt，逐字移植） |
-| 行类型判定 | `src/core.ts:748-788`（getPosLineType2，树版） | `src/blockScan.ts`（scanLines，正则降级） |
+| 行类型判定 | `src/core.ts:748-788`（getPosLineType2，树版） | `src/syntaxTreeQuery.ts` 映射 + `src/modaSelection.ts` 懒查询（#5 树版换传） |
 | 选择当前块 | `src/keyboard_handlers.ts:815-825`（selectBlockInCursor） | `src/modaSelection.ts`（planSelectBlock） |
 | Mod-a keymap 挂接 | `src/main.ts:93-95` | `src/page-editor.ts`（Prec.high 抢先层） |
 | select-block 命令注册 | `src/main.ts:123-129`（addCommand，无 hotkeys） | `src/modaIntercept.ts`（buildSelectBlockCommandDefinition + handler） |
@@ -97,20 +98,20 @@
    组件槽，本拦截不触及。
 5. Esc 与宿主级快捷键不涉（本拦截仅 Mod-a 一键）。
 
-## 降级口径（#5 blocked 的正则先行，升级点）
+## 判定口径（#5 树版换传后——正则降级已删除）
 
-行类型与块边界判定在 `src/blockScan.ts` 以行首形态学扫描近似上游树版
-`getPosLineType2`（对齐 #2/#7 降级先例）。**#5（列表/引用块语法树识别）
-落地或平台补树查询能力后，本模块整体替换为树版判定，调用面形状不变。**
+行类型与块边界判定自 #5 起走平台 `experimental.syntax` 位置查询（`src/syntaxTreeQuery.ts` 映射层；映射对照表与口径差异见 [syntax-line-types.md](syntax-line-types.md)）。ModA 路径为**懒查询形态**：anchor 行单点查 + 段块/引用块/列表块邻行逐行局部查（`lineInfoAt`），不预扫全文；上游本就是行文本正则的判定（引用前缀、列表缩进）保留纯行文本计算，不消耗查询。查询拒绝（非 live/已销毁视图）→ 返回 null 不接管，不 fallback 正则。
 
-| 对象 | 降级规则 | 与树版的已知差异（升级点） |
+**#11 降级版的已 documented 差异随平台语义消除**（差异消除记录）：
+
+| 对象 | 降级规则（已删） | 树版状态 |
 | --- | --- | --- |
-| 列表标记行 | `/^(\s*)([-*+] \[[^\]]\]|[-*+]|\d+\.)\s/`（上游原正则） | 一致 |
-| 列表续行 | 缩进 ≥2 且上方最近非空行属列表（空行不阻断） | 树版按解析归属：缩进 <2 的续行、表格外围栏等边界情形可能不同 |
-| 引用/callout | 上游 quote_regex / callout_regex 原样；callout 上溯不 break（上游注释掉的 break） | 一致（上游本就纯正则） |
-| 代码围栏 | 任意缩进的 ```` ```/~~~ ```` 开行切换开闭态 | 开闭不校验围栏字符/长度配对（``` 与 ~~~ 互相可闭合） |
-| 公式块 | 整行为 `$$` 切换 | 单行 `$$x$$` 不识别为块（树版识别）；`$$x` 起行不识别 |
-| frontmatter | 首行 `---` 开到闭合 `---`（未闭合到文末） | 树版按 token；`---` 下邻文本构成 setext 标题等形态不判 |
+| 列表标记行 | `/^(\s*)([-*+] \[[^\]]\]|[-*+]|\d+\.)\s/`（上游原正则） | 一致（行内几何仍从行文本计算） |
+| 列表续行 | 缩进 ≥2 且上方最近非空行属列表（空行不阻断） | 平台树按解析归属（缩进 <2 的续行、表格外围栏等边界形态随树语义） |
+| 引用/callout | 上游 quote_regex / callout_regex 原样 | 一致（上游本就纯正则，未动） |
+| 代码围栏 | 任意缩进的 ```/~~~ 开行切换开闭态（不校验字符/长度配对） | 消除——平台树管围栏配对（``` 与 ~~~ 不互闭） |
+| 公式块 | 整行为 `$$` 切换 | 消除——单行闭合 `$$x$$` 识别为 formula（平台判定链）；`$$x` 起行归跨行块表语义 |
+| frontmatter | 首行 `---` 开到闭合 `---`（未闭合到文末） | 消除——未闭合 fm 按普通 Markdown 处理（平台稳定降级，不再延至文末） |
 | 段块邻行 | kind=text 且非空且非 `^#+ ` 标题 | 一致（表格行/水平线归 text 为上游 v2 原语义） |
 
 ## 快捷键评估（操作注册规范口径）
@@ -125,9 +126,9 @@
 
 ## 已知边界
 
-- **每次按键 O(行数) 单遍扫描**（无缓存——文档随时变更，正确性优先）：
-  与上游树版单次查询同阶；10 万行档位的手感验证归 #21，如出现可感知
-  延迟再评估增量缓存。
+- **每次按键成本 = anchor 单点查询 + 块局部行数查询**（#5 切片 B 懒查询：
+  不预扫全文——查询版 µs 级；原正则全文扫描的旧形态已随 #5 删除）：
+  10 万行档位的手感验证归 #21，如出现可感知延迟再评估缓存。
 - 段块/引用块/列表档位均为行级区间（含行尾换行前的全部内容，不含末
   行换行符——上游同口径）。
 - 命令目标句柄由平台解析（焦点嵌入 Live → 该实例句柄；否则主正文；
