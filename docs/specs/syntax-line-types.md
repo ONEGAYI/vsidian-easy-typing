@@ -24,7 +24,7 @@ interface AddonSyntaxFacet {
 - **inlineAt**（位置级行内维度）kind 三种：`code | formula | none`。判定链：fm → `none` → InlineCode → `code` → 其余代码上下文 → `none` → 数学块表/当前行扫描 → `formula` → `none`。
 - **Live-only**（reading/hover 拒 `read-only`）；pos 全文 LF UTF-16，越界钳制文末；查询 µs 级。
 - **清单声明**：`package.json` 的 `vsidianAddon.experimental` 含 `"syntax": "^1.0.0"`（必须 `^` 范围——精确版本在宿主升级即判不兼容）；instanceId 经 `sdk.experimental.viewIdentity.instanceIdOf(view)` 反查。
-- **查询拒绝的处理**（设计约束，探索笔记 §5.4）：拒绝只发生在非 live 视图（本就不该接管）或实例已死（判定无意义）——消费面一律按「不接管」处理（返回 null/false 透传平台原生行为），**不 fallback 正则**（不并存两套判定、防复活已拆除的降级路径）。
+- **查询拒绝的处理**（设计约束，探索笔记 §5.4；评审 P3 收紧落档）：拒绝只发生在非 live 视图（本就不该接管）或实例已死（判定无意义）——消费面一律按「不接管」处理（返回 null/false 透传平台原生行为），**不 fallback 正则**（不并存两套判定、防复活已拆除的降级路径）。`detectScopeViaQuery` 查询拒绝返回 `null`（不静默归 `{scope: Text}`）；三个消费方各按不接管值处理：`autoFormatPipeline`（不格式化）、`ruleBehaviorPipeline`（不施加规则修饰——与查询缺席同一 null 通道）、`commentToggle`（无动作）。
 
 ## 三、映射对照表（核心）
 
@@ -39,7 +39,7 @@ interface AddonSyntaxFacet {
 | formula 单行闭合（升级收益，降级版不识别） | math 全行 | `formula`（单行闭合块补判） | formula | 跳过 |
 | table（v1 特判） | `hmd-table` | `table` | **text**（上游 v2 不特判） | 跳过（#28 不翻案） |
 | heading | ATX 标题（v1/v2 均不特判） | `heading` | **text** | 不跳过 |
-| quote（v2 行首 quote） | `hmd-quote`（`>` 前缀） | `quote` | quote | 不跳过 |
+| quote（v2 行首 quote） | `hmd-quote`（`>` 前缀） | `quote` | quote（行首无 `>` 前缀的惰性延续行门控回 text，见 §四） | 不跳过 |
 | **callout_title**（v2 行内任一） | `hmd-callout` | **平台无枚举，统一 quote** | quote | 不跳过 |
 | list 标记/续行（v2 行内任一 list 先于行首 quote） | `hmd-list` | `list` | list | 不跳过 |
 | text 兜底 | — | `text` | text（空行本地补判 `empty`） | 不跳过 |
@@ -67,8 +67,17 @@ interface AddonSyntaxFacet {
 - **`` `[[a]]` `` 链接区段优先剪除**（切片 B 实施新增）：`linkSpansOfLine` 纯正则不感知 code span——反引号内的 `[[..]]` 被圈进链接区段，其内判链接（Text）而非 code；**上游树版判 Code**（code span 内的 `[[..]]` 不构成链接节点）。作用域与行内分区两消费面同此差异（行内分区表现为 code span 被剪除碎化）。
 - **commentToggle 开栏围栏行随上游收敛**（切片 B 实施记录，原降级差异消除）：树版 `lineTypeAt` 对围栏行判 `code` → 注释切换在开栏行走代码块语言分支，对齐上游树版把围栏行划入代码块区间的行为；#25 降级版「围栏行按 Text 走 `%%` 分支」的「更稳」口径随之删除（行为翻转，`test/commentToggle.test.ts` 钉住）。
 - **语言整串随上游收敛**（原降级差异消除）：语言提取为信息串整串 trim 后小写（上游 `getCodeBlocksInfos` 同款，`js copy` 查表不中 → 无操作）；#25 降级版「取首 token」口径删除。
-- **相邻代码块零分隔行 run 合并**（查询版形态学边界）：块信息按「连续 code 行 run」分组——两个代码块之间无任何非 code 行时合并为一块（开栏取首行）。上游 iterate `codeblock-begin/end` 节点为两块。消费面影响：相邻异语言块的后者经 `codeBlockAtViaQuery` 取到首块语言。罕见形态（两块间通常有空行），如需拆分另开票。
+- **相邻代码块零分隔行 run 合并**（查询版形态学边界）：块信息按「连续 code 行 run」分组——两个代码块之间无任何非 code 行时合并为一块（开栏取首行）。上游 iterate `codeblock-begin/end` 节点为两块。消费面影响：相邻异语言块的后者经 `codeBlockAtViaQuery` 取到首块语言。罕见形态（两块间通常有空行），如需拆分另开票。`codeBlockAtViaQuery` 已改为从 pos 行向上下局部扩展（评审 S6 前半：autoformat 每键入触达，原经 `codeBlocksViaQuery` 全文档逐行查询在 10 万行文档达百毫秒级，与 ModA 懒查询红线同性质）——run 边界与全量分组一致，合并语义不变（矩阵钉住）。
+- **引用块惰性延续行门控回 text**（评审 P4 落档）：平台树按 GFM 把引用块的惰性延续行（`> a` 下一行顶格 `b`，无 `>` 前缀）判 `quote`；上游 v2 是行首 quote 语义（`getQuoteInfoInPos` 的 quote_regex `^(\s*)(>+) ?` 不匹配 → 判 text）。LINE_KIND 消费维度（`lineKindOf`）对 quote kind 且行首 `QUOTE_PREFIX_RE` 不匹配的行门控回 text，对齐上游（消费面影响闭合：不门控时 ModA 的 anchorKind=quote 会跳过文本分支而 `quoteInfoAt`（行首纯正则）返回 null 落穿到不接管）。v1/跳过维度保持平台 kind 原判——上游 v1 的 quote 分支兜底本就是 text（core.ts:698-742，仅 callout 内代码块升 codeblock，普通引用行一律 text 不跳过），平台 quote 不跳过，两侧行为等价，无需门控。fake 判定链按行首形态学天然不产该形态（近似边界，见 `test/syntaxFake.ts` 头注释），门控行为由矩阵测试直接构造 quote kind 钉住。
 - **消费面选型差异（管线级，非平台差异）**：上游自动格式化的行级门控用 v1 全行校验（行内 code/公式行是 text → 格式化该行）；本移植管线门控用位置级 `detectScopeViaQuery`——**光标在行内 code/formula 内时跳过整行**。行为差异如实保留（管线测试钉住），口径见 [auto-format.md](auto-format.md)「作用域跳过」节。
+
+### 已知边界与后续收口（评审不修项落档）
+
+以下为双轴评审（PR #35）识别但**不在本 PR 修复**的形式问题，记录于此供后续票决策：
+
+- **S3**：`(doc, query, lineNumber)` 三元组在多个签名间重复传递（Data Clumps），可上提 `LineSyntaxContext` 统一——接口面刚随切片 B 稳定，形式统一属后续票。
+- **S4**：planner 统一签名的不消费参数（个别 plan 函数不用全部入参）——换取 `runViewCommand` 单态分发的可辩护权衡。
+- **S5**：`syntaxTreeQuery` ↔ `inlineParts` 循环 import——运行时安全（函数内引用无 TDZ 风险），解环收益不抵结构翻动。
 
 ## 五、消费方索引与测试索引
 
@@ -88,7 +97,7 @@ interface AddonSyntaxFacet {
 ### 测试
 
 - **映射矩阵**（`test/syntaxMappingMatrix.test.ts`）：上游行类型 × 平台 kind × 消费维度全枚举、作用域三值与链接排除逐形态、口径差异逐条钉住、块信息矩阵——本文档第三节对照表的机器可验副本（改映射表须同步改期望）。
-- **端到端抽查**（`test/syntaxEndToEnd.test.ts`）：两份真实感文档跑全消费链（行类型序列/作用域采样/行内分区/跳过序列/ModA 三档）。
+- **端到端抽查**（`test/syntaxEndToEnd.test.ts`）：两份真实感文档跑全消费链（行类型序列/作用域采样/行内分区/跳过序列/ModA 三档/注释切换——评审 P1 补链：代码块内语言注释分支、普通文本 `%%` 分支、查询拒绝无动作）。
 - **fake 近似边界声明**（`test/syntaxFake.ts` 头注释）：本仓 node_modules 无 @lezer/markdown，判定链 fake 以形态学近似（围栏状态机、缩进代码 ≥4、表格须首管道、列表续行缩进 ≥2、行内 $ 无贴字规则、位置粒度只区分引用前缀区/内容区）。**无法与真实平台一致的期望**在测试处显式标注「近似口径，真实宿主联调归 #21」——已声明的三处：无首管道 GFM 表格行、货币 `$100 … $200` 行内配对、列表续行归属。
 
 ## 六、升级路径
