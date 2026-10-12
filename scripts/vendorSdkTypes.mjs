@@ -76,7 +76,7 @@ function parseArgs(argv) {
 
 const args = parseArgs(process.argv.slice(2))
 const sourceRepo = path.resolve(
-  args.source ?? process.env.VSIDIAN_SOURCE_REPO ?? path.join(repoRoot, '..', '..', 'vscode-obsidian-like-editor'),
+  args.source ?? process.env.VSIDIAN_SOURCE_REPO ?? path.join(repoRoot, '..', 'vscode-obsidian-like-editor'),
 )
 if (!statSync(path.join(sourceRepo, '.git'), { throwIfNoEntry: false })) {
   console.error(`[vendor] 源仓不是 git 仓库：${sourceRepo}（用 --source 或 VSIDIAN_SOURCE_REPO 指定 vsidian 本体仓）`)
