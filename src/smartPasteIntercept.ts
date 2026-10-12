@@ -78,13 +78,14 @@ export function planSmartPasteInsert(state: EditorState, pastedText: string): Sm
 }
 
 /** 剪贴板数据的最小消费面（原生 DataTransfer 与平台合成 clipboardData 共形） */
-interface PasteClipboardData {
+export interface PasteClipboardData {
   getData(type: string): string
   readonly items?: ArrayLike<{ kind: string; type: string }>
 }
 
-/** 图片文件项检测（平台 imagePaste 同口径：kind=file 且 mime image/*） */
-function hasImageItem(items: ArrayLike<{ kind: string; type: string }> | undefined): boolean {
+/** 图片文件项检测（平台 imagePaste 同口径：kind=file 且 mime image/*；
+ * #10 代码块粘贴对齐同口径复用——单一事实源） */
+export function hasImageItem(items: ArrayLike<{ kind: string; type: string }> | undefined): boolean {
   if (items === undefined) return false
   for (const item of Array.from(items)) {
     if (item.kind === 'file' && item.type.startsWith('image/')) return true

@@ -15,16 +15,16 @@
   - `test/codeBlockModA.test.ts`（15 例）：三态链状态机（内容/整块/
     落穿）、围栏行命中、反向选区规整、空块、多选区、查询拒绝、Command
     门控与纯选区事务形态；
-  - `test/codeBlockPaste.test.ts`（21 例）：剥共同缩进（含首行无缩进时
+  - `test/codeBlockPaste.test.ts`（23 例）：剥共同缩进（含首行无缩进时
     共同缩进为 0 的实然形态）、\t 替换、顶格/缩进块、单行/选区/块外
-    透传、上游实然边界（全空行、混合空行、CRLF）、handler 三守卫与
-    派发形态；
-  - `test/codeBlockBackspace.test.ts`（19 例）：分支①（边界列删换行
+    透传、上游实然边界（全空行、混合空行）与 CRLF 归一（实施决策点
+    7）、handler 三守卫与派发形态；
+  - `test/codeBlockBackspace.test.ts`（17 例）：分支①（边界列删换行
     合并，含未闭合块与闭栏行实然）、分支②（选区跨界裁剪）、让位面
     （顶格块/开栏行/缩进段中段/行首/行尾/块外）、多选区、查询拒绝、
     Command 门控与单笔事务形态。
 - 真实键位仲裁（三态手感、表格格内边界、与 #8 让位共存）归 #21 人工
-  验证清单（docs/manual-verification.md「十八」节）。
+  验证清单（docs/manual-verification.md「十九」节）。
 - `npm run compile` 通过；全部测试绿（基线 1312 例不回归）。
 
 ## 六项内核核对结论（票面必选前置调研）
@@ -128,6 +128,10 @@ TaboutPairStrs 一致），不会与 #125 重复触发。
    撤销 / domEventHandlers 天然获得平台让位序）；删除走 keymap（本仓
    filter 层无先例，且按键时刻状态完备——codeBlockAtViaQuery + 行坐标
    都是按键时可读的，无事务改写必要）。
+7. **CRLF 主动归一为 LF**：上游 `split("\n")` 保留行尾 `\r` 实然插入
+   `\r`；本仓经 `normalizeClipboardText` 在入口归一 LF（webview 全程
+   LF 坐标约定），与「上游实然边界照抄」清单刻意区分——这是主动决策
+   非照抄，由 `test/codeBlockPaste.test.ts` 的 CRLF 用例钉住。
 
 ## 平台映射
 
@@ -170,4 +174,4 @@ TaboutPairStrs 一致），不会与 #125 重复触发。
 - 折叠光标下分支②不可达（单字符删除不构成「跨越缩进边界」形态），其
   消费面是单选区删除——见「实施决策点」第 5 条。
 - 真实键位仲裁（IME 定稿期、物理键盘长按连发、表格格内边界）归 #21
-  人工验证清单十八节。
+  人工验证清单十九节。
