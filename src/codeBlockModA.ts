@@ -16,7 +16,8 @@
 // 不同，上游取 code_line_start.from）；已选内容 → 选**整块**
 // `[startPos, endPos]`；已选整块 → 透传（平台全文全选）。选区比对按
 // anchor/head 原序（上游口径：反向选区不匹配内容档，首按规整为正向）。
-// 多选区防御性透传（照 #11 惯例，上游 asSingle 取 main）。
+// 多选区防御性透传（#8/#12 惯例——区别于 #11 的主选区收敛：上游
+// asSingle 取 main 是处理语义，本模块不采）。
 //
 // 与上游的差异（规格 docs/specs/better-code-edit.md「实施决策点」节）：
 // 空块（codeStartPos == codeEndPos）二次按下——上游无条件重复派发同选区
@@ -38,7 +39,7 @@ import type { SelectionRange } from './modaSelection'
  */
 export function planCodeBlockModA(state: EditorState, query: SyntaxQuery): SelectionRange | null {
   const sel = state.selection
-  // 多选区不处理（透传：#11 惯例的防御性收紧）
+  // 多选区不处理（透传：#8/#12 惯例的防御性收紧）
   if (sel.ranges.length > 1) return null
   const main = sel.main
   // pos 取 anchor（上游 selection.anchor）

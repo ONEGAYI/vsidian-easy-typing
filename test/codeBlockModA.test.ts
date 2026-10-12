@@ -45,6 +45,13 @@ describe('决策 planCodeBlockModA：三态链状态机', () => {
     expect(planCodeBlockModA(closeFence, queryOfDoc(DOC))).toEqual({ anchor: 12, head: 35 })
   })
 
+  it('光标在开栏行围栏前缀段（缩进列内）→ null 透传（#5 闭区间自围栏字符 startPos 起，前缀段排除）', () => {
+    // 行1 '- item' 0-6；行2 '  ```' from=7 to=12：前缀段 [7, 9)，startPos=9（indent=2）
+    const doc = '- item\n  ```\n  code\n  ```'
+    const state = EditorState.create({ doc, selection: { anchor: 8 } })
+    expect(planCodeBlockModA(state, queryOfDoc(doc))).toBeNull()
+  })
+
   it('反向选区（anchor > head）不匹配内容档 → 规整为正向内容（上游按 anchor/head 原序比对）', () => {
     const state = EditorState.create({ doc: DOC, selection: { anchor: 35, head: 12 } })
     expect(planCodeBlockModA(state, queryOfDoc(DOC))).toEqual({ anchor: 12, head: 35 })
@@ -55,7 +62,7 @@ describe('决策 planCodeBlockModA：三态链状态机', () => {
     expect(planCodeBlockModA(state, queryOfDoc(DOC))).toBeNull()
   })
 
-  it('多选区 → null 防御性透传（照 #11 惯例）', () => {
+  it('多选区 → null 防御性透传（#8/#12 惯例，区别于 #11 主选区收敛）', () => {
     const state = EditorState.create({
       doc: DOC,
       extensions: [EditorState.allowMultipleSelections.of(true)],

@@ -37,7 +37,7 @@
 //   行为链 delete 白名单可观察；上游换自定义 'EasyTyping.change'）+
 //   scrollIntoView（合并分支光标跨行，不滚动易脱视）。
 // - 多选区显式透传（上游只检查 main，多光标下派发会丢副光标——防御性
-//   收紧，#8 同款）。
+//   收紧，#12 惯例同款）。
 //
 // 层归属（#402 四层契约第 2 层）：**抢先层 Prec.high**，注册序在 #8
 // BetterBackspace 之后（page-editor 装配序即尝试序）——接管面极窄（仅
@@ -61,7 +61,7 @@ export interface CodeBackspacePlan {
  */
 export function planCodeBlockBackspace(state: EditorState, query: SyntaxQuery): CodeBackspacePlan | null {
   const sel = state.selection
-  // 多选区不处理（透传：#8 惯例的防御性收紧）
+  // 多选区不处理（透传：多光标删除归平台原生语义，防御性收紧）
   if (sel.ranges.length > 1) return null
   const main = sel.main
   // 删除落点 to（上游 pos 取 toA；文首无删除面）
