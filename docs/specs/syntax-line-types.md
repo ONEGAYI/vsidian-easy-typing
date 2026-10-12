@@ -41,7 +41,7 @@ interface AddonSyntaxFacet {
 | heading | ATX 标题（v1/v2 均不特判） | `heading` | **text** | 不跳过 |
 | quote（v2 行首 quote） | `hmd-quote`（`>` 前缀） | `quote` | quote（行首无 `>` 前缀的惰性延续行门控回 text，见 §四） | 不跳过 |
 | **callout_title**（v2 行内任一） | `hmd-callout` | **平台无枚举，统一 quote** | quote | 不跳过 |
-| list 标记/续行（v2 行内任一 list 先于行首 quote） | `hmd-list` | `list` | list | 不跳过 |
+| list 标记/续行（v2 行内任一 list 先于行首 quote） | `hmd-list` | `list` | list（松散列表项间空行门控回 empty，见 §四） | 不跳过 |
 | text 兜底 | — | `text` | text（空行本地补判 `empty`） | 不跳过 |
 | wikilink/mdlink 内 code span（`!contains('link')` 排除） | link 节点内非 code | **平台缺口，插件自判**（见下） | 链接内判 text | — |
 
@@ -69,12 +69,15 @@ interface AddonSyntaxFacet {
 - **语言整串随上游收敛**（原降级差异消除）：语言提取为信息串整串 trim 后小写（上游 `getCodeBlocksInfos` 同款，`js copy` 查表不中 → 无操作）；#25 降级版「取首 token」口径删除。
 - **相邻代码块零分隔行 run 合并**（查询版形态学边界）：块信息按「连续 code 行 run」分组——两个代码块之间无任何非 code 行时合并为一块（开栏取首行）。上游 iterate `codeblock-begin/end` 节点为两块。消费面影响：相邻异语言块的后者经 `codeBlockAtViaQuery` 取到首块语言。罕见形态（两块间通常有空行），如需拆分另开票。`codeBlockAtViaQuery` 已改为从 pos 行向上下局部扩展（评审 S6 前半：autoformat 每键入触达，原经 `codeBlocksViaQuery` 全文档逐行查询在 10 万行文档达百毫秒级，与 ModA 懒查询红线同性质）——run 边界与全量分组一致，合并语义不变（矩阵钉住）。
 - **引用块惰性延续行门控回 text**（评审 P4 落档）：平台树按 GFM 把引用块的惰性延续行（`> a` 下一行顶格 `b`，无 `>` 前缀）判 `quote`；上游 v2 是行首 quote 语义（`getQuoteInfoInPos` 的 quote_regex `^(\s*)(>+) ?` 不匹配 → 判 text）。LINE_KIND 消费维度（`lineKindOf`）对 quote kind 且行首 `QUOTE_PREFIX_RE` 不匹配的行门控回 text，对齐上游（消费面影响闭合：不门控时 ModA 的 anchorKind=quote 会跳过文本分支而 `quoteInfoAt`（行首纯正则）返回 null 落穿到不接管）。v1/跳过维度保持平台 kind 原判——上游 v1 的 quote 分支兜底本就是 text（core.ts:698-742，仅 callout 内代码块升 codeblock，普通引用行一律 text 不跳过），平台 quote 不跳过，两侧行为等价，无需门控。fake 判定链按行首形态学天然不产该形态（近似边界，见 `test/syntaxFake.ts` 头注释），门控行为由矩阵测试直接构造 quote kind 钉住。
+- **松散列表项间空行门控回 empty**（评审 R2-B3 落档，与 P4 惰性延续行门控同款形态）：平台树对松散列表（loose list）的项间空行判 `list`（BulletList 父节点区间覆盖空行）；上游 v2 无父节点语义，空行按行文本判 text。LINE_KIND 消费维度（`lineKindOf`）对 list kind 且行文本全空白的行门控回 empty，对齐上游。FORMAT_SKIP（v1/跳过）维度不动——list 与 text 均不跳过，无行为差。fake 判定链按行首形态学对空行判 text，天然不产该形态（近似边界，`test/syntaxFake.ts` 头注释），门控行为由矩阵测试直接构造恒 list 查询钉住。
+- **开栏围栏缩进上限 0-3 空格**（评审 R2-B5 落档）：`fenceOpenIndentOf` 的开栏检测限缩进 0-3 空格——对齐 CommonMark 围栏缩进上限与仓内 ruleScopeFallback 时代 `FENCE_LINE /^ {0,3}/` 先例（原 `/^(\s*)/` 无上限，4 空格缩进的 ``` 是缩进代码的字面内容，会被误产 CodeBlockInfo，而上游对缩进代码无 codeblock-begin 不产出）。行级 kind 仍按平台判 code（缩进代码），只是 `codeBlocksViaQuery` / `codeBlockAtViaQuery` 不产出块信息；引用前缀剥后（引用内围栏）同受上限约束。
 - **消费面选型差异（管线级，非平台差异）**：上游自动格式化的行级门控用 v1 全行校验（行内 code/公式行是 text → 格式化该行）；本移植管线门控用位置级 `detectScopeViaQuery`——**光标在行内 code/formula 内时跳过整行**。行为差异如实保留（管线测试钉住），口径见 [auto-format.md](auto-format.md)「作用域跳过」节。
 
 ### 已知边界与后续收口（评审不修项落档）
 
-以下为双轴评审（PR #35）识别但**不在本 PR 修复**的形式问题，记录于此供后续票决策：
+以下为双轴评审（PR #35）识别但**不在本 PR 修复**的问题（形式问题与近似口径），记录于此供后续票决策：
 
+- **R2-A1**：Delete/SelectKey 管线的事务前坐标打在平台事务后文档的实时查询上（删除大段时钳制文末，仅非 All 用户规则在场触发、默认配置零影响）——近似口径与中期修复路径见 [rule-engine.md](rule-engine.md)「事务前重建与坐标换算」节；#21 真实宿主联调核对，修复另票。
 - **S3**：`(doc, query, lineNumber)` 三元组在多个签名间重复传递（Data Clumps），可上提 `LineSyntaxContext` 统一——接口面刚随切片 B 稳定，形式统一属后续票。
 - **S4**：planner 统一签名的不消费参数（个别 plan 函数不用全部入参）——换取 `runViewCommand` 单态分发的可辩护权衡。
 - **S5**：`syntaxTreeQuery` ↔ `inlineParts` 循环 import——运行时安全（函数内引用无 TDZ 风险），解环收益不抵结构翻动。
@@ -92,7 +95,7 @@ interface AddonSyntaxFacet {
 | `splitLineIntoParts`（inlineParts 树版，内部消费 `inlineAt` + `linkSpansOfLine`） | `lineFormatter.ts`（formatLine 的 syntax 参数） | 行内分区（code/formula/链接/user） |
 | `quoteInfoAt`（纯正则，上游同款） | `modaSelection.ts` | 引用块档位（不消耗查询） |
 
-装配：`page-editor.ts` 统一构造查询（instanceId 闭包绑定）注入各消费面；查询缺席（instanceId 反查失败/语法面缺席）= 不接管。
+装配：`page-editor.ts` 统一构造查询（instanceId 闭包绑定）注入各消费面；查询缺席（instanceId 反查失败/语法面缺席）= 不接管。行为链三注册（#25 五族、#9 两族、autoformat）另注入**实例一致性守卫**（评审 R2-B1）：平台行为链同样驱动嵌入（embed）Live 实例，而查询恒为主实例——onInput 入口比对 `ctx.docUri`（与主实例 views 句柄 `targetDocUri` 同源，反查面缺席回退快照全文比对），不一致（嵌入驱动）即放弃该次行为修饰（返回 null，与查询拒绝同一「不接管」语义）。
 
 ### 测试
 
