@@ -894,7 +894,7 @@ describe('R2-A1 事务前坐标换算（#37）', () => {
   it('语义：Delete 换算点在实时反引号 span 内 → Code 限定规则接管（修复前事务前 pos 打实时文末漏判为 Text）', () => {
     const engine = new RuleEngine()
     engine.addSimpleRule({ trigger: 'zz', replacement: 'ZZ', options: 'dc' } satisfies SimpleRule)
-    // 事务前 a`zz`（'zz' 在 span [1,6) 内），选中删 [2,4)：快照 a`b`（4 字
+    // 事务前 a`zzb`（'zz' 在 span [1,6) 内），选中删 [2,4)：快照 a`b`（4 字
     // 符，span [1,4)）。修复前传事务前光标 4——恰等于实时长度（钳制不发生：
     // detectScopeViaQuery 的 min 按事务前 doc 长度 6），inlineAt(4) 打实时
     // 落在半开 span [1,4) 之外误判 Text 漏接管；修复后换算 pos 2（实时

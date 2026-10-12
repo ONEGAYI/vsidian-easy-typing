@@ -55,7 +55,7 @@
 装完启动宿主（同一 `--user-data-dir` / `--extensions-dir` 参数）后核对三件事，每件有独立的观察通道：
 
 1. **兼容检查通过**：vsidian 装载器对组件清单做兼容判定（`vsidianAddon.api` 与 `experimental` 各项范围须包含宿主版本），通过才接入。观察通道是「Vsidian 附加组件」输出通道（Output 面板；英文界面显示 Vsidian Add-ons）——通过时无拒载记录；被拒时形如 `addon ONEGAYI.vsidian-easy-typing register rejected: incompatible-api (declared api ..., host ...)`，同时组件 activate 抛错进入扩展宿主日志。注意该输出通道是普通 channel、**不落盘**——交互场景看 Output 面板；日志文件面的等价证据是 exthost 日志中组件激活成功且无异常（被拒必然抛错留痕）。
-2. **组件激活**：exthost 日志（上节路径）出现 `ExtensionService#_doActivateExtension ONEGAYI.vsidian-easy-typing, activationEvent: 'api', root cause: onegayi.vsidian`——依赖链激活；宿主不在场的典型报错是 `ONEGAYI.vsidian-easy-typing: ... no host`。setup 生命周期跑通的旁证：renderer.log 中 vsidian 为本组件创建的存储目录观察器记录（`...addons/ONEGAYI.vsidian-easy-typing`，ENOENT 属预期——目录惰性创建）。
+2. **组件激活**：exthost 日志（上节路径）出现 `ExtensionService#_doActivateExtension ONEGAYI.vsidian-easy-typing, activationEvent: 'api', root cause: onegayi.vsidian`——依赖链激活；宿主不在场的典型报错是 `ONEGAYI.vsidian-easy-typing: 当前扩展宿主中未找到 Vsidian（onegayi.vsidian）`（i18n `noHost` 消息；英文界面为 `Vsidian (onegayi.vsidian) not found in this extension host`）。setup 生命周期跑通的旁证：renderer.log 中 vsidian 为本组件创建的存储目录观察器记录（`...addons/ONEGAYI.vsidian-easy-typing`，ENOENT 属预期——目录惰性创建）。
 3. **experimental 入口可用**：行为生效即证明——Live 正文键入 `。。` 出 `.`（规则引擎经 `cm6` / `syntax` 等实验入口驱动）。设置侧入口同证：Vsidian 设置「附加组件」分页出现本组件条目，规则管理页可打开。清单层面的蕴含关系：兼容判定通过 = 声明的全部实验入口在宿主 API 面在场（任一缺位即拒载）；行为级核验属 #21 人工清单（A1 起逐项），日志联调不替代。
 
 > debug 日志门控（默认关）：设置页开启 `debug` 后，扩展宿主控制台出现 `[vsidian-easy-typing]` 前缀日志（`src/logging.ts`），联调排障时可作补充通道。
