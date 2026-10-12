@@ -19,6 +19,7 @@ import {
   type RuleInputPipelineContext,
 } from '../src/ruleBehaviorPipeline'
 import { isPositionProtected, parseUserDefinedRegExp } from '../src/userDefinedRegex'
+import type { SyntaxQuery } from '../src/syntaxTreeQuery'
 import { makeRejectingQuery, makeSyntaxFake } from './syntaxFake'
 
 /** 按内置规则 id 集构造引擎（族拆分在 intercept 层，本文件按需拼装） */
@@ -794,5 +795,152 @@ describe('作用域计算：All 短路（树版查询不触发）', () => {
     expect(engine.allRulesUnscoped()).toBe(false)
     engine.removeRule('user-t')
     expect(engine.allRulesUnscoped()).toBe(true)
+  })
+})
+
+// ===== #37：R2-A1 事务前坐标换算（作用域判定的坐标系自洽） =====
+//
+// 缺陷机制：detectScopeViaQuery 的三输入必须同坐标系——doc（行几何/行文本
+// 来自传入 text）、query（平台 experimental.syntax 闭包绑定实例，恒打
+// **实时（事务后）文档**）、pos（管线传入）。修复前 Delete/SelectKey 传
+// 事务前重建文档 + 事务前坐标：doc/pos 是事务前系而 query 是实时系，删除
+// 大段时 pos 可越实时文档长度。#37 修复：两管线统一传 ctx.snapshot.text
+// + 换算后的快照坐标（Delete 虚拟光标经 preOffsetToSnapshot、SelectKey 的
+// replaced.from 恰为换算不动点 p ≤ from 恒等）。
+//
+// fake 基建口径：makeSyntaxFake(text) 的 doc 与 query 同源同一文本——以
+// **快照文本**构造 fake 即如实模拟平台实时态（query 打实时文档）。
+// 双层断言：打点断言（包装 query 记录 lineTypeAt 收到的 pos，钉换算契约）
+// + 端到端语义断言（实时文档与事务前重建文档的结构差异使判定环境翻转，
+// 钉判定文档与判定坐标的正确性）。触发面：仅非 All 用户规则在场（All
+// 短路跳过查询；内置 20 条全 All）。
+
+describe('R2-A1 事务前坐标换算（#37）', () => {
+  /** 打点包装：记录 lineTypeAt 收到的 pos 序列（首项即判定 pos——detectScopeViaQuery 首查打判定点，code 分支的行扩展查询在其后） */
+  function spyLineTypePos(query: SyntaxQuery): { query: SyntaxQuery; seen: number[] } {
+    const seen: number[] = []
+    const wrapped: SyntaxQuery = {
+      lineTypeAt: (pos) => {
+        seen.push(pos)
+        return query.lineTypeAt(pos)
+      },
+      inlineAt: (pos) => query.inlineAt(pos),
+    }
+    return { query: wrapped, seen }
+  }
+
+  // ---- 打点断言：换算契约（query 收到的 pos 必须在快照坐标系内） ----
+
+  it('打点：backward 删除大段（事务前光标越实时文档界）→ query 收换算后的 replaced.from', () => {
+    const engine = new RuleEngine()
+    engine.addSimpleRule({ trigger: 'zz', replacement: 'ZZ', options: 'dt' } satisfies SimpleRule)
+    // 快照（实时）仅 3 字符；replaced 被删 19 字符 → 事务前虚拟光标 to=19
+    // 越实时文档长度。修复前传事务前 19（打点可证）；修复后经
+    // preOffsetToSnapshot(19) = 19 - 19 = 0
+    const spy = spyLineTypePos(makeSyntaxFake('abc').query)
+    planDeleteRuleModification(
+      engine,
+      inputCtx('abc', 0, 'delete.backward', '', [{ anchor: 0, head: 0 }], { from: 0, to: 19, text: 'z'.repeat(19) }),
+      { scopeQuery: spy.query },
+    )
+    expect(spy.seen[0]).toBe(0)
+  })
+
+  it('打点：forward 光标本就是 replaced.from（p ≤ from 恒等路径）→ query 原值收到', () => {
+    const engine = new RuleEngine()
+    engine.addSimpleRule({ trigger: 'zz', replacement: 'ZZ', options: 'dt' } satisfies SimpleRule)
+    // forward 虚拟光标 = replaced.from = 3，换算不动点——修复前后同值，
+    // 钉住恒等路径不因修复偏移
+    const spy = spyLineTypePos(makeSyntaxFake('abcy').query)
+    planDeleteRuleModification(
+      engine,
+      inputCtx('abcy', 3, 'delete.forward', '', [{ anchor: 3, head: 3 }], { from: 3, to: 5, text: 'zz' }),
+      { scopeQuery: spy.query },
+    )
+    expect(spy.seen[0]).toBe(3)
+  })
+
+  it('打点：SelectKey 大段替换 → query 收 replaced.from（换算不动点）', () => {
+    const engine = new RuleEngine()
+    engine.addSimpleRule({ trigger: '·', replacement: '《${SEL}》', options: 'st' } satisfies SimpleRule)
+    // 事务前行 `x[[wiki]]（10 字符），选区 [2,10) 替换为 1 字符键入 → 快照
+    // 3 字符；pos 恒为 replaced.from = 2（两文档前缀逐字节相同），修复改的
+    // 是判定文档（doc 由事务前重建文本换为快照文本——语义断言覆盖）
+    const spy = spyLineTypePos(makeSyntaxFake('`x`').query)
+    planSelectKeyRuleModification(
+      engine,
+      inputCtx('`x`', 3, 'input.type', '`', [{ anchor: 3, head: 3 }], { from: 2, to: 10, text: '[[wiki]]' }),
+      { scopeQuery: spy.query },
+    )
+    expect(spy.seen[0]).toBe(2)
+  })
+
+  // ---- 端到端语义断言：判定环境翻转（实时文档 vs 事务前重建文档） ----
+
+  it('语义：Delete 换算点在实时正文 → Code 限定规则不接管（修复前事务前 pos 打进实时反引号 span 误命中）', () => {
+    const engine = new RuleEngine()
+    engine.addSimpleRule({ trigger: 'zz', replacement: 'ZZ', options: 'dc' } satisfies SimpleRule)
+    // 事务前 azzb`cd`（'zz' 在正文区、span [4,8) 外），选中删 [1,3)：
+    // 快照 ab`cd`（span [2,6)）。修复前传事务前光标 3 → 打实时 span 内误
+    // 判 Code 命中；修复后换算 pos 1（实时 'b'，text）→ 不接管
+    const r = planDeleteRuleModification(
+      engine,
+      inputCtx('ab`cd`', 1, 'delete.selection', '', [{ anchor: 1, head: 1 }], { from: 1, to: 3, text: 'zz' }),
+      { scopeQuery: makeSyntaxFake('ab`cd`').query },
+    )
+    expect(r).toBeNull()
+  })
+
+  it('语义：Delete 换算点在实时反引号 span 内 → Code 限定规则接管（修复前事务前 pos 打实时文末漏判为 Text）', () => {
+    const engine = new RuleEngine()
+    engine.addSimpleRule({ trigger: 'zz', replacement: 'ZZ', options: 'dc' } satisfies SimpleRule)
+    // 事务前 a`zzb`（'zz' 在 span [1,6) 内），选中删 [2,4)：快照 a`b`（4 字
+    // 符，span [1,4)）。修复前传事务前光标 4——恰等于实时长度（钳制不发生：
+    // detectScopeViaQuery 的 min 按事务前 doc 长度 6），inlineAt(4) 打实时
+    // 落在半开 span [1,4) 之外误判 Text 漏接管；修复后换算 pos 2（实时
+    // 'b'，span 内）→ Code 接管
+    const r = planDeleteRuleModification(
+      engine,
+      inputCtx('a`b`', 2, 'delete.selection', '', [{ anchor: 2, head: 2 }], { from: 2, to: 4, text: 'zz' }),
+      { scopeQuery: makeSyntaxFake('a`b`').query },
+    )
+    expect(r?.plan?.changes[0]?.text).toBe('ZZ')
+  })
+
+  it('语义：SelectKey 事务前行 wikilink 区段排除实时反引号 span → Text 限定规则不接管（修复前用事务前行文本误判 inLink）', () => {
+    const engine = new RuleEngine()
+    engine.addSimpleRule({ trigger: '`', replacement: '《${SEL}》', options: 'st' } satisfies SimpleRule)
+    // 事务前行 `x[[wiki]]：选区 [2,10)（[[wiki]]）键入 ` → 快照 `x`。
+    // inlineAt(2) 打实时（span [0,3) 内 → code）不变；链接排除的行文本
+    // 修复前取事务前行（REG_WIKILINK 区段 [2,10) 含 pos → inLink → Text
+    // 误命中），修复后取实时行 `x`（无 wikilink → Code 不接管）
+    const r = planSelectKeyRuleModification(
+      engine,
+      inputCtx('`x`', 3, 'input.type', '`', [{ anchor: 3, head: 3 }], { from: 2, to: 10, text: '[[wiki]]' }),
+      { scopeQuery: makeSyntaxFake('`x`').query },
+    )
+    expect(r).toBeNull()
+  })
+
+  it('语义：同一场景 Code 限定规则接管（翻转后判定环境为 Code 的对照面）', () => {
+    const engine = new RuleEngine()
+    engine.addSimpleRule({ trigger: '`', replacement: '《${SEL}》', options: 'sc' } satisfies SimpleRule)
+    // 与上一用例互补：修复后判 Code → 'sc' 规则命中，包裹目标 replaced.text
+    const r = planSelectKeyRuleModification(
+      engine,
+      inputCtx('`x`', 3, 'input.type', '`', [{ anchor: 3, head: 3 }], { from: 2, to: 10, text: '[[wiki]]' }),
+      { scopeQuery: makeSyntaxFake('`x`').query },
+    )
+    expect(r?.plan?.changes[0]?.text).toBe('《[[wiki]]》')
+  })
+
+  // ---- 回归钉住：Input 管线本就自洽（快照即实时文档，无换算） ----
+
+  it('回归打点：Input 管线 query 收快照光标原值（#25 以来口径不变）', () => {
+    const engine = new RuleEngine()
+    engine.addSimpleRule({ trigger: 'zz', replacement: 'ZZ', options: 't' } satisfies SimpleRule)
+    const spy = spyLineTypePos(makeSyntaxFake('a zz').query)
+    planInputRuleModification(engine, inputCtx('a zz', 4, 'input.type', 'z'), { scopeQuery: spy.query })
+    expect(spy.seen[0]).toBe(4)
   })
 })

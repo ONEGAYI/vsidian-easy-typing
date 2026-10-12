@@ -36,6 +36,8 @@
 
 本组件清单声明 `vsidianAddon.api ^1.0.0`（1.0.0 候选，未对外发行）+ 实验入口 `cm6 ^1.1.0`、`headingFold ^1.0.0`、`viewIdentity ^1.0.0`（防御链拆除起消费——命令目标句柄解析与折叠寻址反查）与 `syntax ^1.0.0`（#5 起行类型/作用域/行内分区树版判定）。SDK 类型 vendor 快照锚定 vsidian 主仓 commit **`d26f1e8660d75f551ea4b37c297df87ede6c48c4`**（`scripts/vendorSdkTypes.mjs` 的 `DEFAULT_COMMIT`；#434 merge——语法查询面 experimental.syntax，及此前的视图身份基座平台 PR #432）。矩阵基线即此 commit 构建的 vsidian VSIX；vsidian 升级后先跑本仓 `npm run vendor:check` 确认类型快照未漂移，再开新一轮矩阵。
 
+**平台 VSIX 最低版本要求**：当前 vsidian API 未正式发行（1.0.0 候选），最低版本口径 = 锚定 commit（`DEFAULT_COMMIT`）构建的 VSIX；API 发行后改为「本组件消费的 API 首次可用的 release 点」并同步更新本标注。装载验证、两道对齐闸与 re-vendor 纪律见 [dev 联调指南](guides/dev-testing.md)。
+
 ### 维度二：VSIX 安装态（对齐 vsidian `test/integration/runInstalled.mjs` 模式）
 
 安装步骤（隔离 profile，不污染日常环境）：
@@ -145,6 +147,14 @@
 1. 两处各选中一段文字，键入 `《`。
 
 预期：包裹**不发生**（多选区一律不进 SelectKey 管线），回落 VSCode 原生选区替换行为。这是设计边界，不是缺陷（B2）。
+
+### A72. 非 All 用户规则的作用域判定坐标（#37）
+
+1. 规则管理页导入一条 Code 作用域的 Delete 类规则：`{"trigger":"zz","replacement":"ZZ","options":"dc"}`。
+2. 在围栏代码块内单独一行输入 `zz`，选中这两个字符后按 Backspace（整段选中删除）。
+3. 对照：在代码块外的正文区重复同样的选中删除。
+
+预期：代码块内的删除命中该 Code 限定规则（删除位置出现 `ZZ` 联动改写），正文区的删除不命中（原生删除即终态）。作用域判定发生在删除后的实时文档换算位置上（#37 快照坐标换算）——与事务前实况的极端分叉形态是既定口径而非缺陷，见 rule-engine.md「事务前重建与坐标换算」节。
 
 ## 三、Tabstop 占位符导航（#14 / #15）
 
