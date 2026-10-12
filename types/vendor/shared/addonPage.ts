@@ -1,10 +1,11 @@
-// vendored from ONEGAYI/vsidian@d26f1e8660d75f551ea4b37c297df87ede6c48c4 — src/shared/addonPage.ts
+// vendored from ONEGAYI/vsidian@9f2d292753291db5fa5c45cc3f6dcbbd71c2e37c — src/shared/addonPage.ts
 // 类型快照：由 scripts/vendorSdkTypes.mjs 自动生成——仅保留类型声明与被
 // 类型引用的常量，值级导出（校验函数、运行时数据）已剥离。不要手改；
 // re-vendor：npm run vendor:sdk（升级锚定提交改脚本 DEFAULT_COMMIT 后重跑）。
 
 import type { Extension } from '@codemirror/state'
 import type { AddonHeadingFoldFacet } from './addonFoldApi'
+import type { AddonHostSettingsFacet } from './addonHostSettingsApi'
 import type { AddonSyntaxFacet } from './addonSyntaxApi'
 import type { AddonRenderersFacet } from './addonRenderers'
 import type { AddonViewHandle, AddonViewsFacet, AddonViewIdentityFacet } from './addonEditApi'
@@ -105,13 +106,15 @@ export interface VsidianAddonPageSdk {
   readonly addon: { id: string; generation: number; page: AddonPageKind }
   /** 实验入口（仅编辑器页提供；设置页为 undefined）：cm6 = CM6 共享
    *  运行时；headingFold = 标题折叠查询与命令（#410）；viewIdentity =
-   *  视图身份反查（#426）；syntax = 行类型与行内标记查询（#433）。使用
-   *  前须在清单 experimental 声明对应入口的兼容范围 */
+   *  视图身份反查（#426）；syntax = 行类型与行内标记查询（#433）；
+   *  hostSettings = 宿主设置白名单读取（#457）。使用前须在清单
+   *  experimental 声明对应入口的兼容范围 */
   readonly experimental: {
     readonly cm6?: AddonCm6Runtime
     readonly headingFold?: AddonHeadingFoldFacet
     readonly viewIdentity?: AddonViewIdentityFacet
     readonly syntax?: AddonSyntaxFacet
+    readonly hostSettings?: AddonHostSettingsFacet
   }
   /** T06（#355）统一视图面（仅编辑器页；设置页为 undefined）：主正文、
    *  嵌入内部 Live 与悬停引用的句柄列表、快照读取、文本提交（默认原子

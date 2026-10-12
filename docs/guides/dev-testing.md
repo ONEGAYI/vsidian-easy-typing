@@ -82,7 +82,7 @@
 ### 编译期：vendor 类型快照锚定
 
 - `types/vendor/` 是从 vsidian 仓生成的类型快照，文件头标注来源 commit，**禁止手改**；源码只允许 `import type` 消费（`test/scaffold.test.ts` 钉住）。
-- **锚点实值以 `scripts/vendorSdkTypes.mjs` 的 `DEFAULT_COMMIT` 为准**，当前为 `d26f1e8660d75f551ea4b37c297df87ede6c48c4`。票据与文档转述的锚点可能滞后，一律回脚本核对。
+- **锚点实值以 `scripts/vendorSdkTypes.mjs` 的 `DEFAULT_COMMIT` 为准**，当前为 `9f2d292753291db5fa5c45cc3f6dcbbd71c2e37c`。票据与文档转述的锚点可能滞后，一律回脚本核对。
 - `npm run vendor:check` 用 `DEFAULT_COMMIT` 重新生成并比对已提交快照。vsidian 升级（换装新平台 VSIX）后先跑它确认消费面未漂移，再开联调。
 - 源仓定位序：`--source` > 环境变量 `VSIDIAN_SOURCE_REPO` > 脚本内默认相对路径。读取经 `git show <commit>:<path>` 按提交快照取文，不受源仓工作树状态影响。
 - **本地跑 vendor 系命令在两仓同级布局下裸跑即可**（默认约定：本仓与 vsidian 主仓同在 `_Extensions` 目录下，脚本默认相对路径即指向同级主仓根）；源仓不在同级位置时（如模板复制者）以 `--source` 或 `VSIDIAN_SOURCE_REPO` 指向 vsidian 主仓根，不可达时报「源仓不是 git 仓库」退出并附指引。CI 即显式形态（partial clone vsidian 后以 `VSIDIAN_SOURCE_REPO` 指向，锚定 commit 不可达必须失败）。

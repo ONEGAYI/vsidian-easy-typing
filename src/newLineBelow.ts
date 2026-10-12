@@ -23,10 +23,14 @@
 // 平台内建 insertBlankLine 照旧兜底（**透传 ≠ 无操作**，键位永不失效）。
 // 与 #18（Enter）/#7（Tab）不同键位，无同键竞争。
 //
+// 严格换行分支（#30 落地，上游 keyboard_handlers.ts:728-762 忠实移植）：
+// 双门（本仓设置 strictModeEnter × vsidian editor.readingBreaks 严格渲染）
+// 开时改写插入串——正文行 two_space 两空格 / enter_twice·mix 两回车、引
+// 用行 enter_twice 双行引用 / 其余两空格+续前缀；空白行与代码/公式行
+// 不改写（上游排除语义）；列表行所有模式不额外处理。决策与门控细节见
+// docs/specs/strict-enter.md 与 src/strictEnter.ts 头注。
+//
 // 与上游的差异：
-// - 上游 StrictModeEnter × strictLineBreaks 分支不移植（严格换行待产品
-//   决策，见 docs/adr/0002-strict-line-break-mapping.md）——上游在严格
-//   渲染下会改为插入两空格/双回车（keyboard_handlers.ts:728-762）。
 // - **多选区显式透传**：上游不检查（只取 main、派发单 selection 会把多
 //   光标收敛为单光标）；本仓透传回平台——defaultKeymap 的
 //   insertBlankLine 经 changeByRange 原生多光标（每光标下方插空行），
@@ -45,6 +49,8 @@
 import type { EditorState } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import type { VsidianAddonPageSdk } from '../types/vendor/shared/addonPage'
+import type { StrictLineModeValue } from './settings/defaults'
+import type { LineKind } from './blockScan'
 import { SETTINGS_TOPIC } from './settings/store'
 
 /** 命中计划：行尾插入文本与光标落点（LF 偏移） */
@@ -113,10 +119,58 @@ export function planNewLineBelow(state: EditorState): NewLineBelowPlan {
   return { insertAt: line.to, insert, cursor: line.to + insert.length }
 }
 
+/**
+ * Mod+Enter 严格改写插入串（#30：上游 goNewLineAfterCurLine 744-761 决策
+ * 序的纯逻辑拆出，便于矩阵测试）：返回 null = 不改写（沿用普通 '\n' +
+ * 前缀）。行文本正则判定列表/引用（上游同源口径——Mod+Enter 不用树判定
+ * 判行形态，树 kind 仅用于 code/formula 排除，由调用方传入）。
+ *
+ * - 空白行：不改写（上游空白行分支在严格判定之前 return）；
+ * - code / formula：不改写（上游 733-737 排除——块内严格换行无意义）；
+ * - 列表行：所有模式不改写（上游 listMatch 恒 '\n' + 前缀）；
+ * - two_space：两空格 + '\n' + 前缀（正文与引用同形态；整行已两空格
+ *   不重复——上游 745 检查 lineContent）；
+ * - 引用行 enter_twice：'\n' + 前缀 + '\n' + 前缀（双行引用）；
+ *   引用行 mix：两空格 + '\n' + 前缀（引用用两空格）；
+ * - 其余正文行（enter_twice / mix）：'\n\n' + 前缀。
+ */
+export function strictNewLineBelowInsert(
+  lineText: string,
+  mode: StrictLineModeValue,
+  lineKind: LineKind,
+): string | null {
+  if (EMPTY_LINE.test(lineText)) return null
+  if (lineKind === 'code' || lineKind === 'formula') return null
+  const listMatch = LIST_MARKER.exec(lineText)
+  if (listMatch !== null) return null
+  const spaceStr = lineText.endsWith('  ') ? '' : '  '
+  const quoteMatch = QUOTE_MARKER.exec(lineText)
+  // 换行一律 '\n' 字面量拼接——不用内嵌实际换行的模板字符串（CRLF
+  // checkout 会把内嵌换行变 \r\n，违反 webview LF 坐标协议）
+  if (mode === 'two_space') return spaceStr + '\n' + newLineBelowPrefix(lineText)
+  if (quoteMatch !== null) {
+    const prefix = newLineBelowPrefix(lineText)
+    return mode === 'enter_twice' ? '\n' + prefix + '\n' + prefix : spaceStr + '\n' + prefix
+  }
+  return '\n\n' + newLineBelowPrefix(lineText)
+}
+
+/** Mod+Enter 严格改写依赖（page-editor 注入，测试可替换；#30） */
+export interface NewLineBelowStrictDeps {
+  /** 双门合成开关（strictModeEnter × 宿主严格渲染；false = 不改写） */
+  readonly enabled: () => boolean
+  /** 当前严格换行模式（strictLineMode 生效值） */
+  readonly mode: () => StrictLineModeValue
+  /** 树判定行类型（#5 LINE_KIND；null = 查询拒绝/反查失败 → 不改写） */
+  readonly lineKindOf: (view: EditorView) => LineKind | null
+}
+
 /** Command 依赖（page-editor 注入，测试可替换） */
 export interface NewLineBelowCommandDeps {
   /** 功能开关（newLineBelow 生效值；false = 透传回平台内建） */
   readonly isEnabled: () => boolean
+  /** 严格换行改写（#30；缺省 = 宿主无 hostSettings 面的装配，零改写） */
+  readonly strict?: NewLineBelowStrictDeps
 }
 
 /**
@@ -128,16 +182,31 @@ export interface NewLineBelowCommandDeps {
 export function createNewLineBelowCommand(
   deps: NewLineBelowCommandDeps,
 ): (view: EditorView) => boolean {
-  const { isEnabled } = deps
+  const { isEnabled, strict } = deps
   return (view: EditorView): boolean => {
     // IME 组合中与只读状态不接管（组合取消交默认路径；只读不写）
     if (view.compositionStarted || view.state.readOnly) return false
     if (!isEnabled()) return false
     if (view.state.selection.ranges.length > 1) return false
     const plan = planNewLineBelow(view.state)
+    // 严格换行改写（#30）：双门开时按三模式改写插入串（光标落点语义
+    // 不变——新行前缀末尾 = insertAt + insert.length）；树判定不可得或
+    // 行形态不改写（null）时保持普通插入
+    let insert = plan.insert
+    if (strict !== undefined && strict.enabled()) {
+      const lineKind = strict.lineKindOf(view)
+      if (lineKind !== null) {
+        const line = view.state.doc.lineAt(view.state.selection.main.head)
+        const strictInsert = strictNewLineBelowInsert(line.text, strict.mode(), lineKind)
+        if (strictInsert !== null) {
+          insert = strictInsert
+        }
+      }
+    }
+    const cursor = plan.insertAt + insert.length
     view.dispatch({
-      changes: { from: plan.insertAt, to: plan.insertAt, insert: plan.insert },
-      selection: { anchor: plan.cursor, head: plan.cursor },
+      changes: { from: plan.insertAt, to: plan.insertAt, insert },
+      selection: { anchor: cursor, head: cursor },
       userEvent: 'input.newline',
       scrollIntoView: true,
     })

@@ -6,9 +6,12 @@ import { defineAddonPage } from 'vsidian-addon-sdk'
 import type { VsidianAddonPageSdk } from '../types/vendor/shared/addonPage'
 import type { AddonInputContext } from '../types/vendor/shared/addonBehaviors'
 import type { SyntaxQuery } from './syntaxTreeQuery'
+import { lineInfoAt } from './syntaxTreeQuery'
+import type { LineKind } from './blockScan'
 import { createBetterBackspaceCommand } from './backspaceIntercept'
 import { buildToggleCommentCommandDefinition, createToggleCommentCommandHandler } from './commentToggle'
 import { createCollapseEnterGate, createFoldEnterCommand } from './foldEnter'
+import { createStrictEnterCommand, createStrictEnterGate } from './strictEnter'
 import { createNewLineBelowCommand, createNewLineBelowGate } from './newLineBelow'
 import { createTaboutCommand } from './taboutIntercept'
 import { createCodeBlockModACommand } from './codeBlockModA'
@@ -99,9 +102,9 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   sdk.onDispose(() => ruleClient.stopWatch())
 
   // 共享设置拉取通道（工单 #32）：一次 focusChanged 在同一同步块内触发
-  // 8 个设置门 refresh（behaviorGates ×4 + debug + modA + collapseEnter +
-  // newLineBelow），装载期首拉（8 页级 + 3 个 register 内部，共 11 个
-  // get）同批——此前各发一次 SETTINGS_TOPIC.get
+  // 9 个设置门 refresh（behaviorGates ×4 + debug + modA + collapseEnter +
+  // newLineBelow + strictEnter），装载期首拉（9 页级 + 3 个 register
+  // 内部，共 12 个 get）同批——此前各发一次 SETTINGS_TOPIC.get
   //（宿主侧每请求 structuredClone 全量 effective）。此处包装 channel 做
   // 在途去重，下方全部 get 消费点（含 rulePipeline/autoFormat 注入）统一
   // 换传共享通道；非 get topic（RULES/NOTICE/剪贴板/update）透传不受影响。
@@ -514,6 +517,72 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   }
 
   // ============================================================
+  // 工单 #30 增量块：StrictModeEnter 严格换行三模式补偿（Enter 键 +
+  // Mod+Enter 严格分支，上游 enterStrictLineBreak 移植）。独立成块（不动
+  // 上方既有装配），降低与并行工单的合并冲突。决策与门控见
+  // src/strictEnter.ts 头注与 docs/specs/strict-enter.md。
+  // ============================================================
+
+  // 宿主门：experimental.hostSettings（清单已声明 ^1.0.0）读
+  // editor.readingBreaks——false（严格渲染，平台默认）才满足补偿前提；
+  // 同步 get 每键实时查询（拉取式跟随热更，#457 契约——宿主保存设置后
+  // 下次按键即新值）。facet 缺席（宿主旧版未提供该实验入口）时本块功能
+  // 静默不装配——防御深度，不算故障（对齐 headingFold/syntax 先例）。
+  const hostSettings = sdk.experimental.hostSettings
+  // 双门合成（组件 strictModeEnter × 宿主严格渲染）——Enter 与 Mod+Enter
+  // 共用；get 拒绝（view-disposed）按不生效处理（安全侧 = 不改写文本）
+  let strictEnterEnabled = (): boolean => false
+  let strictModeOf = (): 'enter_twice' | 'two_space' | 'mix_mode' => 'enter_twice'
+  let strictLineKindOf: (view: EditorView) => LineKind | null = () => null
+  if (hostSettings !== undefined) {
+    // 组件门（#3 通道，上游默认关）：装载拉取 + 焦点回归刷新（对齐
+    // #11/#18 门形态——设置页改开关后回到编辑器即按新值判定）
+    const strictEnterGate = createStrictEnterGate(settingsChannel)
+    void strictEnterGate.refresh()
+    const strictRendering = (): boolean => {
+      const outcome = hostSettings.get('editor.readingBreaks')
+      return outcome.ok && outcome.value === false
+    }
+    strictEnterEnabled = () => strictEnterGate.enabled() && strictRendering()
+    strictModeOf = () => strictEnterGate.mode()
+    // Mod+Enter 严格分支的树判定（上游 goNewLineAfterCurLine 仅用树判
+    // code/formula 排除；行形态判定是行文本正则，在纯函数内）
+    strictLineKindOf = (view) => {
+      const query = queryOfView(view)
+      if (query === null) return null
+      const line = view.state.doc.lineAt(view.state.selection.main.head)
+      const info = lineInfoAt(view.state.doc, query, line.number)
+      return info === null ? null : info.kind
+    }
+
+    // Enter 抢先层（Prec.high，ADR-0002 §三方案 B 风险 2 定案）：**注册序在 #18
+    // foldEnter keymap 之后**（同层按注册序即尝试序——折叠标题行先试，
+    // 非折叠标题行本层按 text 接管，上游 v2 不特判 heading）；列表行本层
+    // 决策落穿 → 平台续行链（普通槽）处理，无遮蔽。命中面 = 双门开 +
+    // 正文/引用行（+ 顶格代码块闭栏行尾特例）；其余 return false 落穿
+    // 平台 Enter 链照旧。
+    sdk.registerExtension(
+      cm6.state.Prec.high(
+        cm6.view.keymap.of([
+          {
+            key: 'Enter',
+            run: createStrictEnterCommand({
+              isEnabled: strictEnterEnabled,
+              mode: strictModeOf,
+              queryOf: queryOfView,
+            }),
+          },
+        ]),
+      ),
+    )
+    sdk.registerExtension(
+      cm6.view.EditorView.updateListener.of((update) => {
+        if (update.focusChanged) void strictEnterGate.refresh()
+      }),
+    )
+  }
+
+  // ============================================================
   // 工单 #13 增量块：Enter 族——当前行下方新建行（Mod+Enter，上游
   // goNewLineAfterCurLine 移植）。独立成块（不动上方既有装配），降低与
   // 并行工单的合并冲突。
@@ -538,7 +607,17 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       cm6.view.keymap.of([
         {
           key: 'Mod-Enter',
-          run: createNewLineBelowCommand({ isEnabled: () => newLineBelowGate.enabled() }),
+          run: createNewLineBelowCommand({
+            isEnabled: () => newLineBelowGate.enabled(),
+            // #30 严格分支注入（上游 goNewLineAfterCurLine 728-762）：双门
+            // 开时改写插入串（两空格/双回车/双行引用）；宿主无
+            // hostSettings 面时 strict 依赖缺省，零改写零回归
+            strict: {
+              enabled: strictEnterEnabled,
+              mode: strictModeOf,
+              lineKindOf: strictLineKindOf,
+            },
+          }),
         },
       ]),
     ),
