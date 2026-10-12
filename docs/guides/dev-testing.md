@@ -84,7 +84,8 @@
 - `types/vendor/` 是从 vsidian 仓生成的类型快照，文件头标注来源 commit，**禁止手改**；源码只允许 `import type` 消费（`test/scaffold.test.ts` 钉住）。
 - **锚点实值以 `scripts/vendorSdkTypes.mjs` 的 `DEFAULT_COMMIT` 为准**，当前为 `d26f1e8660d75f551ea4b37c297df87ede6c48c4`。票据与文档转述的锚点可能滞后，一律回脚本核对。
 - `npm run vendor:check` 用 `DEFAULT_COMMIT` 重新生成并比对已提交快照。vsidian 升级（换装新平台 VSIX）后先跑它确认消费面未漂移，再开联调。
-- 源仓定位序：`--source` > 环境变量 `VSIDIAN_SOURCE_REPO` > 相对路径 `../vscode-obsidian-like-editor`；读取经 `git show <commit>:<path>` 按提交快照取文，不受源仓工作树状态影响。CI 无本地源仓，partial clone vsidian 后以 `VSIDIAN_SOURCE_REPO` 指向，锚定 commit 不可达必须失败。
+- 源仓定位序：`--source` > 环境变量 `VSIDIAN_SOURCE_REPO` > 脚本内默认相对路径。读取经 `git show <commit>:<path>` 按提交快照取文，不受源仓工作树状态影响。
+- **本地跑 vendor 系命令须显式 `VSIDIAN_SOURCE_REPO`**（指向 vsidian 主仓根，如 `VSIDIAN_SOURCE_REPO=D:\...\vscode-obsidian-like-editor npm run vendor:check`）：脚本默认相对路径的代码实值是仓库根两级上（`../../`），与注释声称的同级一级上不符，两仓同级布局下不可达，裸跑必报「源仓不是 git 仓库」退出——缺陷跟踪 #38，修复前显式指定是唯一可靠路径。CI 即显式形态（partial clone vsidian 后以 `VSIDIAN_SOURCE_REPO` 指向，锚定 commit 不可达必须失败），不受此缺陷影响。
 
 ### 装载期：清单兼容声明与拒载行为
 
@@ -98,7 +99,7 @@
 
 1. 改 `scripts/vendorSdkTypes.mjs` 的 `DEFAULT_COMMIT` 为目标 commit；
 2. `npm run vendor:sdk` 重新生成 `types/vendor/`，评审 diff；
-3. 全量验证：`npm run compile` + `npm run test`（`npm run vendor:check` 自证快照一致）；
+3. 全量验证：`npm run compile` + `npm run test`（`npm run vendor:check` 自证快照一致——本地按上节显式 `VSIDIAN_SOURCE_REPO`）；
 4. 提交——**快照与脚本同 PR**：拆开提交即触发 `vendor:check` 漂移红灯。
 
 **锚定点选择纪律**：锚定跟随 vsidian **最近 release**，不 chasing main——main 上尚未进入 release 的 API 不进锚定。当前态是例外中的口径：vsidian API 尚未正式发行（1.0.0 候选），没有可跟随的 release 点，故锚定即承载所需 API 的 main commit；vsidian API 正式发行后，本条回归「跟随最近 release」。
