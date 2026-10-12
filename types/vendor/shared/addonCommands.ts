@@ -1,4 +1,4 @@
-// vendored from ONEGAYI/vsidian@d26f1e8660d75f551ea4b37c297df87ede6c48c4 — src/shared/addonCommands.ts
+// vendored from ONEGAYI/vsidian@9f2d292753291db5fa5c45cc3f6dcbbd71c2e37c — src/shared/addonCommands.ts
 // 类型快照：由 scripts/vendorSdkTypes.mjs 自动生成——仅保留类型声明与被
 // 类型引用的常量，值级导出（校验函数、运行时数据）已剥离。不要手改；
 // re-vendor：npm run vendor:sdk（升级锚定提交改脚本 DEFAULT_COMMIT 后重跑）。
@@ -9,8 +9,8 @@ import type { BindingMode } from './keybindings'
 /** 局部 ID 拒绝码 */
 export type AddonLocalIdProblem = 'empty' | 'dot' | 'too-long' | 'invalid-chars'
 
-/** 默认绑定拒绝码（tab-forbidden = #125 Tab 固定链） */
-export type AddonDefaultBindingsProblem = 'not-string' | 'invalid-chord' | 'tab-forbidden'
+/** 默认绑定拒绝码（tab-forbidden = #125 Tab 固定链；too-many = #450 条数超限） */
+export type AddonDefaultBindingsProblem = 'not-string' | 'invalid-chord' | 'tab-forbidden' | 'too-many'
 
 /** 菜单项形状拒绝码 */
 export type AddonMenuItemProblem =
@@ -70,6 +70,7 @@ export interface AddonCommandReport {
   title: string
   mode: BindingMode
   writes: boolean
-  /** 归一化后的默认绑定（注册期已拒 Tab 与非法 chord；空数组 = 默认未绑定） */
+  /** 归一化后的默认绑定（注册期已拒 Tab 与非法 chord；归一后去重保留首现
+   *  序——#449；空数组 = 默认未绑定） */
   defaults: readonly string[]
 }

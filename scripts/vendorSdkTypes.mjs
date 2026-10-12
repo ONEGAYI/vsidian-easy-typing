@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url'
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 /** 当前快照锚定的 vsidian 提交（re-vendor 升级时随变更修改此常量并重跑） */
-const DEFAULT_COMMIT = 'd26f1e8660d75f551ea4b37c297df87ede6c48c4'
+const DEFAULT_COMMIT = '9f2d292753291db5fa5c45cc3f6dcbbd71c2e37c'
 
 /**
  * vendor 入口：公开 API 面文件，保留完整导出类型面。
@@ -174,9 +174,15 @@ function transformFile(srcPath, source, roots) {
     // 其余语句（表达式、export * 等）一律丢弃
   }
 
-  // 种子：roots 模式取名字命中的导出类型声明；完整模式取全部导出类型声明
+  // 种子：roots 模式取名字命中的导出类型声明（以及被跨文件值请求的
+  // 导出 const——如 settings.ts 的 READING_BREAKS_KEY，被保留 const 的
+  // 初始化器值引用时目标模块须产出该声明，否则快照空模块 + TS2306）；
+  // 完整模式取全部导出类型声明（值级导出仍剥离）
   const kept = new Set()
-  const seed = (d) => d.kind === 'type' && d.exported && (roots === null || roots.has(d.names[0]))
+  const seed = (d) =>
+    d.exported &&
+    (roots === null || roots.has(d.names[0])) &&
+    (d.kind === 'type' || (roots !== null && d.kind === 'const'))
   for (const d of decls) if (seed(d)) kept.add(d)
 
   // 文件内可达闭包：被保留文本引用的声明继续保留。类型/枚举按标识符引用；
@@ -217,14 +223,31 @@ function transformFile(srcPath, source, roots) {
     }
   }
 
-  // 导入裁剪：只保留被引用的具名符号，全部输出为 import type
+  // 值依赖导入：保留 const 的**初始化器**中以值形态出现的导入名（如
+  // ADDON_HOST_SETTING_KEYS = [READING_BREAKS_KEY]）——这些导入必须保持
+  // 普通 import（type-only 名作值用是 TS1361）。只取 initializer 文本，
+  // 类型注解名不参与（普通 import 名可兼作类型，但避免不必要的非 type 行）
+  const valueRefIds = new Set()
+  for (const d of kept) {
+    if (d.kind !== 'const') continue
+    for (const decl of d.stmt.declarationList.declarations) {
+      if (decl.initializer !== undefined) {
+        for (const id of collectIdentifiers(decl.initializer.getFullText())) valueRefIds.add(id)
+      }
+    }
+  }
+
+  // 导入裁剪：只保留被引用的具名符号，一律输出 import type——值依赖命中的
+  // 导入行例外（整行普通 import，名字可兼作类型，混合行不拆两份）
   const requests = new Map()
   const importLines = []
   for (const imp of imports) {
     const referenced = imp.specifiers.filter((s) => keptIds.has(s.local))
     if (referenced.length === 0) continue
+    const hasValueRef = referenced.some((s) => valueRefIds.has(s.local))
+    const line = `import ${hasValueRef ? '' : 'type '}{ ${referenced.map((s) => (s.exported === s.local ? s.local : `${s.exported} as ${s.local}`)).join(', ')} } from '${imp.module}'`
     if (!imp.module.startsWith('.')) {
-      importLines.push(`import type { ${referenced.map((s) => (s.exported === s.local ? s.local : `${s.exported} as ${s.local}`)).join(', ')} } from '${imp.module}'`)
+      importLines.push(line)
       continue
     }
     const resolved = resolveModule(srcPath, imp.module)
@@ -235,7 +258,7 @@ function transformFile(srcPath, source, roots) {
     const bucket = requests.get(resolved) ?? new Set()
     for (const n of names) bucket.add(n)
     requests.set(resolved, bucket)
-    importLines.push(`import type { ${referenced.map((s) => (s.exported === s.local ? s.local : `${s.exported} as ${s.local}`)).join(', ')} } from '${imp.module}'`)
+    importLines.push(line)
   }
 
   // type 再导出保留原文（具名 type re-export 不裁剪——开销为零；目标模块进请求表）
