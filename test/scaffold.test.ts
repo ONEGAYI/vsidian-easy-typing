@@ -95,6 +95,18 @@ describe('vendor SDK 类型快照纪律', () => {
       expect(head, `${rel} 缺 vendored 头`).toMatch(/^\/\/ vendored from ONEGAYI\/vsidian@[0-9a-f]{40} — /)
     }
   })
+
+  it('默认源仓路径为同级一级上（#38）：代码与头注释一致', () => {
+    // 脚本顶层即执行副作用（读 env / exit），无法 import 做行为断言，
+    // 故钉源码文本契约；CI runner 同级仓不在场，磁盘存在性断言必假红
+    const text = readFileSync(path.join(repoRoot, 'scripts/vendorSdkTypes.mjs'), 'utf8')
+    // 正向：默认值恰为一级上（两仓同级布局裸跑 vendor 系命令可达）
+    expect(text).toContain(`path.join(repoRoot, '..', 'vscode-obsidian-like-editor')`)
+    // 负向：防回潮两级上（原缺陷形态，同级布局下不可达必挂）
+    expect(text, '默认源仓路径回潮两级上').not.toContain(`'..', '..', 'vscode-obsidian-like-editor'`)
+    // 头注释定位序声称的默认语义与代码同源
+    expect(text).toContain(`> ../vscode-obsidian-like-editor`)
+  })
 })
 
 describe('源码导入纪律（构建桥第一道防线的测试侧镜像）', () => {
