@@ -39,3 +39,31 @@ describe('page-editor 装配序契约（BetterCodeEdit 三接线）', () => {
     expect(source).toContain('modARun(view) || codeBlockModARun(view)')
   })
 })
+
+// 共享设置拉取通道装配契约（工单 #32）：一次 focusChanged 的 8 个设置门
+// refresh 与装载期首拉若绕过共享通道（直传 sdk.channel），8 次独立
+// SETTINGS_TOPIC.get 放大（宿主侧每请求 structuredClone 全量 effective）
+// 即回潮。钉住两条：共享通道创建先于首个 gate 装配；全部 get 消费工厂
+// 不再直传 sdk.channel（ruleClient / plainPaste / formattingCommands 的
+// update 注入不在 get 消费面，不在此列）。
+describe('page-editor 共享设置通道装配契约（#32）', () => {
+  it('共享通道创建在首个 gate 装配之前（debug 门消费点先于 behaviorGates）', () => {
+    expect(lineOf('const settingsChannel = createSharedSettingsChannel(')).toBeLessThan(
+      lineOf('createBooleanSettingGate(settingsChannel'),
+    )
+  })
+
+  it('get 消费工厂不再直传 sdk.channel（绕过共享层即失去并发合并，防回潮）', () => {
+    const directAnchors = [
+      'createBooleanSettingGate(sdk.channel',
+      'createEnhanceModAGate(sdk.channel',
+      'createCollapseEnterGate(sdk.channel',
+      'createNewLineBelowGate(sdk.channel',
+      'createAutoFormatGate(sdk.channel',
+      'sdk.channel.request(SETTINGS_TOPIC.get',
+    ]
+    for (const anchor of directAnchors) {
+      expect(source).not.toContain(anchor)
+    }
+  })
+})

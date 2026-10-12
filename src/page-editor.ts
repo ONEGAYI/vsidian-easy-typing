@@ -45,6 +45,7 @@ import {
 import { registerAutoFormatBehavior, createAutoFormatGate } from './autoFormatIntercept'
 import { registerFormattingCommands } from './formattingCommands'
 import { NOTICE_TOPIC, SETTINGS_TOPIC } from './settings/store'
+import { createSharedSettingsChannel } from './settings/sharedFetch'
 
 /** 本组件声明的扩展 ID（装载器按此核对入口身份） */
 const ADDON_ID = 'ONEGAYI.vsidian-easy-typing'
@@ -97,13 +98,21 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   ruleClient.startWatch()
   sdk.onDispose(() => ruleClient.stopWatch())
 
+  // 共享设置拉取通道（工单 #32）：一次 focusChanged 在同一同步块内触发
+  // 8 个设置门 refresh（behaviorGates ×4 + debug + modA + collapseEnter +
+  // newLineBelow），装载期首拉同批——此前各发一次 SETTINGS_TOPIC.get
+  //（宿主侧每请求 structuredClone 全量 effective）。此处包装 channel 做
+  // 在途去重，下方全部 get 消费点（含 rulePipeline/autoFormat 注入）统一
+  // 换传共享通道；非 get topic（RULES/NOTICE/剪贴板/update）透传不受影响。
+  const settingsChannel = createSharedSettingsChannel(sdk.channel)
+
   // debug 日志门控接线（审查 C-P2-2 修复）：logging 模块的 debugEnabled 是
   // bundle 内单例——宿主 extension.ts 的 setDebugEnabled 接线只改宿主
   // bundle 那份实例，页面 IIFE 各持一份恒 false 的副本（页面侧 debugLog
   // 全为死路径）。本页装载时经 #3 设置通道拉 effective.debug 接线本份
   // 实例；通道失败保持上次值（装载首拉失败 = 默认关，安全方向）。
   const refreshDebugGate = async (): Promise<void> => {
-    const outcome = await sdk.channel.request(SETTINGS_TOPIC.get, null)
+    const outcome = await settingsChannel.request(SETTINGS_TOPIC.get, null)
     if (outcome.ok !== true) return
     const effective = (outcome.result as { effective?: unknown } | null)?.effective
     setDebugEnabled((effective as { debug?: unknown } | null)?.debug === true)
@@ -118,10 +127,10 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   // 焦点回归刷新（#18 形态：Tab/Backspace 是高频透传键，不挂按键级刷新
   // 避免每键一次通道请求；设置页改开关后回到编辑器即按新值判定）。
   const behaviorGates = {
-    tabout: createBooleanSettingGate(sdk.channel, 'tabout', true),
-    betterBackspace: createBooleanSettingGate(sdk.channel, 'betterBackspace', true),
-    smartPaste: createBooleanSettingGate(sdk.channel, 'smartPaste', true),
-    betterCodeEdit: createBooleanSettingGate(sdk.channel, 'betterCodeEdit', true),
+    tabout: createBooleanSettingGate(settingsChannel, 'tabout', true),
+    betterBackspace: createBooleanSettingGate(settingsChannel, 'betterBackspace', true),
+    smartPaste: createBooleanSettingGate(settingsChannel, 'smartPaste', true),
+    betterCodeEdit: createBooleanSettingGate(settingsChannel, 'betterCodeEdit', true),
   }
   const refreshBehaviorGates = (): void => {
     for (const gate of Object.values(behaviorGates)) void gate.refresh()
@@ -329,7 +338,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
 
   // 设置门：装载即拉取 enhanceModA 生效值（#3 设置通道，默认关）；焦点
   // 回归与透传按键时刷新——设置页改开关后回到编辑器即按新值判定
-  const modAGate = createEnhanceModAGate(sdk.channel)
+  const modAGate = createEnhanceModAGate(settingsChannel)
   void modAGate.refresh()
 
   // Mod+A 抢先层（票面评论定案 Prec.high）：平台保留键闸（undo/redo）
@@ -473,7 +482,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
     // collapsePersistentEnter 设置门（#3 通道，上游默认关）：装载拉取 +
     // 焦点回归刷新（对齐 #11 modAGate 形态——设置页改开关后回到编辑器
     // 即按新值判定）。
-    const collapseEnterGate = createCollapseEnterGate(sdk.channel)
+    const collapseEnterGate = createCollapseEnterGate(settingsChannel)
     void collapseEnterGate.refresh()
 
     // Enter 抢先层（Prec.high，票面 #402 分层核对）：先于平台 Enter 情境
@@ -511,7 +520,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
 
   // newLineBelow 设置门（#3 通道，#13 新增本仓键、默认开——上游命令恒
   // 可用的等价默认）：装载拉取 + 焦点回归刷新（对齐 #11/#18 门形态）。
-  const newLineBelowGate = createNewLineBelowGate(sdk.channel)
+  const newLineBelowGate = createNewLineBelowGate(settingsChannel)
   void newLineBelowGate.refresh()
 
   // Mod+Enter 抢先层（Prec.high，#402 四层契约第 2 层「可替代平台键位」）：
@@ -552,7 +561,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   if (behaviors !== undefined) {
     const ruleRuntime = registerRuleInputBehaviors({
       behaviors,
-      channel: sdk.channel,
+      channel: settingsChannel,
       language: navigator.language,
       rulesSource,
       queryOf: queryOfActiveView,
@@ -593,7 +602,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   if (behaviors !== undefined) {
     const triggerRuntime = registerRuleDeleteSelectKeyBehaviors({
       behaviors,
-      channel: sdk.channel,
+      channel: settingsChannel,
       language: navigator.language,
       rulesSource,
       queryOf: queryOfActiveView,
@@ -631,7 +640,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   if (behaviors !== undefined) {
     const [autoFormatOutcome] = registerAutoFormatBehavior({
       behaviors,
-      channel: sdk.channel,
+      channel: settingsChannel,
       language: navigator.language,
       marker: pasteMarker,
       queryOf: queryOfActiveView,
@@ -674,7 +683,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   // ============================================================
 
   if (commands !== undefined) {
-    const formattingGate = createAutoFormatGate(sdk.channel)
+    const formattingGate = createAutoFormatGate(settingsChannel)
     const formattingCommands = registerFormattingCommands({
       commands,
       channel: sdk.channel,
