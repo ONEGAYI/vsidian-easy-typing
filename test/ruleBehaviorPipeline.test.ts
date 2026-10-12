@@ -877,6 +877,36 @@ describe('R2-A1 事务前坐标换算（#37）', () => {
 
   // ---- 端到端语义断言：判定环境翻转（实时文档 vs 事务前重建文档） ----
 
+  it('A72：正文行内公式选中删除 zz → Formula 规则接管（旧坐标落在公式外漏判）', () => {
+    const engine = new RuleEngine()
+    engine.addSimpleRule({ trigger: 'zz', replacement: 'ZZ', options: 'df' } satisfies SimpleRule)
+    // 事务前 $azzb$ tail，选中删 [2,4)；快照 $ab$ tail。
+    // 平台生产实例与 Chromium 按键探针确认：正文公式发 delete.selection，
+    // 位置 2 判 Formula、位置 4 判 Text；围栏/行内代码正例则先被门控。
+    const snapshot = '$ab$ tail'
+    const spy = spyLineTypePos(makeSyntaxFake(snapshot).query)
+    const r = planDeleteRuleModification(
+      engine,
+      inputCtx(snapshot, 2, 'delete.selection', '', [{ anchor: 2, head: 2 }], { from: 2, to: 4, text: 'zz' }),
+      { scopeQuery: spy.query },
+    )
+    expect(spy.seen[0]).toBe(2)
+    expect(r?.plan.changes).toEqual([{ offset: 2, length: 0, text: 'ZZ' }])
+    const change = r!.plan.changes[0]!
+    expect(snapshot.slice(0, change.offset) + change.text + snapshot.slice(change.offset + change.length)).toBe('$aZZb$ tail')
+  })
+
+  it('A72 对照：非公式正文选中删除 zz → Formula 规则不接管', () => {
+    const engine = new RuleEngine()
+    engine.addSimpleRule({ trigger: 'zz', replacement: 'ZZ', options: 'df' } satisfies SimpleRule)
+    const r = planDeleteRuleModification(
+      engine,
+      inputCtx('ab tail', 1, 'delete.selection', '', [{ anchor: 1, head: 1 }], { from: 1, to: 3, text: 'zz' }),
+      { scopeQuery: makeSyntaxFake('ab tail').query },
+    )
+    expect(r).toBeNull() // 原生删除 ab tail 即终态
+  })
+
   it('语义：Delete 换算点在实时正文 → Code 限定规则不接管（修复前事务前 pos 打进实时反引号 span 误命中）', () => {
     const engine = new RuleEngine()
     engine.addSimpleRule({ trigger: 'zz', replacement: 'ZZ', options: 'dc' } satisfies SimpleRule)

@@ -138,7 +138,7 @@
 
 ### 已知边界（#25 增）
 
-- **代码/公式上下文不驱动**：平台行为链门控先行排除 frontmatter、块级代码（`inCodeContext`）、表格格区与 IME 中间态——上游 20 条内置规则作用域全为 `All`（原在代码块/公式内也触发），平台侧这些情境规则不生效。平台契约「行为只作用于正文」的既定边界，不放宽。
+- **代码等上下文不驱动**：平台行为链门控先行排除 frontmatter、围栏/缩进代码与行内代码（`inCodeContext`）、表格格区与 IME 中间态——上游 20 条内置规则作用域全为 `All`，平台侧这些情境规则不生效。普通正文中的行内公式不属于该代码上下文，仍可驱动 Formula 用户规则（[人工清单 A72](../manual-verification.md#a72-非-all-用户规则的作用域判定坐标37)）。平台门控保持既有行为，不放宽。
 - **作用域判定已换传树版**（#5；原 `ruleScopeFallback.ts` 文本降级版已删）：判定走 `syntaxTreeQuery.detectScopeViaQuery`（平台位置查询 + 链接区段排除 + 块语言提取，见 [syntax-line-types.md](syntax-line-types.md)）。降级版的货币 `$100` 误判等近似边界随之消除；20 条内置规则全 All 作用域，真实判定仅影响 #14 用户规则与 #9——非 All 规则在场而查询缺席（语法面缺席/反查失败）时管线不接管（不 fallback 正则）。
 - **用户自定义正则区块跳过顺延**：上游 `triggerCvtRule` 的 `UserDefinedRegSwitch × UserRulesRespectUserDefinedRegexBlocks` 跳过检查依赖 `splitTextWithLinkAndUserDefined`（core.ts ~100 行，未移植）且默认配置下不生效（`userRulesRespectUserDefinedRegexBlocks` 默认 false），归 #14 随用户规则移植。
 - **`$0` 字面标记**：#1 已知边界延续——替换体占位符保留为字面文本（如 `（$0）`），#14 解析落地后恢复上游语义，届时矩阵与管线断言同步更新。
