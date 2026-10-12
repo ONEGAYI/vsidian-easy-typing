@@ -17,7 +17,7 @@ function readDoc(): string {
 
 // 功能域节锚点（标题前缀，含序号防重排漂移）——与票面范围一一对应：
 // 规则引擎三触发面、Tabstop、格式化、保护区、七个编辑增强域、设置/规则
-// 页、IME 专项，加 #28/#19 两个占位节与 #4 行内间距节。
+// 页、IME 专项，加 #28/#19 两个占位节与 #4 行内间距、#10 代码块编辑节。
 const DOMAIN_SECTION_PREFIXES: readonly string[] = [
   '## 一、规则引擎 Input 触发（',
   '## 二、规则引擎 Delete / SelectKey 触发（',
@@ -37,10 +37,11 @@ const DOMAIN_SECTION_PREFIXES: readonly string[] = [
   '## 十六、命令族（',
   '## 十七、界面语言 i18n 完整化（',
   '## 十八、行内代码/公式/链接间距三档（',
+  '## 十九、代码块编辑增强 BetterCodeEdit（',
 ]
 
 describe('人工验证清单结构契约（#21）', () => {
-  it('功能域节全覆盖（十八节，含 #28/#19 占位节与 #4 间距节）', () => {
+  it('功能域节全覆盖（十九节，含 #28/#19 占位节、#4 间距节与 #10 代码块节）', () => {
     const doc = readDoc()
     for (const prefix of DOMAIN_SECTION_PREFIXES) {
       expect(doc.includes(prefix), `缺少功能域节：${prefix}…`).toBe(true)
