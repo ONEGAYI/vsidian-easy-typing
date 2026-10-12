@@ -77,7 +77,7 @@ interface AddonSyntaxFacet {
 
 以下为双轴评审（PR #35）识别但**不在本 PR 修复**的问题（形式问题与近似口径），记录于此供后续票决策：
 
-- **R2-A1**：Delete/SelectKey 管线的事务前坐标打在平台事务后文档的实时查询上（删除大段时钳制文末，仅非 All 用户规则在场触发、默认配置零影响）——近似口径与中期修复路径见 [rule-engine.md](rule-engine.md)「事务前重建与坐标换算」节；#21 真实宿主联调核对，修复另票。
+- **R2-A1（已修复，#37 快照坐标换算）**：Delete/SelectKey 管线的作用域判定原以事务前坐标打在平台实时文档的查询上（删除大段时可越实时文档长度）——现统一传快照文本与换算坐标，三输入同坐标系、越界 pos 不再发出；与事务前实况仍可能分叉为既定口径，修复口径与方向选择依据见 [rule-engine.md](rule-engine.md)「事务前重建与坐标换算」节；#21 真实宿主联调核对项已增（A72）。
 - **S3**：`(doc, query, lineNumber)` 三元组在多个签名间重复传递（Data Clumps），可上提 `LineSyntaxContext` 统一——接口面刚随切片 B 稳定，形式统一属后续票。
 - **S4**：planner 统一签名的不消费参数（个别 plan 函数不用全部入参）——换取 `runViewCommand` 单态分发的可辩护权衡。
 - **S5**：`syntaxTreeQuery` ↔ `inlineParts` 循环 import——运行时安全（函数内引用无 TDZ 风险），解环收益不抵结构翻动。

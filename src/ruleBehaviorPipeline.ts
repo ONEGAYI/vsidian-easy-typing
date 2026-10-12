@@ -38,7 +38,9 @@
 // forward → replaced.from（Delete 键删光标右侧，镜像）、selection/cut/
 // line → replaced.to（上游不处理这三类，按 backward 口径统一，delete.line
 // 的空块场景按此口径验证）。引擎产出（matchRange/cursor/tabstops）为
-// 事务前坐标，落计划前换算回快照坐标（preOffsetToSnapshot）。
+// 事务前坐标，落计划前换算回快照坐标（preOffsetToSnapshot）；作用域判定
+// 例外——打实时快照文档的换算位置（#37，见 resolveScopeForEngine 坐标
+// 口径节）。
 //
 // 【SelectKey 包裹目标】键入替换选区时包裹目标从 replaced 读回（#401：
 // 按键插入发生在选区销毁之后）。计划替换快照中键入字符占据区
@@ -82,13 +84,17 @@ import { detectScopeViaQuery, docOfText, type ScopeInfo, type SyntaxQuery } from
  * 失败）与查询拒绝（detectScopeViaQuery ok:false——view-disposed 竞态等；
  * 评审 P3：拒绝不静默归 Text 施加规则修饰，spec §二拒绝口径）。
  *
- * 近似口径（评审 R2-A1 落档）：Delete/SelectKey 管线传入事务前重建文档与
- * 事务前坐标，而查询在平台实时（事务后）文档上判定——删除大段时坐标可
- * 越实时文档长度（越界 pos 的平台查询行为未声明：拒绝则该次不接管、钳
- * 制则文末判定，两果均保守），与事务前实况可能分叉（仅非 All 用户规则
- * 在场触发，默认配置零影响）；#21 真实宿主联调核对，中期修复（快照坐标
- * 反向换算或快照 doc 判定）另票，详见 docs/specs/rule-engine.md「事务前
- * 重建与坐标换算」节。
+ * 坐标口径（#37 修复，原评审 R2-A1 近似落档）：判定发生在平台实时
+ * （事务后）文档的换算位置上——三条管线统一传 ctx.snapshot.text +
+ * 快照坐标（Input 传快照光标本值；Delete 传虚拟光标经 preOffsetToSnapshot
+ * 换算的值，五类 delete 事件统一落在 replaced.from；SelectKey 传
+ * replaced.from，p ≤ from 恒等的换算不动点）。查询坐标与判定文档自洽，
+ * 越界 pos 从此不再发出（换算输出 ≤ 实时长度恒成立）——「越界 pos 的
+ * 平台查询行为未声明」的未知数随之从关键路径移除。与事务前实况仍可能
+ * 分叉（删除区两侧环境不同的极端形态）：平台查询面只在实时文档上执行，
+ * 此为既定口径而非错位；方向二「以事务前快照构造判定文档后映射回」
+ * 不可施（无任意文档查询 API，正则 fallback 违背 #5 切片 B 决策），详见
+ * docs/specs/rule-engine.md「事务前重建与坐标换算」节。
  */
 function resolveScopeForEngine(
   engine: RuleEngine,
@@ -315,9 +321,10 @@ function preOffsetToSnapshot(p: number, replaced: ReplacedRange): number {
  *
  * 门控：inputText 非空（平台契约 delete 事务为空串）不进、replaced 空
  * 区间不进、多选区（快照选区数 > 1，多区间 replaced 重建不可信）不进。
- * 引擎在事务前坐标上匹配；产出换算回快照坐标落计划。换算后空操作
- *（length 0 且空文本——如 cut 已删尽整对）返回 null：原生删除即终态，
- * 不提交无意义计划。
+ * 引擎在事务前坐标上匹配；产出换算回快照坐标落计划；作用域判定打实时
+ * 快照文档的换算位置（#37，见 resolveScopeForEngine 坐标口径节）。换算
+ * 后空操作（length 0 且空文本——如 cut 已删尽整对）返回 null：原生删除
+ * 即终态，不提交无意义计划。
  */
 export function planDeleteRuleModification(
   engine: RuleEngine,
@@ -332,7 +339,12 @@ export function planDeleteRuleModification(
   const { docText, cursor } = rebuildPreDeleteState(ctx, replaced)
   if (cursor > docText.length) return null // 防御：越界坐标不进引擎
 
-  const scope = resolveScopeForEngine(engine, docText, options, cursor)
+  const scope = resolveScopeForEngine(
+    engine,
+    ctx.snapshot.text,
+    options,
+    preOffsetToSnapshot(cursor, replaced),
+  )
   if (scope === null) return null // 查询缺席/查询拒绝（评审 P3）：不接管
   // #27 保护区（票面对称扩展；delete.* 检查列不回退）：事务前文档 + 虚拟光标
   if (
@@ -382,6 +394,10 @@ export function planDeleteRuleModification(
  * 长度门：引擎 triggerKeys 逐字符解析（parseSelectKeyRuleTriggerKeys），
  * 多字符键必然不中任何规则，与上游门控结果等价（规格记录）。
  *
+ * 作用域判定打实时快照文档的 replaced.from（#37 换算不动点，见
+ * resolveScopeForEngine 坐标口径节）——引擎 TxContext 与保护区判定仍用
+ * 事务前重建文档。
+ *
  * 计划替换快照中键入文本占据区；引擎 cursor/tabstops 以 matchRange.from
  * （= replaced.from）为基点、与计划基点一致，直接透传。
  */
@@ -402,7 +418,7 @@ export function planSelectKeyRuleModification(
     ctx.snapshot.text.slice(replaced.from + ctx.inputText.length)
   if (replaced.to > docText.length) return null // 防御：越界坐标不进引擎
 
-  const scope = resolveScopeForEngine(engine, docText, options, replaced.from)
+  const scope = resolveScopeForEngine(engine, ctx.snapshot.text, options, replaced.from)
   if (scope === null) return null // 查询缺席/查询拒绝（评审 P3）：不接管
   // #27 保护区（票面对称扩展；input.type 检查列回退一列）：事务前文档 + 替换起点
   if (
