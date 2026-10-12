@@ -30,8 +30,11 @@
 //
 // 与上游的差异：
 // - **视图路由**：上游 editorCallback 直收 editor.cm；平台命令回调携带
-//   目标视图句柄（PR #432），句柄实例 ID 经 #12 的 createEditorViewRegistry
-//   （ViewPlugin 登记在场编辑器）解析本页 CM6 视图后派发。
+//   目标视图句柄（PR #432），双路径分派（#34 起句柄路径对嵌入句柄开放）：
+//   登记面内（#12 createEditorViewRegistry 解析本页 CM6 视图）单事务派发；
+//   登记面外（主正文命令面板回退 / 嵌入实例）快照 → 临时 EditorState 决策
+//  （#11 select-block 先例）→ applyEdits 单请求 + reveal 滚动定位。句柄
+//   即命令语义的目标文档（平台保证），不向主文档兜底误写。
 // - **IME 组合中与只读不动作**（上游无此判定；平台惯例，对齐 #12/#13）。
 // - **userEvent 用 CM6 惯例 'input.comment'**（上游自定义
 //   'EasyTyping.toggleComment'，对齐 #13 采用 input.* 族的先例——撤销
@@ -42,6 +45,7 @@ import type { EditorState } from '@codemirror/state'
 import type { AddonCommandDefinition } from '../types/vendor/shared/addonCommands'
 import type { AddonViewHandle } from '../types/vendor/shared/addonEditApi'
 import type { EditorViewRegistry } from './plainPasteCommand'
+import type { Cm6StateSubset } from './modaIntercept'
 import { detectScopeViaQuery, type SyntaxQuery } from './syntaxTreeQuery'
 import { debugLog } from './logging'
 import { RuleScope } from './rules/rule-engine'
@@ -272,17 +276,22 @@ export function buildToggleCommentCommandDefinition(title: string): AddonCommand
 /** 命令依赖（页面装配注入生产实现，测试接替身） */
 export interface ToggleCommentCommandDeps {
   readonly views: EditorViewRegistry
+  /** 实验 cm6 运行时状态面（句柄路径快照决策构造临时 EditorState 用——
+   *  值只经实验入口，#11 select-block 先例同源注入） */
+  readonly cm6: { readonly state: Cm6StateSubset }
   /** #5 语法查询工厂（instanceId → 查询；null = 反查失败/语法面缺席 → 静默无动作） */
   readonly queryOf: (instanceId: string) => SyntaxQuery | null
 }
 
 /**
  * 产出命令回调（target = 平台解析的目标视图句柄，PR #432 起命令回调
- * 携带）：句柄实例 ID 经登记表解析本页 CM6 视图 → 计划 → 单事务派发
- *（changes + 可选 selection，userEvent input.comment）。无活动视图
- *（target null）/目标实例不在登记面（嵌入/悬停——扩展槽未装配，无执行
- * 载体）/组合中/只读/未知语言一律静默无动作（上游未知语言 return false
- * 同口径）。
+ * 携带）：登记面内 → 视图路径（单事务派发，userEvent input.comment）；
+ * 登记面外（主正文命令面板回退 / 嵌入实例——#34 起开放）→ 句柄路径
+ *（快照 → 临时 EditorState 决策（select-block 先例）→ applyEdits 单请求
+ * + reveal 滚动定位）。无活动视图（target null）/只读句柄（hover 只读 /
+ * reading 态）/组合中（视图路径）/查询缺席/未知语言/空变更一律静默无动作
+ *（上游未知语言 return false 同口径）。句柄路径的组合态防护由平台拒绝
+ * 面兜底（IME 组合缓冲在场时 applyEdits 拒 suspended，rejection 留痕）。
  */
 export function createToggleCommentCommandHandler(
   deps: ToggleCommentCommandDeps,
@@ -291,24 +300,64 @@ export function createToggleCommentCommandHandler(
     // 违约防御深度：undefined 按无活动视图降级（同 plainPaste 口径）
     if (target === null || target === undefined) return
     const view = deps.views.viewForInstance(target.info.instanceId)
-    if (view === null) {
-      // 留痕面（对齐拆除前 B-F3 诊断口径）：登记面外目标静默放弃
-      debugLog('comment-toggle skipped: target view not registered (embed/hover or viewIdentity unavailable)')
+    if (view !== null) {
+      if (view.compositionStarted || view.state.readOnly) return
+      const query = deps.queryOf(target.info.instanceId)
+      if (query === null) {
+        // 反查失败/语法面缺席（平台违约防御深度）：不判定即无动作
+        debugLog('comment-toggle skipped: syntax query unavailable for instance')
+        return
+      }
+      const plan = planCommentToggle(view.state, query)
+      if (plan === null) return
+      view.dispatch({
+        changes: plan.changes,
+        ...(plan.selection !== undefined ? { selection: plan.selection } : {}),
+        userEvent: 'input.comment',
+      })
       return
     }
-    if (view.compositionStarted || view.state.readOnly) return
+    // 句柄路径：登记面外目标。主正文句柄 = 命令面板入口回退（视图构造
+    // 前）；嵌入句柄 = 平台句柄面支持安全提交（#34 泛化，原「登记面外
+    // 即放弃」口径拆除）。只读目标（hover / reading 态）无执行权。
+    if (!target.info.editable) {
+      // 留痕面（「命令没反应」类反馈的定位线索）：只读目标静默放弃
+      debugLog('comment-toggle skipped: read-only target (hover/reading) — no fallback to main')
+      return
+    }
     const query = deps.queryOf(target.info.instanceId)
     if (query === null) {
-      // 反查失败/语法面缺席（平台违约防御深度）：不判定即无动作
       debugLog('comment-toggle skipped: syntax query unavailable for instance')
       return
     }
-    const plan = planCommentToggle(view.state, query)
-    if (plan === null) return
-    view.dispatch({
-      changes: plan.changes,
-      ...(plan.selection !== undefined ? { selection: plan.selection } : {}),
-      userEvent: 'input.comment',
+    const snap = target.editor.getSnapshot()
+    if (!snap.ok) return
+    const primary = snap.snapshot.selections[0]
+    if (primary === undefined) return // 快照契约：只读视图选区为空数组（防御深度）
+    const state = deps.cm6.state.EditorState.create({
+      doc: snap.snapshot.text,
+      selection: { anchor: primary.anchor, head: primary.head },
     })
+    const plan = planCommentToggle(state, query)
+    if (plan === null) return
+    if (plan.changes.length === 0 && plan.selection === undefined) return // 上游无操作形态：不上空请求
+    void target.editor
+      .applyEdits({
+        revision: snap.snapshot.revision,
+        changes: plan.changes.map((c) => ({ offset: c.from, length: c.to - c.from, text: c.insert })),
+        ...(plan.selection !== undefined ? { selection: plan.selection } : {}),
+        history: 'atomic',
+      })
+      .then((outcome) => {
+        if (!outcome.ok) {
+          debugLog('comment-toggle applyEdits rejected:', outcome.reason)
+          return
+        }
+        // 滚动定位（视图路径 dispatch 无显式 scrollIntoView，命令落点近旁
+        // 才有滚动需求——reveal 零文本变更只滚动不移动光标；拒绝静默）
+        target.editor.reveal(
+          plan.selection !== undefined ? plan.selection.head : plan.changes[0]!.from,
+        )
+      })
   }
 }

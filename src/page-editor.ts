@@ -745,7 +745,10 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       buildToggleCommentCommandDefinition(
         pickMessages(navigator.language).commands.toggleCommentTitle,
       ),
-      createToggleCommentCommandHandler({ views: viewRegistry, queryOf: queryOfInstance }),
+      // #34：cm6 状态面注入（句柄路径快照决策构造临时 EditorState 用，
+      // #11 select-block 同源）；登记面外目标（主正文回退/嵌入实例）经
+      // 快照 → applyEdits 提交到句柄目标
+      createToggleCommentCommandHandler({ views: viewRegistry, cm6, queryOf: queryOfInstance }),
     )
     // 页面释放时注销命令（平台随代次回收，此处显式闭环）
     sdk.onDispose(() => registration.dispose())

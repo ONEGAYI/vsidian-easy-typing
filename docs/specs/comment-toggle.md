@@ -99,14 +99,20 @@
 
 - **视图路由**：上游 `editorCallback` 直收 `editor.cm`；平台命令回调
   携带目标视图句柄（vsidian PR #432——平台解析焦点嵌入 Live → 该实例、
-  否则主正文），句柄实例 ID 经 **#12 的 `createEditorViewRegistry`**
-  （ViewPlugin 登记在场编辑器 + `viewIdentity.instanceIdOf` 反查匹配，
-  `src/plainPasteCommand.ts`）解析本页 CM6 视图后派发；目标为嵌入/悬停
-  句柄（扩展槽未装配、登记面外）时无执行载体，静默无动作——不向主文档
-  兜底误写。**共享决策（供并行工单 #28 对照）**：命令类工单统一复用该
+  否则主正文），**双路径分派（#34 起句柄路径开放）**：句柄实例 ID 经
+  **#12 的 `createEditorViewRegistry`**（ViewPlugin 登记在场编辑器 +
+  `viewIdentity.instanceIdOf` 反查匹配，`src/plainPasteCommand.ts`）
+  解析本页 CM6 视图——命中则单事务派发；登记面外目标（主正文命令面板
+  回退 / 嵌入实例）走句柄路径：快照 → 临时 `EditorState` 决策（**#11
+  select-block 先例**，`cm6.state` 注入）→ `applyEdits` 单请求
+  （`history: 'atomic'`）+ `reveal` 滚动定位。只读句柄（hover 只读 /
+  reading 态）与空变更计划（代码块内全空白行批量，上游无操作形态）
+  不上请求。**共享决策（供并行工单 #28 对照）**：命令类工单统一复用该
   登记表 + `createViewTrackerExtension` 扩展，不另建第二套视图捕获；
   #28 若需相同路由，直接 import 同一工厂。
 - **IME 组合中与只读不动作**（上游无此判定；平台惯例，对齐 #12/#13）。
+  句柄路径的组合态不可见（快照无组合标记）——平台对 IME 组合缓冲在场
+  的程序化写入拒绝 `suspended` 兜底，rejection 经 debugLog 留痕。
 - **userEvent 用 CM6 惯例 `input.comment`**（上游自定义
   `'EasyTyping.toggleComment'`，对齐 #13 采用 `input.*` 族的先例）。
 - **多选区只处理主选区**（上游同口径只取 `selection.main`）：不显式透传
@@ -127,6 +133,11 @@
   endsWith 同侧命中）——上游口径。
 - 多选区只处理主选区（见上）；`meta+slash` 在 Windows/Linux 物理不按下
   （默认绑定双形并存是平台形态，无副作用）。
+- **句柄路径与视图路径的事务形态差异（#34 开放记录）**：视图路径
+  `view.dispatch` 携带 `userEvent: 'input.comment'`；句柄路径 `applyEdits`
+  无 userEvent（addon 来源 origin 注解承载）——撤销一步还原不受影响。
+  嵌入内触发时命令快捷键的路由可达性是平台运行时行为，#21 人工验证项
+  覆盖。
 - 浏览器真实键盘端到端（Ctrl+/ 真实键序、与平台 htmlComment 的路由实况、
   多行批量切换观感、撤销单笔回退）归 #21 人工验证清单。
 

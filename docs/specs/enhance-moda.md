@@ -134,7 +134,11 @@
 - 命令目标句柄由平台解析（焦点嵌入 Live → 该实例句柄；否则主正文；
   无活动视图 null）——embed（引用内 Live）中触发即操作 embed 自身，
   无焦点不猜测，目标即边界（原 findFromDOM 探针双路径随平台句柄面
-  落地合一）。
+  落地合一）。**#34 核实记录**：select-block 是统一句柄路径（快照 →
+  临时 EditorState 决策 → setSelection），无 viewType 门——嵌入可编辑
+  Live 目标（快照有选区）天然可执行；只读目标（hover 只读 / reading 态，
+  快照契约「只读视图选区为空数组」）读不到主选区即无动作维持。本票
+  句柄路径泛化（#28/#2 命令族）不改本命令行为，此条为边界核实落档。
 - 上游 handleModA 末段的 BetterCodeEdit 代码块选中（selectCodeBlockInPos）
   属另一功能族（betterCodeEdit 设置），不在本票范围。
 
