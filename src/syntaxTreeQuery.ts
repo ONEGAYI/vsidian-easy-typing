@@ -33,8 +33,9 @@
 // 块的顶格续行判 quote，上游 v2 行首语义判 text——LINE_KIND 维度门控回
 // text，跳过维度平台原判不门控（上游 v1 quote 分支兜底 text，两侧行为
 // 等价）。list 的空行门控（评审 R2-B3）同款：松散列表项间空行平台判
-// list（BulletList 父节点覆盖），门控回 empty。table 的跳过维度独立出口 = FORMAT_SKIP_BY_PLATFORM——#28
-// 已验收决策「格式化跳过表格行」在树版换传后保持，不翻案。
+// list（BulletList 父节点覆盖），门控回 empty。
+// table 的跳过维度独立出口 = FORMAT_SKIP_BY_PLATFORM——#28 已验收决策
+// 「格式化跳过表格行」在树版换传后保持，不翻案。
 //
 // 已知平台口径差异（消费面按平台语义，vsidian developer-guide §4.8）：
 // - 嵌套优先级 code > table > heading > list > quote：引用内表格/标题行的

@@ -261,7 +261,14 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       const instanceId = viewIdentity.instanceIdOf(view)
       if (instanceId !== null) {
         const mainDocUri = views.get(instanceId)?.info.targetDocUri ?? null
-        return inputContextIsMainInstance(ctx, mainDocUri, null)
+        // views.get 未命中（实例销毁竞态的窄窗口）：docUri 反查不可得，
+        // 回退快照全文比对（活动视图在场，其文档仍可信；销毁竞态下快照
+        // 通常亦不一致 → false 保守不接管）
+        return inputContextIsMainInstance(
+          ctx,
+          mainDocUri,
+          mainDocUri === null ? view.state.doc.toString() : null,
+        )
       }
     }
     return inputContextIsMainInstance(ctx, null, view.state.doc.toString())

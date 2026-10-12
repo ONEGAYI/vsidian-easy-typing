@@ -266,7 +266,10 @@ export type InputContextOwnership = (ctx: AddonInputContext) => boolean
  * - 两者皆不可得（mainDocText 亦 null = 活动视图缺席）→ false：驱动只可能
  *   来自登记面外实例，一律不接管。
  * 已知边界：自嵌（embed 目标恰为主文档）时 docUri 相等守卫放行——内容
- * 相同，主实例查询的同偏移判定与嵌入实例一致，无误伤面；#21 联调核对。
+ * 相同，主实例查询的同偏移判定与嵌入实例一致，无误伤面；**区段 embed**
+ * （`![[doc#heading]]` 类）若平台 targetDocUri 仍为全文档 URI，嵌入实例
+ * 文档是区段子集、同偏移错位且 docUri 比对放行——vendored 类型无区段语
+ * 义说明，#21 联调核对（必要时按快照全文比对收严）。
  */
 export function inputContextIsMainInstance(
   ctx: AddonInputContext,
