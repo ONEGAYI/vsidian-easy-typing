@@ -895,8 +895,10 @@ describe('R2-A1 事务前坐标换算（#37）', () => {
     const engine = new RuleEngine()
     engine.addSimpleRule({ trigger: 'zz', replacement: 'ZZ', options: 'dc' } satisfies SimpleRule)
     // 事务前 a`zz`（'zz' 在 span [1,6) 内），选中删 [2,4)：快照 a`b`（4 字
-    // 符，span [1,4)）。修复前传事务前光标 4 → 越实时长度钳到文末、span
-    // 外误判 Text 漏接管；修复后换算 pos 2（实时 'b'，span 内）→ Code 接管
+    // 符，span [1,4)）。修复前传事务前光标 4——恰等于实时长度（钳制不发生：
+    // detectScopeViaQuery 的 min 按事务前 doc 长度 6），inlineAt(4) 打实时
+    // 落在半开 span [1,4) 之外误判 Text 漏接管；修复后换算 pos 2（实时
+    // 'b'，span 内）→ Code 接管
     const r = planDeleteRuleModification(
       engine,
       inputCtx('a`b`', 2, 'delete.selection', '', [{ anchor: 2, head: 2 }], { from: 2, to: 4, text: 'zz' }),
