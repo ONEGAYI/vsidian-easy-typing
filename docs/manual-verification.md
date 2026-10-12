@@ -36,6 +36,8 @@
 
 本组件清单声明 `vsidianAddon.api ^1.0.0`（1.0.0 候选，未对外发行）+ 实验入口 `cm6 ^1.1.0`、`headingFold ^1.0.0`、`viewIdentity ^1.0.0`（防御链拆除起消费——命令目标句柄解析与折叠寻址反查）与 `syntax ^1.0.0`（#5 起行类型/作用域/行内分区树版判定）。SDK 类型 vendor 快照锚定 vsidian 主仓 commit **`d26f1e8660d75f551ea4b37c297df87ede6c48c4`**（`scripts/vendorSdkTypes.mjs` 的 `DEFAULT_COMMIT`；#434 merge——语法查询面 experimental.syntax，及此前的视图身份基座平台 PR #432）。矩阵基线即此 commit 构建的 vsidian VSIX；vsidian 升级后先跑本仓 `npm run vendor:check` 确认类型快照未漂移，再开新一轮矩阵。
 
+**平台 VSIX 最低版本要求**：当前 vsidian API 未正式发行（1.0.0 候选），最低版本口径 = 锚定 commit（`DEFAULT_COMMIT`）构建的 VSIX；API 发行后改为「本组件消费的 API 首次可用的 release 点」并同步更新本标注。装载验证、两道对齐闸与 re-vendor 纪律见 [dev 联调指南](guides/dev-testing.md)。
+
 ### 维度二：VSIX 安装态（对齐 vsidian `test/integration/runInstalled.mjs` 模式）
 
 安装步骤（隔离 profile，不污染日常环境）：
