@@ -100,7 +100,8 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
 
   // 共享设置拉取通道（工单 #32）：一次 focusChanged 在同一同步块内触发
   // 8 个设置门 refresh（behaviorGates ×4 + debug + modA + collapseEnter +
-  // newLineBelow），装载期首拉同批——此前各发一次 SETTINGS_TOPIC.get
+  // newLineBelow），装载期首拉（8 页级 + 3 个 register 内部，共 11 个
+  // get）同批——此前各发一次 SETTINGS_TOPIC.get
   //（宿主侧每请求 structuredClone 全量 effective）。此处包装 channel 做
   // 在途去重，下方全部 get 消费点（含 rulePipeline/autoFormat 注入）统一
   // 换传共享通道；非 get topic（RULES/NOTICE/剪贴板/update）透传不受影响。

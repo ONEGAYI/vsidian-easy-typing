@@ -66,4 +66,13 @@ describe('page-editor 共享设置通道装配契约（#32）', () => {
       expect(source).not.toContain(anchor)
     }
   })
+
+  it('sdk.channel 直传总数受控（评审 R1-F2：枚举锚点拦不住新工厂名，总量断言强制过目）', () => {
+    // 现状 5 处：ruleClient（RULES 族，非 get）/ 共享包装器入参（get 的
+    // 唯一合法上游）/ plainPaste 剪贴板（非 get）/ formattingCommands 注入
+    // （仅 update 写）/ NOTICE。新增第 6 处直传必须过目更新此数——若它
+    // 是 get 消费点，改走 settingsChannel 而不是放宽断言。
+    const directUses = source.match(/sdk\.channel/g) ?? []
+    expect(directUses.length).toBe(5)
+  })
 })
