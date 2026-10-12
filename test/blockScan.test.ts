@@ -24,7 +24,7 @@ import { makeRejectingQuery, makeSyntaxFake } from './syntaxFake'
 /** 查询版扫描入口：fake 判定链驱动（doc 与 query 同一文本，坐标一致） */
 function scanOf(texts: readonly string[]): LineInfo[] {
   const { query } = makeSyntaxFake(texts.join('\n'))
-  return scanLines(texts, query)
+  return scanLines(texts, query)!
 }
 /** kinds 简写断言：逐行核对扫描类型序列 */
 function expectKinds(texts: readonly string[], kinds: readonly LineKind[]): void {
@@ -157,11 +157,9 @@ describe('scanLines：列表续行（fake 缩进近似——真实树按解析�
 })
 
 describe('scanLines：查询适配器边界', () => {
-  it('查询拒绝抛错（非 live/已销毁视图——拒绝只发生在不该接管的场景）', () => {
-    expect(() => scanLines(['plain'], makeRejectingQuery())).toThrow(/拒绝|reject/i)
+  it('查询拒绝返回 null（评审 R2-B6：全仓拒绝语义 null 归一；非 live/已销毁视图——拒绝只发生在不该接管的场景）', () => {
+    expect(scanLines(['plain'], makeRejectingQuery())).toBeNull()
   })
-  // query 必选（切片 B 收紧，编译期即拦——原「缺省抛错哨兵」用例随可选
-  // 形态一并删除）
 })
 
 describe('quoteInfoAt：引用块信息（上游 getQuoteInfoInPos 逐字移植）', () => {

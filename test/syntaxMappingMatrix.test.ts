@@ -203,6 +203,17 @@ describe('三、口径差异钉住（探索笔记 §四差异表逐条）', () =
     expect(inFm.ok && inFm.kind).toBe('none')
   })
 
+  it('代码行内 inlineAt 恒 none（评审 R2-B7：代码上下文中 $/反引号字面——MATH_CODE_CONTEXTS 口径）', () => {
+    // 围栏行/代码体行上的反引号与 $ 均不产 code/formula——fake 判定链
+    // codeLine 先于 backtickSpans/dollarSpans（真实树代码上下文内无行内
+    // 标记节点）。代码行内容原样字面，消费面（分区/作用域）走块级 code。
+    const f = makeSyntaxFake('```\n`bt` $d$\n```')
+    const inBody = f.query.inlineAt(f.doc.line(2).from + 1)
+    expect(inBody.ok && inBody.kind).toBe('none')
+    const onFence = f.query.inlineAt(1)
+    expect(onFence.ok && onFence.kind).toBe('none')
+  })
+
   it('嵌套优先级：> - item 两位置各判各的（前缀处 quote、内容处 list；依据：developer-guide §4.8）', () => {
     const f = makeSyntaxFake('> - item')
     const line = f.doc.line(1)
@@ -237,6 +248,34 @@ describe('三、口径差异钉住（探索笔记 §四差异表逐条）', () =
   it('优先级 code > table：围栏内的表格式行判 code', () => {
     const f = makeSyntaxFake(['```', '| a |', '```'].join('\n'))
     expect(platformLineKindAt(f.doc, f.query, 2)).toBe('code')
+  })
+
+  it('松散列表项间空行门控（评审 R2-B3）：平台 BulletList 父节点覆盖项间空行判 list，LINE_KIND 维度门控回 empty', () => {
+    // 真实平台树对松散列表（loose list，项间空行）的空行判 list——
+    // BulletList 父节点区间覆盖项间空行；上游 v2 无父节点语义，空行按
+    // 行文本判 text（本仓 LineKind 空间为 empty）。门控与惰性延续行
+    // （P4）同款：平台 kind=list 且行文本全空白 → empty。fake 判定链
+    // 按行首形态学对空行判 text，天然不产该形态（近似边界，见
+    // test/syntaxFake.ts 头注释）——本用例直接构造恒 list 查询钉住
+    const fake = makeSyntaxFake('- a\n\n- b')
+    const listOnly: SyntaxQuery = {
+      lineTypeAt: () => ({ ok: true, kind: 'list' as AddonSyntaxLineKind, nodeNames: ['fake:list'] }),
+      inlineAt: () => ({ ok: true, kind: 'none' as const, nodeNames: ['fake:none'] }),
+    }
+    // 列表标记行：list 原判（不受门控影响）
+    expect(lineInfoAt(fake.doc, listOnly, 1)!.kind).toBe('list')
+    expect(lineInfoAt(fake.doc, listOnly, 3)!.kind).toBe('list')
+    // 项间空行（行文本全空白）：门控回 empty（对齐上游 v2 语义——空行归
+    // text/empty，不落列表分支）；empty 的 indent 按行文本计
+    expect(lineInfoAt(fake.doc, listOnly, 2)).toEqual({
+      kind: 'empty',
+      indent: 0,
+      markerEnd: 0,
+      quoteContentStart: null,
+    })
+    // 跳过维度（FORMAT_SKIP）不动：list 与 text 均不跳过，无行为差
+    expect(FORMAT_SKIP_BY_PLATFORM.list).toBe(false)
+    expect(FORMAT_SKIP_BY_PLATFORM.text).toBe(false)
   })
 
   it('引用块惰性延续行门控（评审 P4）：平台判 quote 的顶格续行，LINE_KIND 维度投影回 text；跳过维度平台原判不门控', () => {
@@ -334,6 +373,24 @@ describe('四、CodeBlockInfo 提取矩阵（上游 getCodeBlocksInfos 查询版
       scope: RuleScope.Code,
       language: 'js',
     })
+  })
+
+  it('围栏缩进上限 0-3（评审 R2-B5）：4 空格缩进的 ``` 是缩进代码字面内容，不产出 CodeBlockInfo（3 空格仍产出）', () => {
+    // CommonMark 围栏开栏缩进上限 3 空格（对齐仓内 ruleScopeFallback 时代
+    // FENCE_LINE `/^ {0,3}/` 先例）；4 空格缩进的 ``` 是缩进代码块的字面
+    // 内容——上游对缩进代码无 codeblock-begin 不产出块信息。平台树同判
+    // code（缩进代码），故 run 在场而开栏形态学必须拒绝
+    const four = makeSyntaxFake(['    ```js', '    x'].join('\n'))
+    expect(codeBlocksViaQuery(four.doc, four.query)).toEqual([])
+    // 行级 kind 仍是 code；codeBlockAtViaQuery 同口径无块信息（语言提取
+    // 无从发生——Code 作用域无语言，与既有「缩进代码无语言」断言同型）
+    expect(codeBlockAtViaQuery(four.doc, four.query, four.doc.line(1).from + 4)).toBeNull()
+    // 3 空格缩进仍是围栏开栏（上限内），块信息照常产出、indent=3
+    const three = makeSyntaxFake(['   ```js', '   x'].join('\n'))
+    const block = codeBlocksViaQuery(three.doc, three.query)![0]!
+    expect(block.language).toBe('js')
+    expect(block.indent).toBe(3)
+    expect(block.startPos).toBe(3)
   })
 
   it('codeBlockAtViaQuery 局部扩展的闭区间口径：pos 在开栏行的围栏前缀内不算命中（对齐全量版 find 与上游 start_pos 语义）', () => {

@@ -7,7 +7,11 @@ import { createPasteMarker } from '../src/pasteMarker'
 import { pickMessages } from '../src/i18n'
 import { SETTINGS_TOPIC } from '../src/settings/store'
 import { RICH_STRUCTURE_DEFAULTS } from '../src/settings/defaults'
-import { INPUT_RULE_EXCLUSIVE_GROUP } from '../src/ruleBehaviorIntercept'
+import {
+  INPUT_RULE_EXCLUSIVE_GROUP,
+  inputContextIsMainInstance,
+  type InputContextOwnership,
+} from '../src/ruleBehaviorIntercept'
 import {
   AUTO_FORMAT_LOCAL_ID,
   createAutoFormatGate,
@@ -316,6 +320,52 @@ describe('#27 保护区：设置驱动内置计算', () => {
     const reg = registrations[0]!
     // 快照 {{中文a}}：外部区间 [0,3)，a 与 }} 区间外——中文|a 边界照常格式化
     expect(applyPlan('{{中文a}}', reg.onInput(inputCtx('{{中文a}}', 5, 'a')))).toBe('{{中文 a}}')
+  })
+})
+
+// 实例一致性守卫（评审 R2-B1）：平台行为链同样驱动嵌入（embed）Live 实例
+// ——其 ctx.snapshot/docUri 是嵌入实例的，而 queryOf 恒返回主实例查询，
+// 作用域判定会以主文档同偏移误判嵌入文档。守卫注入后 onInput 入口比对，
+// 不一致即放弃该次行为修饰。
+describe('实例一致性守卫（评审 R2-B1：嵌入实例驱动不接管）', () => {
+  function registerWithGuard(ownsContext: InputContextOwnership): AddonBehaviorRegistration {
+    const registrations: AddonBehaviorRegistration[] = []
+    registerAutoFormatBehavior({
+      behaviors: {
+        register: (reg) => {
+          registrations.push(reg)
+          return { ok: true as const, key: 'k' }
+        },
+        onChanged: () => () => {},
+      },
+      channel: { request: () => Promise.resolve({ ok: true as const, result: { effective: {} } }) },
+      language: 'zh-CN',
+      marker: createPasteMarker(),
+      queryOf: syntaxQueryOf,
+      ownsContext,
+    })
+    return registrations[0]!
+  }
+
+  it('ctx.snapshot.text ≠ 主视图文档（嵌入实例快照）→ onInput 直接 null（查询与格式化均不发生）', () => {
+    // 守卫走快照全文比对路径（mainDocUri 不可得）：主视图文档是另一文本
+    const reg = registerWithGuard((ctx) => inputContextIsMainInstance(ctx, null, '主实例的另一篇文档'))
+    expect(reg.onInput(inputCtx('中文a', 3, 'a'))).toBeNull()
+  })
+
+  it('ctx.docUri ≠ 主实例 targetDocUri（嵌入目标文档）→ null；docUri 同源比对路径', () => {
+    const reg = registerWithGuard((ctx) => inputContextIsMainInstance(ctx, 'file:///v/main.md', null))
+    // 主实例驱动（同 URI）：照常格式化（守卫不误伤主实例键入）
+    expect(reg.onInput({ ...inputCtx('中文a', 3, 'a'), docUri: 'file:///v/main.md' })).not.toBeNull()
+    // 嵌入实例驱动（引用目标 B 的 URI）：不接管
+    expect(reg.onInput({ ...inputCtx('中文a', 3, 'a'), docUri: 'file:///v/embed-b.md' })).toBeNull()
+  })
+
+  it('守卫返回 false 先于其余门控（与查询拒绝同一「不接管」语义，不占独占组）', () => {
+    // 快照文本与主视图一致但守卫判否（活动视图缺席形态：主视图未挂）——
+    // 即便设置全开 + 查询在场也直接放弃
+    const reg = registerWithGuard(() => false)
+    expect(reg.onInput(inputCtx('中文a', 3, 'a'))).toBeNull()
   })
 })
 

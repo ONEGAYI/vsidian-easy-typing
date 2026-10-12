@@ -58,7 +58,7 @@ import {
 // intercept 层经本模块取 tabstop 类型（单一来源，避免多点直连引擎内部）
 export type { TabstopSpec } from './rules/rule-engine'
 import { RuleScope } from './rules/rule-engine'
-import { detectScopeViaQuery, docOfLines, type ScopeInfo, type SyntaxQuery } from './syntaxTreeQuery'
+import { detectScopeViaQuery, docOfText, type ScopeInfo, type SyntaxQuery } from './syntaxTreeQuery'
 
 // ===== 作用域判定的注入（#5 切片 B：树版换传） =====
 //
@@ -81,6 +81,12 @@ import { detectScopeViaQuery, docOfLines, type ScopeInfo, type SyntaxQuery } fro
  * ——两个来源：查询缺席（options.scopeQuery undefined，语法面缺席/反查
  * 失败）与查询拒绝（detectScopeViaQuery ok:false——view-disposed 竞态等；
  * 评审 P3：拒绝不静默归 Text 施加规则修饰，spec §二拒绝口径）。
+ *
+ * 近似口径（评审 R2-A1 落档）：Delete/SelectKey 管线传入事务前重建文档与
+ * 事务前坐标，而查询在平台实时（事务后）文档上判定——删除大段时坐标
+ * 钳制文末，与事务前实况可能分叉（仅非 All 用户规则在场触发，默认配置
+ * 零影响）；#21 真实宿主联调核对，中期修复（快照坐标反向换算或快照 doc
+ * 判定）另票，详见 docs/specs/rule-engine.md「事务前重建与坐标换算」节。
  */
 function resolveScopeForEngine(
   engine: RuleEngine,
@@ -91,7 +97,9 @@ function resolveScopeForEngine(
   if (engine.allRulesUnscoped()) return { scope: RuleScope.All }
   const query = options.scopeQuery
   if (query === undefined) return null // 非 All 规则在场而查询缺席：不接管
-  return detectScopeViaQuery(docOfLines(text.split('\n')), query, pos)
+  // docOfText 带单槽缓存（评审 R2-B4）：行为链同驱动多族对同一快照文本
+  // 重复构造行文档的成本收敛为一次
+  return detectScopeViaQuery(docOfText(text), query, pos)
 }
 
 // ===== 工单 #27：保护区注入（「用户规则尊重保护区」的判定位） =====

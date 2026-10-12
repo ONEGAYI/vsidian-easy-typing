@@ -32,7 +32,8 @@
 // 消费方依赖）。quote* 为惰性延续行门控（评审 P4）：平台树按 GFM 把引用
 // 块的顶格续行判 quote，上游 v2 行首语义判 text——LINE_KIND 维度门控回
 // text，跳过维度平台原判不门控（上游 v1 quote 分支兜底 text，两侧行为
-// 等价）。table 的跳过维度独立出口 = FORMAT_SKIP_BY_PLATFORM——#28
+// 等价）。list 的空行门控（评审 R2-B3）同款：松散列表项间空行平台判
+// list（BulletList 父节点覆盖），门控回 empty。table 的跳过维度独立出口 = FORMAT_SKIP_BY_PLATFORM——#28
 // 已验收决策「格式化跳过表格行」在树版换传后保持，不翻案。
 //
 // 已知平台口径差异（消费面按平台语义，vsidian developer-guide §4.8）：
@@ -80,7 +81,9 @@ export interface SyntaxDocLine {
   readonly text: string
 }
 
-/** 从行文本数组构造最小行文档（LF 连接；blockScan.scanLines 适配用） */
+/** 从行文本数组构造最小行文档（LF 连接；blockScan.scanLines 适配用）。
+ * 越界语义对齐 CM6：line(n) 越界抛 RangeError、lineAt(pos) 钳制——空
+ * 数组的 lineAt 恒返回空文档首行 {1, 0, 0, ''}（CM6 Text.empty 同款） */
 export function docOfLines(texts: readonly string[]): SyntaxDoc {
   const starts: number[] = []
   let cursor = 0
@@ -90,6 +93,9 @@ export function docOfLines(texts: readonly string[]): SyntaxDoc {
   }
   const length = Math.max(0, cursor - 1)
   const lineAt = (pos: number): SyntaxDocLine => {
+    // 空文档守卫（评审 R2-A3）：无行时 starts 为空，二分索引越界会以
+    // undefined/NaN 坐标抛 TypeError——恒返回空文档首行（对齐 CM6）
+    if (starts.length === 0) return { number: 1, from: 0, to: 0, text: '' }
     const clamped = Math.max(0, Math.min(pos, length))
     let lo = 0
     let hi = starts.length - 1
@@ -115,6 +121,23 @@ export function docOfLines(texts: readonly string[]): SyntaxDoc {
       return lineAt(starts[n - 1]!)
     },
   }
+}
+
+/**
+ * 从全文文本构造最小行文档（带单槽缓存；评审 R2-B4）：非 All 用户规则
+ * 在场时一次输入被行为链驱动约 6 次（autoformat 1 + Input 五族），每次
+ * `docOfLines(text.split('\n'))` 的全文 split + 行表构建在 10 万行文档达
+ * ms 级——缓存键 = text 字符串相等（同引用 O(1) 命中；行为链同驱动的
+ * ctx.snapshot.text 即同引用）。doc 是 text 的纯函数，缓存值只由键决定、
+ * 无陈旧语义风险（与被删的 (text,pos) scopeMemo 性质不同：那类缓存键含
+ * 可变外部状态）。共享返回对象按接口约定只读，缓存不改变任何行为语义。
+ */
+let docTextCache: { text: string; doc: SyntaxDoc } | null = null
+export function docOfText(text: string): SyntaxDoc {
+  if (docTextCache !== null && docTextCache.text === text) return docTextCache.doc
+  const doc = docOfLines(text.split('\n'))
+  docTextCache = { text, doc }
+  return doc
 }
 
 // ---- 行内形态学正则（自 blockScan 移入 #5；行内几何与上游逐字语义不动）----
@@ -191,18 +214,23 @@ export function platformLineKindAt(
 }
 
 /**
- * 平台 kind → LineKind（含 empty 本地补判与惰性延续行门控）。
+ * 平台 kind → LineKind（含 empty 本地补判与两处门控）。
  * 惰性延续行门控（评审 P4）：平台树按 GFM 把引用块的惰性延续行（`> a`
  * 下一行顶格 `b`，无 `>` 前缀）判 quote；上游 v2 是行首 quote 语义
  * （getQuoteInfoInPos 的 quote_regex `^(\s*)(>+) ?` 不匹配 → 判 text）。
  * LINE_KIND 消费维度对 quote kind 且行首无引用前缀的行门控回 text，
- * 对齐上游。只影响本维度——FORMAT_SKIP（v1/跳过）维度保持平台 kind
- * 原判：上游 v1 的 quote 分支兜底本就是 text（core.ts:698-742，仅 callout
- * 内代码块升 codeblock，普通引用行一律 text 不跳过），平台 quote 不跳过，
- * 两侧行为等价，无需门控。
+ * 对齐上游。松散列表空行门控（评审 R2-B3，与 P4 同款形态）：平台树对
+ * 松散列表（loose list）的项间空行判 list（BulletList 父节点区间覆盖
+ * 空行）；上游 v2 无父节点语义，空行按行文本判 text——list kind 且
+ * 行文本全空白门控回 empty，对齐上游。两处门控都只影响本维度——
+ * FORMAT_SKIP（v1/跳过）维度保持平台 kind 原判：上游 v1 的 quote 分支
+ * 兜底本就是 text（core.ts:698-742，仅 callout 内代码块升 codeblock，
+ * 普通引用行一律 text 不跳过），平台 quote 不跳过，两侧行为等价；
+ * list 与 text 的跳过维度均 false，亦无行为差，无需门控。
  */
 function lineKindOf(platform: AddonSyntaxLineKind, lineText: string): LineKind {
   if (platform === 'quote' && QUOTE_PREFIX_RE.exec(lineText) === null) return 'text'
+  if (platform === 'list' && EMPTY_RE.test(lineText)) return 'empty'
   if (platform === 'text' && EMPTY_RE.test(lineText)) return 'empty'
   return LINE_KIND_BY_PLATFORM[platform]
 }
@@ -279,8 +307,24 @@ export interface CodeBlockInfo {
   readonly indent: number
 }
 
-/** 开栏围栏（上游 fenceMatch [`~]{3,} 同款；引用前缀先剥——引用内围栏） */
-const FENCE_OPEN_RE = /^(\s*)([`~]{3,})/
+/**
+ * 开栏围栏检测（评审 R2-B5）：返回 null = 非开栏；命中返回围栏起始列
+ * （含引用前缀）。缩进限 0-3 空格——对齐 CommonMark 围栏缩进上限与仓内
+ * ruleScopeFallback 时代 FENCE_LINE `/^ {0,3}/` 先例（原 `/^(\s*)/` 无
+ * 上限：4 空格缩进的 ``` 是缩进代码的字面内容，会被误产 CodeBlockInfo，
+ * 上游对缩进代码无 codeblock-begin 不产出；制表符计 4 空格同超限拒绝）。
+ * 引用前缀先剥（引用内围栏），剥后内容同样受 0-3 上限约束。注意不能经
+ * stripQuotePrefix 剥后检测：它对无引用行会连行首缩进一并剥掉，上限就
+ * 测不到了——此处只剥引用标记（含其行首空白），保留待检缩进原文。
+ */
+const FENCE_OPEN_RE = /^( {0,3})([`~]{3,})/
+function fenceOpenIndentOf(lineText: string): number | null {
+  const ws = lineText.length - lineText.trimStart().length
+  const qm = QUOTE_PREFIX_RE.exec(lineText.slice(ws))
+  const prefixLen = qm !== null ? ws + qm[0].length : 0
+  const open = FENCE_OPEN_RE.exec(lineText.slice(prefixLen))
+  return open === null ? null : prefixLen + open[1]!.length
+}
 /** 闭栏形态（围栏字符 + 余白；信息串只允许出现在开栏） */
 const FENCE_CLOSE_RE = /^\s*[`~]{3,}\s*$/
 
@@ -306,11 +350,8 @@ export function codeBlocksViaQuery(doc: SyntaxDoc, query: SyntaxQuery): CodeBloc
     }
     let end = n
     while (end + 1 <= doc.lines && kinds[end] === 'code') end += 1
-    const openLine = doc.line(n)
-    const openEff = stripQuotePrefix(openLine.text)
-    const open = FENCE_OPEN_RE.exec(openEff.text)
-    if (open) {
-      const indent = openEff.prefix + open[1]!.length
+    const indent = fenceOpenIndentOf(doc.line(n).text)
+    if (indent !== null) {
       out.push(blockInfoOf(doc, n, end, indent))
     }
     n = end + 1
@@ -357,40 +398,50 @@ function blockInfoOf(doc: SyntaxDoc, startLine: number, endLine: number, indent:
  * 钉住）；run 首行须是围栏标记行（缩进代码无 codeblock-begin，不产出——
  * 上游同款）。
  */
+/** codeBlockAtViaQuery 的内部形态（评审 R2-A2）：「查询拒绝」与「pos 不在
+ *  块内」可区分——拒绝经 codeScopeAt 传播为整体 null，不吞为无语言 Code */
+type CodeBlockLookup = { rejected: true } | { rejected: false; block: CodeBlockInfo | null }
+
 export function codeBlockAtViaQuery(doc: SyntaxDoc, query: SyntaxQuery, pos: number): CodeBlockInfo | null {
+  const result = lookupCodeBlockAt(doc, query, pos)
+  return result.rejected ? null : result.block
+}
+
+function lookupCodeBlockAt(doc: SyntaxDoc, query: SyntaxQuery, pos: number): CodeBlockLookup {
   const clamped = Math.max(0, Math.min(pos, doc.length))
   const posLine = doc.lineAt(clamped).number
   const posKind = platformLineKindAt(doc, query, posLine)
-  if (posKind === null) return null // 查询拒绝：不接管
-  if (posKind !== 'code') return null
+  if (posKind === null) return { rejected: true } // 查询拒绝：不接管
+  if (posKind !== 'code') return { rejected: false, block: null }
 
   // 从 pos 行向上下扩展连续 code 行 run（与 codeBlocksViaQuery 的 run 分组
-  // 同一边界；查询拒绝传播为整体 null，与全量版拒绝语义一致）
+  // 同一边界；查询拒绝传播为整体拒绝，与全量版拒绝语义一致）
   let startLine = posLine
   for (let i = posLine - 1; i >= 1; i--) {
     const kind = platformLineKindAt(doc, query, i)
-    if (kind === null) return null
+    if (kind === null) return { rejected: true }
     if (kind !== 'code') break
     startLine = i
   }
   let endLine = posLine
   for (let i = posLine + 1; i <= doc.lines; i++) {
     const kind = platformLineKindAt(doc, query, i)
-    if (kind === null) return null
+    if (kind === null) return { rejected: true }
     if (kind !== 'code') break
     endLine = i
   }
 
-  // run 首行须是围栏标记行（上游同款：缩进代码无 codeblock-begin 不产出）
-  const openLine = doc.line(startLine)
-  const openEff = stripQuotePrefix(openLine.text)
-  const open = FENCE_OPEN_RE.exec(openEff.text)
-  if (!open) return null
-  const block = blockInfoOf(doc, startLine, endLine, openEff.prefix + open[1]!.length)
+  // run 首行须是围栏标记行（上游同款：缩进代码无 codeblock-begin 不产出
+  // ——缩进限 0-3 空格见 fenceOpenIndentOf）
+  const indent = fenceOpenIndentOf(doc.line(startLine).text)
+  if (indent === null) return { rejected: false, block: null }
+  const block = blockInfoOf(doc, startLine, endLine, indent)
   // 闭区间核对（对齐全量版 find 的 [startPos, endPos] 判定与上游
   // start_pos 语义）：pos 在开栏行的围栏前缀内（缩进/引用前缀段，
   // clamped < startPos）不算命中——此时返回 null 而非该块
-  return clamped >= block.startPos && clamped <= block.endPos ? block : null
+  return clamped >= block.startPos && clamped <= block.endPos
+    ? { rejected: false, block }
+    : { rejected: false, block: null }
 }
 
 // ---- 作用域判定（上游 syntax.ts detectRuleScope 的查询版） ----
@@ -404,7 +455,9 @@ export interface ScopeInfo {
 /**
  * 光标处作用域；查询拒绝返回 null（「不接管」由消费方解释——拒绝只
  * 发生在非 live/已销毁视图，判定无意义；spec §二拒绝口径：不 fallback
- * 正则）。判定序（上游语义：math 先于 code&&!link）：
+ * 正则）。拒绝来源两处（评审 R2-A2）：首查 lineTypeAt/inlineAt ok:false，
+ * 与 code 分支内 codeBlockAtViaQuery 局部扩展中的逐行拒绝——全路径
+ * null，不吞为无语言 Code。判定序（上游语义：math 先于 code&&!link）：
  * 1. lineTypeAt formula 或 inlineAt formula → Formula；
  * 2. inlineAt code 且不在链接区段内，或 lineTypeAt code（块级代码上下文，
  *    含围栏行——inlineAt 在其中恒 none）→ Code（语言经
@@ -429,9 +482,13 @@ export function detectScopeViaQuery(doc: SyntaxDoc, query: SyntaxQuery, pos: num
   return { scope: RuleScope.Text }
 }
 
-/** Code 作用域 + 语言（上游 language || undefined：空串归 undefined） */
-function codeScopeAt(doc: SyntaxDoc, query: SyntaxQuery, pos: number): ScopeInfo {
-  const block = codeBlockAtViaQuery(doc, query, pos)
+/** Code 作用域 + 语言（上游 language || undefined：空串归 undefined）。
+ * 查询拒绝（含 codeBlockAtViaQuery 局部扩展中的拒绝，评审 R2-A2）返回
+ * null 由 detectScopeViaQuery 传播——spec §二「拒绝全路径 null」口径 */
+function codeScopeAt(doc: SyntaxDoc, query: SyntaxQuery, pos: number): ScopeInfo | null {
+  const result = lookupCodeBlockAt(doc, query, pos)
+  if (result.rejected) return null
+  const block = result.block
   return block && block.language !== ''
     ? { scope: RuleScope.Code, language: block.language }
     : { scope: RuleScope.Code }

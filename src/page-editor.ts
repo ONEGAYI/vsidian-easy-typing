@@ -4,6 +4,7 @@
 import type { EditorView } from '@codemirror/view'
 import { defineAddonPage } from 'vsidian-addon-sdk'
 import type { VsidianAddonPageSdk } from '../types/vendor/shared/addonPage'
+import type { AddonInputContext } from '../types/vendor/shared/addonBehaviors'
 import type { SyntaxQuery } from './syntaxTreeQuery'
 import { createBetterBackspaceCommand } from './backspaceIntercept'
 import { buildToggleCommentCommandDefinition, createToggleCommentCommandHandler } from './commentToggle'
@@ -36,6 +37,7 @@ import {
   registerRuleDeleteSelectKeyBehaviors,
   registerRuleInputBehaviors,
   createRuleSnapshotSource,
+  inputContextIsMainInstance,
 } from './ruleBehaviorIntercept'
 import { registerAutoFormatBehavior, createAutoFormatGate } from './autoFormatIntercept'
 import { registerFormattingCommands } from './formattingCommands'
@@ -242,6 +244,28 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   )
   const queryOfActiveView = (): SyntaxQuery | null =>
     activeViewRef.view !== null ? queryOfView(activeViewRef.view) : null
+
+  // 实例一致性守卫（评审 R2-B1）：平台行为链同样驱动嵌入（embed）Live
+  // 实例（其 ctx.snapshot/docUri 是嵌入文档的），而 queryOfActiveView 恒返回
+  // 主实例查询——作用域判定会以主文档同偏移误判嵌入文档。三处行为族注入
+  // 本守卫：驱动上下文非主实例 → onInput 直接放弃（与查询拒绝同一「不
+  // 接管」语义）。比对策略（inputContextIsMainInstance 的比对核）：docUri
+  // 同源比对优先——经 views 面反查主实例 targetDocUri（与 AddonInputContext
+  // .docUri 同源，µs 级）；views/viewIdentity 反查不可得（防御深度）时回退
+  // 快照全文比对（主实例驱动时快照描述主视图现状，一致）。
+  const views = sdk.views
+  const ownsMainInstanceInput = (ctx: AddonInputContext): boolean => {
+    const view = activeViewRef.view
+    if (view === null) return false // 活动视图缺席：驱动只能来自登记面外实例
+    if (views !== undefined && viewIdentity !== undefined) {
+      const instanceId = viewIdentity.instanceIdOf(view)
+      if (instanceId !== null) {
+        const mainDocUri = views.get(instanceId)?.info.targetDocUri ?? null
+        return inputContextIsMainInstance(ctx, mainDocUri, null)
+      }
+    }
+    return inputContextIsMainInstance(ctx, null, view.state.doc.toString())
+  }
 
   // ============================================================
   // 工单 #11 增量块：EnhanceModA 渐进选择 + 「选择当前块」命令。
@@ -457,6 +481,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       language: navigator.language,
       rulesSource,
       queryOf: queryOfActiveView,
+      ownsContext: ownsMainInstanceInput,
     })
     for (const outcome of ruleRuntime.outcomes) {
       if (!outcome.ok) {
@@ -497,6 +522,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       language: navigator.language,
       rulesSource,
       queryOf: queryOfActiveView,
+      ownsContext: ownsMainInstanceInput,
     })
     for (const outcome of triggerRuntime.outcomes) {
       if (!outcome.ok) {
@@ -534,6 +560,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       language: navigator.language,
       marker: pasteMarker,
       queryOf: queryOfActiveView,
+      ownsContext: ownsMainInstanceInput,
     })
     if (autoFormatOutcome !== undefined && !autoFormatOutcome.ok) {
       // 普通 API 拒绝不算故障：经 debugLog 留痕（logging.ts 约定）

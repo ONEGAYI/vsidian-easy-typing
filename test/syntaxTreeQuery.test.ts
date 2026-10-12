@@ -7,6 +7,7 @@ import {
   codeBlocksViaQuery,
   detectScopeViaQuery,
   docOfLines,
+  docOfText,
   FORMAT_SKIP_BY_PLATFORM,
   lineInfoAt,
   LINE_KIND_BY_PLATFORM,
@@ -250,6 +251,29 @@ describe('detectScopeViaQuery：作用域判定（上游 detectRuleScope 查询�
     // 处理」口径：返回 null/false 透传平台原生行为，不 fallback 正则
     expect(detectScopeViaQuery(d, makeRejectingQuery(), posOf(2, 0))).toBeNull()
   })
+
+  it('扩展查询拒绝（评审 R2-A2）：code 分支局部扩展中拒绝 → detectScopeViaQuery 整体 null（拒绝不被吞为无语言 Code）', () => {
+    // codeBlockAtViaQuery 从 pos 行向上下扩展连续 code 行——首查成功后
+    // 扩展行拒绝（同步窗口内实例销毁类竞态）时，「查询拒绝」与「pos 不在
+    // 块内」须可区分：拒绝经 codeScopeAt 传播为整体 null（消费方不接管），
+    // 而非吞掉拒绝退化为无语言的 {scope: Code}（spec §二「拒绝全路径
+    // null」口径——同步不可达窗口 + 后果保守，评审 P3/R2-A2）
+    const fake = makeSyntaxFake(['```js', 'a', 'b', 'tail'].join('\n'))
+    const { doc, query } = fake
+    const rejectFrom = doc.line(3).from // 行 3（'b'，扩展下行触达）起拒绝
+    const partialReject: typeof query = {
+      lineTypeAt: (pos) => (pos >= rejectFrom ? { ok: false, reason: 'view-disposed' } : query.lineTypeAt(pos)),
+      inlineAt: (pos) => (pos >= rejectFrom ? { ok: false, reason: 'view-disposed' } : query.inlineAt(pos)),
+    }
+    // pos 在行 2（'a'，块内）：首查与上行扩展成功、下行扩展遇拒绝 → null
+    expect(detectScopeViaQuery(doc, partialReject, doc.line(2).from)).toBeNull()
+    expect(codeBlockAtViaQuery(doc, partialReject, doc.line(2).from)).toBeNull()
+    // 对照：无拒绝时同位置带语言命中（确保拒绝注入确属「部分成功后拒绝」）
+    expect(detectScopeViaQuery(doc, query, doc.line(2).from)).toEqual({
+      scope: RuleScope.Code,
+      language: 'js',
+    })
+  })
 })
 
 describe('docOfLines：line(n) 越界守卫（评审 S7）', () => {
@@ -268,6 +292,36 @@ describe('docOfLines：line(n) 越界守卫（评审 S7）', () => {
     const doc = docOfLines(['ab', 'cd'])
     expect(doc.lineAt(999).number).toBe(2)
     expect(doc.lineAt(-1).number).toBe(1)
+  })
+
+  it('空数组（评审 R2-A3）：lineAt 返回 CM6 空文档首行 {1,0,0,""}（任意 pos 钳制）；line(n) 仍抛 RangeError', () => {
+    // 对齐 CM6 Text.empty.lineAt(pos) 语义——空文档恒有首行 {number:1,
+    // from:0, to:0, text:''}；修复前 starts[0] 越界以 undefined/NaN 坐标
+    // 静默抛 TypeError。line(n) 越界行为不变（1 行也没有，任何 n 均越界）
+    const doc = docOfLines([])
+    expect(doc.lines).toBe(0)
+    expect(doc.length).toBe(0)
+    expect(doc.lineAt(0)).toEqual({ number: 1, from: 0, to: 0, text: '' })
+    expect(doc.lineAt(5)).toEqual({ number: 1, from: 0, to: 0, text: '' })
+    expect(() => doc.line(1)).toThrow(RangeError)
+  })
+})
+
+describe('docOfText：单槽缓存（评审 R2-B4：行为链一次输入 ~6 次全文 split 的去重）', () => {
+  it('同 text 二次构造命中缓存（同一对象 = ≤1 次真实计算）；换 text 重建后旧 text 再进亦重建', () => {
+    const a = docOfText('l1\nl2')
+    // 命中：同一对象返回——同 text 的第二次调用无真实计算（split + 行表
+    // 构建），行为链同驱动内多族重复构造由此收敛为 1 次
+    expect(docOfText('l1\nl2')).toBe(a)
+    const b = docOfText('other')
+    expect(b).not.toBe(a)
+    expect(docOfText('other')).toBe(b)
+    // 单槽：a 被逐出后再进重建（新对象、语义等价——doc 是 text 的纯函数）
+    const a2 = docOfText('l1\nl2')
+    expect(a2).not.toBe(a)
+    expect(a2.lines).toBe(2)
+    expect(a2.line(2).text).toBe('l2')
+    expect(a2.length).toBe(5)
   })
 })
 

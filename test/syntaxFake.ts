@@ -25,12 +25,19 @@
 //   上方最近非空行属列表）——真实树按解析归属，测试用例避免边界形态。
 // - 行内 $ 扫描简化：不做贴字（词字符相邻不开启/闭合）与转义判定的完整
 //   复刻，测试用例避开货币形态；反引号 span 内的 $ 跳过。
+// - inlineAt 判定链内代码行（围栏/缩进代码）先于反引号 span：平台代码
+//   上下文内 $/反引号字面（MATH_CODE_CONTEXTS 口径，评审 R2-B7 对齐——
+//   代码行上的反引号不再产 code span，与反引号 span 内 $ 跳过同理）。
 // - 平台树无 wikilink/mdlink 节点（反引号是真 InlineCode）——链接排除由
 //   生产侧 linkSpansOfLine 补齐，本 fake 不模拟（如实返回 code）。
 // - 引用块惰性延续行（`> a` 下一行顶格 `b`，无 `>` 前缀）：真实平台树按
 //   GFM 判 quote，本 fake 按行首形态学判 text，天然不产 quote 延续形态
 //   （评审 P4 近似边界）——生产侧 lineKindOf 的门控行为由矩阵测试直接
 //   构造恒 quote 查询钉住，真实宿主联调归 #21。
+// - 松散列表项间空行（`- a` / 空行 / `- b`）：真实平台树 BulletList 父
+//   节点区间覆盖空行判 list，本 fake 按行首形态学对空行判 text（评审
+//   R2-B3 近似边界）——生产侧 lineKindOf 的门控（list + 全空白 → empty）
+//   由矩阵测试直接构造恒 list 查询钉住，真实宿主联调归 #21。
 import type {
   AddonSyntaxInlineResult,
   AddonSyntaxLineKind,
@@ -220,8 +227,11 @@ export function makeSyntaxFake(text: string): SyntaxFake {
       const i = lineAtPos(pos).number - 1
       const ok = (kind: 'code' | 'formula' | 'none'): AddonSyntaxInlineResult => ({ ok: true, kind, nodeNames: [`fake:${kind}`] })
       if (inFmPos(pos)) return ok('none')
-      if (backtickSpans[i]!.some((s) => pos >= s.from && pos < s.to)) return ok('code')
+      // 代码行（围栏/缩进代码）先于反引号 span：平台代码上下文内 $/反引号
+      // 均字面（MATH_CODE_CONTEXTS 口径——代码上下文内 inlineAt 恒 none，
+      // 反引号不再产 code span；评审 R2-B7 对齐）
       if (codeLine[i]) return ok('none')
+      if (backtickSpans[i]!.some((s) => pos >= s.from && pos < s.to)) return ok('code')
       if (inMathBlock(pos)) return ok('formula')
       if (dollarSpans[i]!.some((s) => pos >= s.from && pos < s.to)) return ok('formula')
       return ok('none')

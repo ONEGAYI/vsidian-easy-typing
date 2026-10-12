@@ -34,7 +34,7 @@
 // 全文 O(L) 正则扫描，审查 C-P1-1；查询版 µs 级无此成本，保留只会增加
 // 陈旧风险——#5 切片 B 决策）。
 import { RuleScope } from './rules/rule-engine'
-import { detectScopeViaQuery, docOfLines, type SyntaxDoc, type SyntaxQuery } from './syntaxTreeQuery'
+import { detectScopeViaQuery, docOfText, type SyntaxDoc, type SyntaxQuery } from './syntaxTreeQuery'
 import {
   pipelineConsumesUserEvent,
   type RuleInputBehaviorPlan,
@@ -102,8 +102,8 @@ export function planAutoFormatLineModification(
   if (fromB < 0) return null // 防御：inputText 与光标失配（多选区拼接等）
 
   // 作用域门控（树版）：Code / Formula / frontmatter 行不格式化；查询拒绝
-  //（null，评审 P3）→ 不接管不格式化
-  const doc: SyntaxDoc = docOfLines(text.split('\n'))
+  //（null，评审 P3）→ 不接管不格式化。docOfText 带单槽缓存（评审 R2-B4）
+  const doc: SyntaxDoc = docOfText(text)
   const scope = detectScopeViaQuery(doc, options.query, head)
   if (scope === null || scope.scope !== RuleScope.Text) return null
   if (isInsideFrontmatter(text, fromB)) return null

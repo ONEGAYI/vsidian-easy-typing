@@ -4,9 +4,9 @@
 // splitTextWithLinkAndUserDefined：
 // - code/formula 分区（#5 切片 B）：平台 experimental.syntax.inlineAt 位置
 //   查询驱动（上游经 CM6 syntaxTree 逐位置 resolve——本移植的查询版等价
-//   形态）。从行首逐位置推进：命中标记后二分定位区间右边界（平台判定链
-//   区间感知——同一 span 内位置返回一致 kind），游标跳边界继续；none 逐
-//   字符推进；
+//   形态）。从行首逐位置推进：命中标记后线性右扫定位区间右边界（评审
+//   R2-B2：T-F-T 形态非单调，放弃二分——间隙文本会被吞进分区），游标跳
+//   边界继续；none 逐字符推进；
 // - **链接区段剪除（上游 `!name.contains('link')` 语义）**：平台树无
 //   wikilink/mdlink 节点（反引号是真 InlineCode），code/formula span 列表
 //   与 syntaxTreeQuery.linkSpansOfLine 的链接区段求差——链接区段优先，
@@ -98,10 +98,10 @@ function subtractSpans(
 
 /**
  * 扫描行内代码/公式区段（树版查询驱动；行内坐标 [begin, end)）：
- * - 行首起逐位置推进：inlineAt 命中 code/formula → 二分找同 kind 的最右
- *   位置（区间感知判定链保证同一 span 内 kind 一致），span 右边界 = 最右
- *   位置 + 1，游标跳边界；none 逐字符推进（正确性优先——上游
- *   parseLineWithSyntaxTree 同为逐位置 resolve）；
+ * - 行首起逐位置推进：inlineAt 命中 code/formula → 线性右扫找区间右边界
+ *   （首个不同 kind 处停，见函数内注释），span 右边界 = 游标停点，游标跳
+ *   边界；none 逐字符推进（正确性优先——上游 parseLineWithSyntaxTree
+ *   同为逐位置 resolve）；
  * - 输出为**剪除链接区段前**的原始 span；链接剪除在 splitLineIntoParts
  *   统一做（上游 !contains('link') 语义）。
  * 查询拒绝 → null。
@@ -123,18 +123,22 @@ function scanSpansViaQuery(
       continue
     }
     const type = result.kind === 'code' ? InlineType.code : InlineType.formula
-    // 二分找右边界：最右 q（q ∈ [p, text.length-1]）使 inlineAt(q) 同 kind
-    let lo = p
-    let hi = text.length - 1
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1
-      const probe = query.inlineAt(line.from + mid)
+    // 命中后线性右扫找区间右边界（评审 R2-B2）：end 从 p 逐位推进直到
+    // inlineAt 不同 kind 或行尾。原实现二分找「最右同 kind 位置」依赖谓词
+    // 前缀单调——同一行内 T-F-T 形态（两个同 kind span 短间隙，如
+    // `a`和`bc`）不单调，二分会收敛到第二 span 末尾把间隙文本吞进分区；
+    // 线性右扫在首个不同 kind 处停，间隙由外层游标走 none 路径逐字符推进。
+    // span 内逐位查询 O(span) 次且 µs 级（none 路径本就逐字符推进同阶，
+    // 上游 parseLineWithSyntaxTree 同为逐位置 resolve——正确性优先）。
+    let end = p + 1
+    while (end < text.length) {
+      const probe = query.inlineAt(line.from + end)
       if (!probe.ok) return null
-      if (probe.kind === result.kind) lo = mid
-      else hi = mid - 1
+      if (probe.kind !== result.kind) break
+      end += 1
     }
-    spans.push({ begin: p, end: lo + 1, type })
-    p = lo + 1
+    spans.push({ begin: p, end, type })
+    p = end
   }
   return spans
 }

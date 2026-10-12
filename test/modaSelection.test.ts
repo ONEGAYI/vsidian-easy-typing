@@ -12,7 +12,7 @@ import {
   type SelectionRange,
 } from '../src/modaSelection'
 import type { SyntaxQuery } from '../src/syntaxTreeQuery'
-import { makeSyntaxFake } from './syntaxFake'
+import { makeRejectingQuery, makeSyntaxFake } from './syntaxFake'
 
 /** 树版判定源：state 文档同文的平台判定链 fake（坐标一致） */
 function queryOfState(state: EditorState): SyntaxQuery {
@@ -308,5 +308,42 @@ describe('懒查询防回潮（#5 切片 B 性能红线：单键不预扫全文�
     // 档3 下行（plain：查 1 次非列表停）= 3 次（档 2 子列表扩展为纯缩进
     // 不查；19 行文档查询恰 3 次）
     expect(fake.counts.lineTypeAt).toBe(3)
+  })
+})
+
+describe('查询拒绝与分支序（评审 R2-A4 测试缺口）', () => {
+  it('恒拒绝查询 → planModASelection 返回 null（透传；拒绝不接管不 fallback）', () => {
+    // anchor 行单点查即拒绝（lineInfoAt → null）——与 spec §二拒绝口径
+    // 一致：非 live/已销毁视图的判定无意义，ModA 不接管
+    const doc = 'aaa\nbbb'
+    expect(planModASelectionImpl(stateAt(doc, 1), makeRejectingQuery())).toBeNull()
+  })
+
+  it('引用内围栏行（> ```js）光标走引用分支：行首引用正则先于 code 不接管判定（上游分支序钉住）', () => {
+    // anchorKind 判 code（平台树链 code 优先，围栏行属代码块区间），但
+    // 分支序在上游是 文本 → 引用（quoteInfoAt 行首纯正则，不查行类型）
+    // → 列表 → 代码不接管：`> ```js` 行首有引用前缀 → 引用分支接管
+    //（modaSelection.ts「引用分支」注释声明的行为）。层级：当前行内容
+    //（跳过 '> '）→ 引用块 → 透传
+    const doc = '> ```js'
+    expect(progressionLabels(stateAt(doc, 4))).toEqual(['```js', '> ```js', 'PASS'])
+  })
+
+  it('扩展中拒绝（部分行成功后拒绝）→ 整体 null：段块下行扩展遇拒绝即透传', () => {
+    // 自定义 query：行 3（'ccc'）起拒绝——anchor 行 1 与段块下行行 2 查询
+    // 成功后，行 3 扩展触达拒绝 → paragraphBlockAt 整体 null（不接管），
+    // 不以部分成功的段块区间接管
+    const doc = 'aaa\nbbb\nccc'
+    const fake = makeSyntaxFake(doc)
+    const rejectFrom = fake.doc.line(3).from
+    const partialReject: SyntaxQuery = {
+      lineTypeAt: (pos) =>
+        pos >= rejectFrom ? { ok: false, reason: 'view-disposed' } : fake.query.lineTypeAt(pos),
+      inlineAt: (pos) =>
+        pos >= rejectFrom ? { ok: false, reason: 'view-disposed' } : fake.query.inlineAt(pos),
+    }
+    expect(planModASelectionImpl(stateAt(doc, 1), partialReject)).toBeNull()
+    // 对照：无拒绝时同位置段块升档照常（确认拒绝注入确属扩展中触达）
+    expect(planModASelectionImpl(stateAt(doc, 1), fake.query)).toEqual({ anchor: 0, head: 3 })
   })
 })

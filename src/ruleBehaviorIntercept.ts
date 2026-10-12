@@ -245,6 +245,38 @@ export function createRuleErrorReporter(
 
 // ===== 注册入口（page-editor 增量块消费） =====
 
+/** 实例一致性守卫（评审 R2-B1）：true = 本次驱动上下文属本组件接管面
+ *  （主正文 Live 实例）。平台行为链同样驱动嵌入（embed）Live 实例——其
+ *  AddonInputContext 的 snapshot/docUri 是嵌入实例的，而注入的 queryOf 恒
+ *  返回主实例查询（活动视图追踪只见主视图），作用域判定会以主文档同偏移
+ *  误判嵌入文档（公式/代码内容可能被错误格式化/修饰）。onInput 入口守卫：
+ *  不一致 → 该次行为修饰直接放弃（返回 null，与查询拒绝同一「不接管」
+ *  语义，不占独占组）。 */
+export type InputContextOwnership = (ctx: AddonInputContext) => boolean
+
+/**
+ * 驱动上下文与主实例的一致性判定（守卫闭包的比对核，纯函数）：
+ * - mainDocUri 可得（页面装配层经 views 面反查主实例 targetDocUri）时走
+ *   docUri 同源比对——AddonInputContext.docUri 与实例 views 句柄的
+ *   targetDocUri 同源（#407：embed 驱动时是引用目标文档 URI），短串相等
+ *   µs 级，优先于全文比对；
+ * - mainDocUri 不可得（views/viewIdentity 面缺席——防御深度）时回退快照
+ *   全文比对：主实例驱动时 ctx.snapshot.text 与主视图当前文档一致（行为
+ *   链同步驱动，快照描述视图现状）；
+ * - 两者皆不可得（mainDocText 亦 null = 活动视图缺席）→ false：驱动只可能
+ *   来自登记面外实例，一律不接管。
+ * 已知边界：自嵌（embed 目标恰为主文档）时 docUri 相等守卫放行——内容
+ * 相同，主实例查询的同偏移判定与嵌入实例一致，无误伤面；#21 联调核对。
+ */
+export function inputContextIsMainInstance(
+  ctx: AddonInputContext,
+  mainDocUri: string | null,
+  mainDocText: string | null,
+): boolean {
+  if (mainDocUri !== null) return ctx.docUri === mainDocUri
+  return mainDocText !== null && ctx.snapshot.text === mainDocText
+}
+
 /** 动态规则源（审查 B-F1 / C-P1-2 修复）：行为族引擎的存储态数据供给面。
  * page-editor 装配 PageRulesClient 后把本源接到 client 的 onReload——装载
  * /重载成功即 update 喂快照，注册方经 onUpdate 同步重建族引擎。 */
@@ -290,6 +322,10 @@ export interface RegisterRuleBehaviorsDeps {
   /** #5 语法查询工厂（活动视图 → 查询；行为链 onInput 无视图句柄——查询经
    *  活动视图 instanceId 构造。非 All 规则在场而缺席 → 管线不接管） */
   readonly queryOf?: () => SyntaxQuery | null
+  /** 实例一致性守卫（评审 R2-B1；缺省 = 不设防，兼容纯管线测试形态）：
+   *  返回 false = 本次驱动来自非主实例（嵌入 Live 等）→ onInput 直接放弃
+   *  （返回 null 不占独占组）——快照/查询实例错配的修饰整体不发生 */
+  readonly ownsContext?: InputContextOwnership
 }
 
 /** 注册结果（逐族；普通 API 拒绝不算故障，经 debugLog 留痕） */
@@ -385,6 +421,9 @@ export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): Rul
       exclusiveGroup: INPUT_RULE_EXCLUSIVE_GROUP,
       history: 'atomic',
       onInput: (ctx: AddonInputContext) => {
+        // 实例一致性守卫（评审 R2-B1）：嵌入实例驱动（快照非主实例文档）
+        // → 放弃该次行为修饰（null 不占独占组）
+        if (deps.ownsContext !== undefined && !deps.ownsContext(ctx)) return null
         const withTabstops = planInputRuleWithTabstops(
           engines[familyIndex]!,
           {
@@ -517,6 +556,9 @@ export function registerRuleDeleteSelectKeyBehaviors(deps: RegisterRuleBehaviors
       exclusiveGroup: INPUT_RULE_EXCLUSIVE_GROUP,
       history: 'atomic',
       onInput: (ctx: AddonInputContext) => {
+        // 实例一致性守卫（评审 R2-B1）：嵌入实例驱动（快照非主实例文档）
+        // → 放弃该次行为修饰（null 不占独占组）
+        if (deps.ownsContext !== undefined && !deps.ownsContext(ctx)) return null
         // Delete 族只面对 delete.* 事件；SelectKey 族只面对 input.type
         // 选区替换——两条管线对不属己方的触发面返回 null，不占用独占组
         const pipelineCtx = {

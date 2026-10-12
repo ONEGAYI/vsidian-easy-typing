@@ -66,15 +66,13 @@ export interface LineInfo {
  * 全文档行扫描（查询版）：逐行平台行类型查询 + 映射表投影（实现见
  * syntaxTreeQuery.scanLinesViaQuery）。ModA 按键路径已改懒查询
  * （modaSelection，性能红线），本入口供测试与全量行分类消费。
- * 查询拒绝时抛错——拒绝只发生在非 live/已销毁视图（本就不该接管），
- * 不 fallback 正则（防复活已拆除的降级路径，exploration 笔记 §5.4）。
+ * 查询拒绝返回 null（评审 R2-B6：全仓拒绝语义 null 归一，与
+ * scanLinesViaQuery / lineInfoAt 一致）——拒绝只发生在非 live/已销毁
+ * 视图（本就不该接管），不 fallback 正则（防复活已拆除的降级路径，
+ * exploration 笔记 §5.4）。
  */
-export function scanLines(texts: readonly string[], query: SyntaxQuery): LineInfo[] {
-  const scan = scanLinesViaQuery(docOfLines(texts), query)
-  if (scan === null) {
-    throw new Error('blockScan.scanLines 语法查询被拒绝（非 live 视图或实例已销毁，不应接管）')
-  }
-  return scan
+export function scanLines(texts: readonly string[], query: SyntaxQuery): LineInfo[] | null {
+  return scanLinesViaQuery(docOfLines(texts), query)
 }
 
 /** 引用块信息（上游 getQuoteInfoInPos 逐字移植；行号 1-based） */

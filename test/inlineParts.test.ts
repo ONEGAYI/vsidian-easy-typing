@@ -117,6 +117,41 @@ describe('链接识别（上游正则逐字）', () => {
   })
 })
 
+describe('双 span 间隙形态（评审 R2-B2：T-F-T 非单调，间隙文本不得吞入分区）', () => {
+  // 原实现的二分找右边界依赖「同 kind 位置前缀单调」——同一行内
+  // span-gap-span（T-F-T）形态不单调，二分会收敛到第二 span 末尾把间隙
+  // 文本吞进 code/formula 分区（如 `a`和`bc` 整行变一个 code 分区）。
+  // 线性右扫在首个不同 kind 处停，间隙由外层游标走 none 路径。
+
+  it('双 code span 短间隙：间隙文本保留为 text 分区', () => {
+    expect(shape(parts('`a`和`bc`'))).toEqual([
+      ['`a`', 'code', 0, 3],
+      ['和', 'text', 3, 4],
+      ['`bc`', 'code', 4, 8],
+    ])
+  })
+
+  it('双 formula span 短间隙：同形态不吞间隙', () => {
+    expect(shape(parts('中$x$和$y$后'))).toEqual([
+      ['中', 'text', 0, 1],
+      ['$x$', 'formula', 1, 4],
+      ['和', 'text', 4, 5],
+      ['$y$', 'formula', 5, 8],
+      ['后', 'text', 8, 9],
+    ])
+  })
+
+  it('双 code span 长间隙：两个独立分区，间隙全为 text', () => {
+    const gap = '——很长的一段中文间隔文本——'
+    const line = '`a`' + gap + '`b`'
+    expect(shape(parts(line))).toEqual([
+      ['`a`', 'code', 0, 3],
+      [gap, 'text', 3, 3 + gap.length],
+      ['`b`', 'code', 3 + gap.length, line.length],
+    ])
+  })
+})
+
 describe('保护区注入缝（#27）', () => {
   it('user 分区按区间落位，携带左右空格要求', () => {
     const ranges = [
