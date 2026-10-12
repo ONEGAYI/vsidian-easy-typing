@@ -614,6 +614,12 @@ function runViewCommand(
               plan.selection !== undefined ? plan.selection.head : plan.changes[0]!.offset,
             )
           })
+          .catch(() => {
+            // 内层链 void 隔离于外层 .catch（reject 传不到外层）——#34 评审
+            // F-2：平台违约形态（promise reject / reveal 回调抛错）就地吞掉
+            // 留痕，不成为页面 unhandledrejection
+            debugLog('formatting command applyEdits pipeline failed — command dropped, retryable')
+          })
       })
       .catch(() => {
         // 通道/快照链路异常静默 + debugLog 留痕（对齐同文件 runToggleAutoFormat

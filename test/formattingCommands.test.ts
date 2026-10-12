@@ -775,6 +775,41 @@ describe('句柄路径：登记面外句柄快照提交（#34 起含嵌入实例
     expect(revealCalls).toHaveLength(0)
   })
 
+  it('句柄路径 applyEdits promise reject（平台违约）→ 内层 .catch 吞掉：不产生 unhandledrejection（评审 F-2）', async () => {
+    const rejections: unknown[] = []
+    const onUnhandled = (reason: unknown): void => {
+      rejections.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const handle: AddonViewHandle = {
+        info: {
+          instanceId: 'embed:host-1',
+          targetDocUri: 'file:///v/free/b.md',
+          mode: 'live',
+          viewType: 'embed',
+          editable: true,
+        },
+        editor: {
+          getSnapshot: () => ({
+            ok: true as const,
+            snapshot: { text: '中文b', selections: [{ anchor: 3, head: 3 }], version: 1, revision: 7 },
+          }),
+          applyEdits: () => Promise.reject(new Error('platform violated: rejected promise')),
+          setSelection: () => true,
+          reveal: () => true,
+        } as AddonViewHandle['editor'],
+      }
+      const h = harness({ queryOf: () => q('中文b') })
+      h.handlerOf(FORMAT_ARTICLE_COMMAND_ID)!(handle)
+      await flush()
+      await flush()
+      expect(rejections).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+  })
+
   it('句柄目标排除命中：不写回 + 通知', async () => {
     const { handle, applyEditsCalls } = fakeTargetHandle({
       id: 'main',

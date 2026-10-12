@@ -639,6 +639,40 @@ describe('命令 handler（目标句柄路由 + 守卫 + 单事务派发）', ()
     expect(c2).toHaveLength(0)
   })
 
+  it('句柄路径 applyEdits promise reject（平台违约）→ .catch 吞掉：不产生 unhandledrejection（评审 F-2）', async () => {
+    const rejections: unknown[] = []
+    const onUnhandled = (reason: unknown): void => {
+      rejections.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const handle: AddonViewHandle = {
+        info: {
+          instanceId: 'embed:host-1',
+          targetDocUri: 'doc:embed:host-1',
+          mode: 'live',
+          viewType: 'embed',
+          editable: true,
+        },
+        editor: {
+          getSnapshot: () => ({
+            ok: true as const,
+            snapshot: { text: 'hello', selections: [{ anchor: 2, head: 2 }], version: 1, revision: 5 },
+          }),
+          applyEdits: () => Promise.reject(new Error('platform violated: rejected promise')),
+          setSelection: () => true,
+          reveal: () => true,
+        } as AddonViewHandle['editor'],
+      }
+      setup(null, { doc: 'hello' })(handle)
+      await flushMicrotasks()
+      await flushMicrotasks()
+      expect(rejections).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+  })
+
   it('平台违约传 undefined（旧签名宿主零参调用形态）→ 按无活动视图静默无动作不抛错', async () => {
     // 防御深度对齐 viewIdentity 缺席守卫：handler 抛错会被平台 reportFault
     // 升级为整组件回收——违约输入按无目标降级而非异常

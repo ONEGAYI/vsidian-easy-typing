@@ -359,5 +359,10 @@ export function createToggleCommentCommandHandler(
           plan.selection !== undefined ? plan.selection.head : plan.changes[0]!.from,
         )
       })
+      .catch(() => {
+        // 平台违约形态（promise reject / 回调抛错）吞掉留痕，不成为页面
+        // unhandledrejection（对齐 formattingCommands 执行流的 .catch 口径）
+        debugLog('comment-toggle applyEdits pipeline failed — command dropped, retryable')
+      })
   }
 }
