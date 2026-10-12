@@ -388,18 +388,28 @@ function stubGate(engine: Partial<AutoFormatEngineSettings> = {}): AutoFormatGat
 
 /** 目标视图句柄替身（info 形状对齐 AddonViewInfo；快照/写回捕获） */
 function fakeTargetHandle(
-  entry: { id: string; uri: string; text: string; editable?: boolean; sel?: number },
+  entry: {
+    id: string
+    uri: string
+    text: string
+    editable?: boolean
+    sel?: number
+    /** 快照失败形态（实例销毁竞态——view-disposed） */
+    snapshotFail?: boolean
+  },
 ): {
   handle: AddonViewHandle
   applyEditsCalls: Array<{
     instanceId: string
     request: { revision: number; changes: unknown; selection?: unknown; history?: string }
   }>
+  revealCalls: number[]
 } {
   const applyEditsCalls: Array<{
     instanceId: string
     request: { revision: number; changes: unknown; selection?: unknown; history?: string }
   }> = []
+  const revealCalls: number[] = []
   const handle: AddonViewHandle = {
     info: {
       instanceId: entry.id,
@@ -409,27 +419,35 @@ function fakeTargetHandle(
       editable: entry.editable ?? true,
     },
     editor: {
-      getSnapshot: () => ({
-        ok: true as const,
-        snapshot: {
-          text: entry.text,
-          selections: [{ anchor: entry.sel ?? 0, head: entry.sel ?? 0 }],
-          version: 1,
-          revision: 7,
+      getSnapshot: () =>
+        entry.snapshotFail === true
+          ? { ok: false as const, reason: 'view-disposed' as const }
+          : {
+              ok: true as const,
+              snapshot: {
+                text: entry.text,
+                selections: [{ anchor: entry.sel ?? 0, head: entry.sel ?? 0 }],
+                version: 1,
+                revision: 7,
+              },
+            },
+        applyEdits: (request: {
+          revision: number
+          changes: unknown
+          selection?: unknown
+          history?: string
+        }) => {
+          applyEditsCalls.push({ instanceId: entry.id, request })
+          return Promise.resolve({ ok: true as const, credential: { opId: 'test-op', version: 1 } })
         },
-      }),
-      applyEdits: (request: {
-        revision: number
-        changes: unknown
-        selection?: unknown
-        history?: string
-      }) => {
-        applyEditsCalls.push({ instanceId: entry.id, request })
-        return Promise.resolve({ ok: true as const, credential: {} })
+      setSelection: () => true,
+      reveal: (offset: number) => {
+        revealCalls.push(offset)
+        return true
       },
     } as AddonViewHandle['editor'],
   }
-  return { handle, applyEditsCalls }
+  return { handle, applyEditsCalls, revealCalls }
 }
 
 /** commands 面替身（可选拒绝集合模拟注册失败） */
@@ -594,22 +612,29 @@ describe('视图命令执行流：目标句柄视图单事务派发', () => {
     }
   })
 
-  it('目标为嵌入实例句柄（扩展槽未装配、登记面外）→ 无动作：不派发不走句柄回退，不误写主文档', async () => {
+  it('目标为嵌入实例句柄（登记面外）→ 主视图零事务，经句柄路径提交嵌入目标（#34 开放）', async () => {
     // 嵌入实例无本组件扩展实例（平台装配契约），登记表解析不到视图；
-    // 句柄路径仅服务主正文句柄，嵌入目标不向主文档兜底
+    // #34 起句柄路径对嵌入句柄开放——applyEdits 提交到嵌入实例自身
+    //（句柄即命令语义的目标文档，平台保证），不向主文档兜底
     const registry = createEditorViewRegistry((view) => (view as unknown as { id: string }).id)
     const { view: main, specs } = fakeCmdView({ doc: '中文a', anchor: 0 })
     registry.register(main)
-    const { handle: embedHandle, applyEditsCalls } = fakeTargetHandle({
+    const { handle: embedHandle, applyEditsCalls, revealCalls } = fakeTargetHandle({
       id: 'embed:host-1',
       uri: 'file:///v/free/b.md',
       text: '中文b',
+      sel: 3,
     })
-    const h = harness({ views: registry })
+    const h = harness({ views: registry, queryOf: () => q('中文b') })
     h.handlerOf(FORMAT_ARTICLE_COMMAND_ID)!(embedHandle)
     await flush()
-    expect(specs).toHaveLength(0)
-    expect(applyEditsCalls).toHaveLength(0)
+    expect(specs).toHaveLength(0) // 主视图零事务——不误写主文档
+    expect(applyEditsCalls).toHaveLength(1)
+    expect(applyEditsCalls[0]!.instanceId).toBe('embed:host-1')
+    expect(applyEditsCalls[0]!.request.history).toBe('atomic')
+    // 滚动定位落在选区光标侧（视图路径 scrollIntoView 的句柄面等价）
+    const sel = applyEditsCalls[0]!.request.selection as { anchor: number; head: number }
+    expect(revealCalls).toEqual([sel.head])
   })
 
   it('执行链路异常（gate.refresh reject）→ .catch 吞掉：命令可重试，不产生 unhandledrejection（审查 C-P3-2）', async () => {
@@ -672,7 +697,7 @@ describe('视图命令执行流：目标句柄视图单事务派发', () => {
   })
 })
 
-describe('句柄路径：登记面外的主正文句柄快照提交', () => {
+describe('句柄路径：登记面外句柄快照提交（#34 起含嵌入实例）', () => {
   it('登记表无视图（如命令在视图构造前触发）→ 目标句柄快照 → applyEdits 单请求（atomic）', async () => {
     const { handle, applyEditsCalls } = fakeTargetHandle({
       id: 'main',
@@ -692,6 +717,97 @@ describe('句柄路径：登记面外的主正文句柄快照提交', () => {
     const payload = JSON.stringify(applyEditsCalls[0]!.request.changes)
     expect(payload).toContain('中文 a')
     expect(payload).toContain('中文 b')
+  })
+
+  it('嵌入句柄快照提交后 reveal 落选区光标侧；无显式选区命令（delete-blank-lines）reveal 取首变更起点', async () => {
+    const { handle: withSel, applyEditsCalls: withSelCalls, revealCalls: withSelReveals } =
+      fakeTargetHandle({ id: 'embed:host-1', uri: 'file:///v/free/b.md', text: '中文b', sel: 3 })
+    const h1 = harness({ queryOf: () => q('中文b') })
+    h1.handlerOf(FORMAT_SELECTION_COMMAND_ID)!(withSel)
+    await flush()
+    expect(withSelCalls).toHaveLength(1)
+    const sel = withSelCalls[0]!.request.selection as { head: number }
+    expect(withSelReveals).toEqual([sel.head])
+
+    // delete-blank-lines 计划不带显式选区（选区随变更映射）——reveal 落
+    // 首个变更起点（'a\n\n\nb' 连续空行收敛删第二空行 → 行 3 起点 offset 3）
+    const { handle: noSel, applyEditsCalls: noSelCalls, revealCalls: noSelReveals } = fakeTargetHandle({
+      id: 'embed:host-2',
+      uri: 'file:///v/free/c.md',
+      text: 'a\n\n\nb',
+    })
+    const h2 = harness({})
+    h2.handlerOf(DELETE_BLANK_LINES_COMMAND_ID)!(noSel)
+    await flush()
+    expect(noSelCalls).toHaveLength(1)
+    const changes = noSelCalls[0]!.request.changes as Array<{ offset: number; length: number; text: string }>
+    expect(changes[0]).toMatchObject({ offset: 3, length: 1, text: '' })
+    expect(noSelReveals).toEqual([changes[0]!.offset])
+  })
+
+  it('只读句柄（hover 只读 / reading 态，editable=false）→ 无动作：不上请求不滚动', async () => {
+    for (const id of ['hover:occ-1', 'main'] as const) {
+      const { handle, applyEditsCalls, revealCalls } = fakeTargetHandle({
+        id,
+        uri: 'file:///v/free/b.md',
+        text: '中文b',
+        editable: false,
+      })
+      const h = harness({ queryOf: () => q('中文b') })
+      h.handlerOf(FORMAT_ARTICLE_COMMAND_ID)!(handle)
+      await flush()
+      expect(applyEditsCalls).toHaveLength(0)
+      expect(revealCalls).toHaveLength(0)
+    }
+  })
+
+  it('快照失败（view-disposed，实例销毁竞态）→ 无动作不抛错', async () => {
+    const { handle, applyEditsCalls, revealCalls } = fakeTargetHandle({
+      id: 'embed:host-1',
+      uri: 'file:///v/free/b.md',
+      text: '中文b',
+      snapshotFail: true,
+    })
+    const h = harness({ queryOf: () => q('中文b') })
+    expect(() => h.handlerOf(FORMAT_ARTICLE_COMMAND_ID)!(handle)).not.toThrow()
+    await flush()
+    expect(applyEditsCalls).toHaveLength(0)
+    expect(revealCalls).toHaveLength(0)
+  })
+
+  it('句柄路径 applyEdits promise reject（平台违约）→ 内层 .catch 吞掉：不产生 unhandledrejection（评审 F-2）', async () => {
+    const rejections: unknown[] = []
+    const onUnhandled = (reason: unknown): void => {
+      rejections.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const handle: AddonViewHandle = {
+        info: {
+          instanceId: 'embed:host-1',
+          targetDocUri: 'file:///v/free/b.md',
+          mode: 'live',
+          viewType: 'embed',
+          editable: true,
+        },
+        editor: {
+          getSnapshot: () => ({
+            ok: true as const,
+            snapshot: { text: '中文b', selections: [{ anchor: 3, head: 3 }], version: 1, revision: 7 },
+          }),
+          applyEdits: () => Promise.reject(new Error('platform violated: rejected promise')),
+          setSelection: () => true,
+          reveal: () => true,
+        } as AddonViewHandle['editor'],
+      }
+      const h = harness({ queryOf: () => q('中文b') })
+      h.handlerOf(FORMAT_ARTICLE_COMMAND_ID)!(handle)
+      await flush()
+      await flush()
+      expect(rejections).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
   })
 
   it('句柄目标排除命中：不写回 + 通知', async () => {

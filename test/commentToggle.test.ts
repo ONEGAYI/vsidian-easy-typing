@@ -406,34 +406,94 @@ describe('命令 handler（目标句柄路由 + 守卫 + 单事务派发）', ()
     return { view, dispatched }
   }
 
-  /** 平台命令回调的目标视图句柄替身（info 形状对齐 AddonViewInfo） */
-  function fakeHandle(instanceId: string, viewType: 'main' | 'embed' = 'main'): AddonViewHandle {
-    return {
+  /**
+   * 平台命令回调的目标视图句柄替身（info 形状对齐 AddonViewInfo）。携带
+   * 句柄路径观测面：applyEdits 请求 / reveal 落点 / 快照失败形态
+   *（editable=false 时快照选区按平台契约给空数组——只读视图无选区；
+   *  selectionRange 支持区间选区形态，缺省折叠光标）。
+   */
+  function fakeHandle(entry: {
+    instanceId: string
+    viewType?: 'main' | 'embed' | 'hover'
+    editable?: boolean
+    text?: string
+    cursor?: number
+    selectionRange?: { anchor: number; head: number }
+    snapshotFail?: boolean
+  }): {
+    handle: AddonViewHandle
+    applyEditsCalls: Array<{
+      request: { revision: number; changes: unknown; selection?: unknown; history?: string }
+    }>
+    revealCalls: number[]
+  } {
+    const applyEditsCalls: Array<{
+      request: { revision: number; changes: unknown; selection?: unknown; history?: string }
+    }> = []
+    const revealCalls: number[] = []
+    const editable = entry.editable ?? true
+    const selection =
+      entry.selectionRange ?? { anchor: entry.cursor ?? 0, head: entry.cursor ?? 0 }
+    const handle: AddonViewHandle = {
       info: {
-        instanceId,
-        targetDocUri: `doc:${instanceId}`,
-        mode: 'live',
-        viewType,
-        editable: true,
+        instanceId: entry.instanceId,
+        targetDocUri: `doc:${entry.instanceId}`,
+        mode: editable ? 'live' : 'reading',
+        viewType: entry.viewType ?? 'main',
+        editable,
       },
-      editor: {} as AddonViewHandle['editor'],
+      editor: {
+        getSnapshot: () =>
+          entry.snapshotFail === true
+            ? { ok: false as const, reason: 'view-disposed' as const }
+            : {
+                ok: true as const,
+                snapshot: {
+                  text: entry.text ?? '',
+                  selections: editable ? [selection] : [],
+                  version: 1,
+                  revision: 5,
+                },
+              },
+        applyEdits: (request: {
+          revision: number
+          changes: unknown
+          selection?: unknown
+          history?: string
+        }) => {
+          applyEditsCalls.push({ request })
+          return Promise.resolve({ ok: true as const, credential: { opId: 'test-op', version: 1 } })
+        },
+        setSelection: () => true,
+        reveal: (offset: number) => {
+          revealCalls.push(offset)
+          return true
+        },
+      } as AddonViewHandle['editor'],
     }
+    return { handle, applyEditsCalls, revealCalls }
   }
 
   /** 登记表替身：登记视图恒映射实例 ID 'main'（扩展槽只挂主正文）；
-   *  语法查询按视图文档同文构造（#5 接线形态） */
-  function setup(view: EditorView | null) {
+   *  语法查询按句柄路径快照同文构造（#5 接线形态——doc 缺省用登记视图
+   *  文档，无视图且未指定 doc 时返回 null 查询） */
+  function setup(view: EditorView | null, options?: { doc?: string }) {
     const registry = createEditorViewRegistry((v) => (v as unknown as { id: string }).id)
     if (view !== null) registry.register(view)
+    const fallbackDoc = view !== null ? view.state.doc.toString() : null
     return createToggleCommentCommandHandler({
       views: registry,
-      queryOf: () => (view !== null ? makeSyntaxFake(view.state.doc.toString()).query : null),
+      cm6: { state: { EditorState } },
+      queryOf: () => {
+        const doc = options?.doc ?? fallbackDoc
+        return doc !== null ? makeSyntaxFake(doc).query : null
+      },
     })
   }
 
   it('命中：单事务派发（changes + selection + userEvent input.comment）', () => {
     const { view, dispatched } = fakeCmdView('hello', 2)
-    setup(view)(fakeHandle('main'))
+    setup(view)(fakeHandle({ instanceId: 'main' }).handle)
     expect(dispatched).toHaveLength(1)
     expect(dispatched[0]!.changes).toEqual([{ from: 2, to: 2, insert: '%%  %%' }])
     expect(dispatched[0]!.selection).toEqual({ anchor: 5, head: 5 })
@@ -442,7 +502,7 @@ describe('命令 handler（目标句柄路由 + 守卫 + 单事务派发）', ()
 
   it('代码块内按语言派发（python 行注释，单事务单变更）', () => {
     const { view, dispatched } = fakeCmdView('```python\nx = 1\n```', 12)
-    setup(view)(fakeHandle('main'))
+    setup(view)(fakeHandle({ instanceId: 'main' }).handle)
     expect(dispatched).toHaveLength(1)
     expect(dispatched[0]!.changes).toEqual([{ from: 10, to: 10, insert: '# ' }])
     expect(dispatched[0]!.userEvent).toBe('input.comment')
@@ -453,14 +513,14 @@ describe('命令 handler（目标句柄路由 + 守卫 + 单事务派发）', ()
     noTarget(null)
     for (const overrides of [{ compositionStarted: true }, { readOnly: true }] as const) {
       const { view, dispatched } = fakeCmdView('hello', 2, 2, overrides)
-      setup(view)(fakeHandle('main'))
+      setup(view)(fakeHandle({ instanceId: 'main' }).handle)
       expect(dispatched).toHaveLength(0)
     }
   })
 
   it('未知语言 → 计划为 null，不派发（上游 return false 口径）', () => {
     const { view, dispatched } = fakeCmdView('```xyz\ncode\n```', 10)
-    setup(view)(fakeHandle('main'))
+    setup(view)(fakeHandle({ instanceId: 'main' }).handle)
     expect(dispatched).toHaveLength(0)
   })
 
@@ -470,18 +530,147 @@ describe('命令 handler（目标句柄路由 + 守卫 + 单事务派发）', ()
     registry.register(view)
     const handler = createToggleCommentCommandHandler({
       views: registry,
+      cm6: { state: { EditorState } },
       queryOf: () => makeRejectingQuery(),
     })
-    handler(fakeHandle('main'))
+    handler(fakeHandle({ instanceId: 'main' }).handle)
     expect(dispatched).toHaveLength(0)
   })
 
-  it('目标为嵌入实例句柄（扩展槽未装配、登记面外）→ 无动作，不误写主文档', () => {
-    // 嵌入实例无本组件扩展实例（平台装配契约），登记表解析不到视图即
-    // 无执行载体；句柄目标保持嵌入文档语义，不向主文档兜底派发
+  it('目标为嵌入实例句柄（登记面外）→ 主视图零派发，经句柄路径提交嵌入目标（#34 开放）', async () => {
+    // 嵌入实例无本组件扩展实例（平台装配契约），登记表解析不到视图；
+    // #34 起走句柄路径：快照 → 临时 EditorState 决策（select-block 先例）
+    // → applyEdits 单请求 + reveal
     const { view: main, dispatched } = fakeCmdView('hello', 2)
-    setup(main)(fakeHandle('embed:host-1', 'embed'))
-    expect(dispatched).toHaveLength(0)
+    const { handle, applyEditsCalls, revealCalls } = fakeHandle({
+      instanceId: 'embed:host-1',
+      viewType: 'embed',
+      text: 'hello',
+      cursor: 2,
+    })
+    setup(main, { doc: 'hello' })(handle)
+    await flushMicrotasks()
+    expect(dispatched).toHaveLength(0) // 主视图零事务——不误写主文档
+    expect(applyEditsCalls).toHaveLength(1)
+    expect(applyEditsCalls[0]!.request.changes).toEqual([{ offset: 2, length: 0, text: '%%  %%' }])
+    expect(applyEditsCalls[0]!.request.selection).toEqual({ anchor: 5, head: 5 })
+    expect(applyEditsCalls[0]!.request.history).toBe('atomic')
+    expect(revealCalls).toEqual([5])
+  })
+
+  it('嵌入句柄 × 代码块语言感知：python 围栏内按 # 行注释提交（句柄路径与视图路径同决策）', async () => {
+    const doc = '```python\nx = 1\n```'
+    const { handle, applyEditsCalls } = fakeHandle({
+      instanceId: 'embed:host-2',
+      viewType: 'embed',
+      text: doc,
+      cursor: 12,
+    })
+    setup(null, { doc })(handle)
+    await flushMicrotasks()
+    expect(applyEditsCalls).toHaveLength(1)
+    expect(applyEditsCalls[0]!.request.changes).toEqual([{ offset: 10, length: 0, text: '# ' }])
+  })
+
+  it('句柄路径只读句柄（hover 只读 / reading 态）→ 无动作不上请求', async () => {
+    for (const viewType of ['hover', 'main'] as const) {
+      const { handle, applyEditsCalls, revealCalls } = fakeHandle({
+        instanceId: viewType === 'hover' ? 'hover:occ-1' : 'main',
+        viewType,
+        editable: false,
+        text: 'hello',
+        cursor: 2,
+      })
+      setup(null, { doc: 'hello' })(handle)
+      await flushMicrotasks()
+      expect(applyEditsCalls).toHaveLength(0)
+      expect(revealCalls).toHaveLength(0)
+    }
+  })
+
+  it('句柄路径快照失败（view-disposed）→ 无动作不抛错', async () => {
+    const { handle, applyEditsCalls } = fakeHandle({
+      instanceId: 'embed:host-1',
+      viewType: 'embed',
+      text: 'hello',
+      cursor: 2,
+      snapshotFail: true,
+    })
+    expect(() => setup(null, { doc: 'hello' })(handle)).not.toThrow()
+    await flushMicrotasks()
+    expect(applyEditsCalls).toHaveLength(0)
+  })
+
+  it('句柄路径语法查询缺席 → 无动作（#5 不接管口径）', async () => {
+    const { handle, applyEditsCalls } = fakeHandle({
+      instanceId: 'embed:host-1',
+      viewType: 'embed',
+      text: 'hello',
+      cursor: 2,
+    })
+    setup(null)(handle) // 无视图且未指定 doc → queryOf null
+    await flushMicrotasks()
+    expect(applyEditsCalls).toHaveLength(0)
+  })
+
+  it('句柄路径未知语言（计划 null）与代码块内全空白行区间选区（空变更）→ 不上请求', async () => {
+    // 未知语言：plan null（上游 return false）；js 围栏内两空行的区间选区
+    //（6..7 只跨两空行——终点若落在关栏行行首，lineAt 口径把关栏行计入
+    // 批量并写 // 前缀，那是上游行为不是空变更）：批量分支逐行计划全为
+    // null（空白行无光标位跳过）→ changes 空、无选区落点（上游无操作
+    // 形态）——两者都不产生 applyEdits 请求
+    const unknownLang = '```xyz\ncode\n```'
+    const { handle: h1, applyEditsCalls: c1 } = fakeHandle({
+      instanceId: 'embed:h-a', viewType: 'embed', text: unknownLang, cursor: 10,
+    })
+    setup(null, { doc: unknownLang })(h1)
+    await flushMicrotasks()
+    expect(c1).toHaveLength(0)
+
+    const blankInFence = '```js\n\n\n```'
+    const { handle: h2, applyEditsCalls: c2 } = fakeHandle({
+      instanceId: 'embed:h-b',
+      viewType: 'embed',
+      text: blankInFence,
+      selectionRange: { anchor: 6, head: 7 },
+    })
+    setup(null, { doc: blankInFence })(h2)
+    await flushMicrotasks()
+    expect(c2).toHaveLength(0)
+  })
+
+  it('句柄路径 applyEdits promise reject（平台违约）→ .catch 吞掉：不产生 unhandledrejection（评审 F-2）', async () => {
+    const rejections: unknown[] = []
+    const onUnhandled = (reason: unknown): void => {
+      rejections.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const handle: AddonViewHandle = {
+        info: {
+          instanceId: 'embed:host-1',
+          targetDocUri: 'doc:embed:host-1',
+          mode: 'live',
+          viewType: 'embed',
+          editable: true,
+        },
+        editor: {
+          getSnapshot: () => ({
+            ok: true as const,
+            snapshot: { text: 'hello', selections: [{ anchor: 2, head: 2 }], version: 1, revision: 5 },
+          }),
+          applyEdits: () => Promise.reject(new Error('platform violated: rejected promise')),
+          setSelection: () => true,
+          reveal: () => true,
+        } as AddonViewHandle['editor'],
+      }
+      setup(null, { doc: 'hello' })(handle)
+      await flushMicrotasks()
+      await flushMicrotasks()
+      expect(rejections).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
   })
 
   it('平台违约传 undefined（旧签名宿主零参调用形态）→ 按无活动视图静默无动作不抛错', async () => {
@@ -490,6 +679,10 @@ describe('命令 handler（目标句柄路由 + 守卫 + 单事务派发）', ()
     const { view, dispatched } = fakeCmdView('hello', 2)
     const handler = setup(view)
     expect(() => handler(undefined as unknown as AddonViewHandle | null)).not.toThrow()
+    await flushMicrotasks()
     expect(dispatched).toHaveLength(0)
   })
 })
+
+/** 微任务冲刷（句柄路径 applyEdits().then(reveal) 链落定） */
+const flushMicrotasks = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))

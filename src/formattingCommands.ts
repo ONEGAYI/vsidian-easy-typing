@@ -541,12 +541,13 @@ function dispatchPlan(
 
 /** 视图命令执行流（target = 平台命令回调携带的目标视图句柄，PR #432）：
  *  刷新设置 → 视图路径（句柄实例 ID 经登记表解析本页 CM6 视图，单事务
- *  派发）→ 句柄路径（登记面外的主正文句柄快照 + applyEdits 单请求）。
+ *  派发）→ 句柄路径（登记面外目标——主正文命令面板回退或嵌入实例，快照
+ *  + applyEdits 单请求 + reveal 滚动定位，#34 起对嵌入句柄开放）。
  *  语法查询经句柄 instanceId 构造（#5）：查询缺席时需要行分类的 planner
  *  返回 null 不执行（delete-blank-lines / convert-code-block 为纯正则
- *  planner 不受影响）。无活动视图（target null）或嵌入/悬停句柄（扩展
- *  槽未装配、无执行载体）静默无动作——句柄即命令语义的目标文档，不向
- *  主文档兜底误写。 */
+ *  planner 不受影响）。无活动视图（target null）或只读句柄（hover 只读 /
+ *  reading 态主正文，editable=false）静默无动作——句柄即命令语义的目标
+ *  文档，不向主文档兜底误写。 */
 function runViewCommand(
   deps: RegisterFormattingCommandsDeps,
   planner: (
@@ -574,9 +575,12 @@ function runViewCommand(
           if (plan !== null) dispatchPlan(view, plan, userEvent)
           return
         }
-        // 句柄路径：仅主正文句柄（原命令面板 main 回退）；嵌入/悬停目标不执行
-        if (target.info.viewType !== 'main' || !target.info.editable) {
-          debugLog('formatting command skipped: target view not registered (embed/hover) — no fallback to main')
+        // 句柄路径：登记面外目标。主正文句柄 = 命令面板入口回退（视图构造
+        // 前）；嵌入句柄 = 平台句柄面支持安全提交（嵌入实例在平台视图注册
+        // 表与 main 同表分派，applyEdits atomic 撤销语义一致——#34 泛化，
+        // 原 main 门拆除）。只读目标（hover / reading 态）无执行权。
+        if (!target.info.editable) {
+          debugLog('formatting command skipped: read-only target (hover/reading) — no fallback to main')
           return
         }
         if (isDocUriExcluded(target.info.targetDocUri, engine.excludeFiles)) {
@@ -599,7 +603,22 @@ function runViewCommand(
             history: 'atomic',
           })
           .then((outcome) => {
-            if (!outcome.ok) debugLog('formatting command applyEdits rejected:', outcome.reason)
+            if (!outcome.ok) {
+              debugLog('formatting command applyEdits rejected:', outcome.reason)
+              return
+            }
+            // 滚动定位（视图路径 scrollIntoView 的句柄面等价——reveal 零
+            // 文本变更只滚动不移动光标）：显式选区落点取光标侧，无选区
+            // 命令（delete-blank-lines）取首个变更起点；拒绝（false）静默
+            target.editor.reveal(
+              plan.selection !== undefined ? plan.selection.head : plan.changes[0]!.offset,
+            )
+          })
+          .catch(() => {
+            // 内层链 void 隔离于外层 .catch（reject 传不到外层）——#34 评审
+            // F-2：平台违约形态（promise reject / reveal 回调抛错）就地吞掉
+            // 留痕，不成为页面 unhandledrejection
+            debugLog('formatting command applyEdits pipeline failed — command dropped, retryable')
           })
       })
       .catch(() => {

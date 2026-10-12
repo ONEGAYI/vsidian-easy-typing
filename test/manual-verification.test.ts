@@ -38,10 +38,12 @@ const DOMAIN_SECTION_PREFIXES: readonly string[] = [
   '## 十七、界面语言 i18n 完整化（',
   '## 十八、行内代码/公式/链接间距三档（',
   '## 十九、代码块编辑增强 BetterCodeEdit（',
+  // #34 嵌入目标命令执行面（2026-10 起本票验证域）
+  '## 二十一、嵌入目标命令执行面（',
 ]
 
 describe('人工验证清单结构契约（#21）', () => {
-  it('功能域节全覆盖（十九节，含 #28/#19 占位节、#4 间距节与 #10 代码块节）', () => {
+  it('功能域节全覆盖（含 #28/#19 占位节、#4 间距节、#10 代码块节与 #34 嵌入目标节）', () => {
     const doc = readDoc()
     for (const prefix of DOMAIN_SECTION_PREFIXES) {
       expect(doc.includes(prefix), `缺少功能域节：${prefix}…`).toBe(true)
