@@ -4,7 +4,7 @@
 
 ## 验收口径
 
-- 单测矩阵全绿：`test/lineFormatter.test.ts` 72 场景（语言对 × 前缀词典 × 大写开关 × 行内分区 × 光标语义）期望值经**上游差异化验证**固定，另有 90+ 单元/管线/接入用例。
+- 单测矩阵全绿：`test/lineFormatter.test.ts` 88 场景（#26 落地 72 场景 + #4 验收补格 16 场景：行内间距三档 × code/formula/wikilink/mdlink、链接智能空格子分支、非 text 分区直接相邻；语言对 × 前缀词典 × 大写开关 × 行内分区 × 光标语义 × 间距三档）期望值经**上游差异化验证**固定，另有 90+ 单元/管线/接入用例。
 - 集成级承载（真实 webview 归 #21）：`test/autoFormatIntercept.test.ts` 以真实 `AddonInputContext` 形状驱动注册回调 → 计划断言（`06-autoformat` 族 onInput 全链）。
 - `npm run compile` 通过；全部测试绿（554 基线不回归）。
 - `src/formatting/` 零平台依赖（仅模块内相对导入与 logging）。

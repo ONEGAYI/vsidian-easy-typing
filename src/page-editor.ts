@@ -11,6 +11,9 @@ import { buildToggleCommentCommandDefinition, createToggleCommentCommandHandler 
 import { createCollapseEnterGate, createFoldEnterCommand } from './foldEnter'
 import { createNewLineBelowCommand, createNewLineBelowGate } from './newLineBelow'
 import { createTaboutCommand } from './taboutIntercept'
+import { createCodeBlockModACommand } from './codeBlockModA'
+import { createCodeBlockPasteHandler } from './codeBlockPaste'
+import { createCodeBlockBackspaceCommand } from './codeBlockBackspace'
 import { pickMessages } from './i18n'
 import { debugLog, setDebugEnabled } from './logging'
 import {
@@ -55,7 +58,7 @@ const ADDON_ID = 'ONEGAYI.vsidian-easy-typing'
  */
 function createBooleanSettingGate(
   channel: VsidianAddonPageSdk['channel'],
-  key: 'tabout' | 'betterBackspace' | 'smartPaste',
+  key: 'tabout' | 'betterBackspace' | 'smartPaste' | 'betterCodeEdit',
   initial: boolean,
 ): { enabled(): boolean; refresh(): Promise<void> } {
   let current = initial
@@ -107,9 +110,10 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   }
   void refreshDebugGate()
 
-  // 行为开关门控族（审查 B-F5 修复）：tabout / betterBackspace / smartPaste
-  // 三键运行时门（上游 settings.Tabout / BetterBackspace / SmartPaste，
-  // 三键出厂默认均开）。形态对齐 #11/#18「恒注册 + 设置门控透传」——
+  // 行为开关门控族（审查 B-F5 修复）：tabout / betterBackspace / smartPaste /
+  // betterCodeEdit 四键运行时门（上游 settings.Tabout / BetterBackspace /
+  // SmartPaste / BetterCodeEdit，四键出厂默认均开；betterCodeEdit 随 #10
+  // 接入消费）。形态对齐 #11/#18「恒注册 + 设置门控透传」——
   // 关闭时行为与不注册本组件扩展等价，运行时开关即时生效。装载拉取 +
   // 焦点回归刷新（#18 形态：Tab/Backspace 是高频透传键，不挂按键级刷新
   // 避免每键一次通道请求；设置页改开关后回到编辑器即按新值判定）。
@@ -117,6 +121,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
     tabout: createBooleanSettingGate(sdk.channel, 'tabout', true),
     betterBackspace: createBooleanSettingGate(sdk.channel, 'betterBackspace', true),
     smartPaste: createBooleanSettingGate(sdk.channel, 'smartPaste', true),
+    betterCodeEdit: createBooleanSettingGate(sdk.channel, 'betterCodeEdit', true),
   }
   const refreshBehaviorGates = (): void => {
     for (const gate of Object.values(behaviorGates)) void gate.refresh()
@@ -275,6 +280,49 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   }
 
   // ============================================================
+  // 工单 #10 增量块：BetterCodeEdit——代码块编辑增强三项接入。
+  // 独立成块（不动上方既有装配），降低与并行工单的合并冲突。六项子能力
+  // 的内核核对结论（三项跳过：块内 Tab 缩进=内核 #120 整行制、Enter 保持
+  // 缩进=CM6 defaultKeymap、行内代码 Tab 跳出=内核 #125 两步越出）与逐项
+  // 选层理由、实施决策点见 docs/specs/better-code-edit.md。三项接入的设置
+  // 门共享 betterCodeEdit 键（上游 BetterCodeEdit 总开关，上游六项同样共
+  // 享无逐项开关；**不是** #11 的 enhanceModA——上游两开关独立）。
+  // ============================================================
+
+  // 缩进代码块删除优化（上游 cm_extensions.ts:279-324 改 keymap 拦截）：
+  // **抢先层**（Prec.high Backspace），注册序在 #8 BetterBackspace 之后
+  //（同层按装载顺序仲裁，#8 空项场景先试）——接管面仅 indent ≠ 0 块的两
+  // 类边界删除（边界列删换行合并 / 选区跨界裁剪保留缩进列），与 #8 的空
+  // 列表/引用项、平台删空对/退格清层场景互斥；顶格块完全不接管。
+  sdk.registerExtension(
+    cm6.state.Prec.high(
+      cm6.view.keymap.of([
+        {
+          key: 'Backspace',
+          run: createCodeBlockBackspaceCommand({
+            isEnabled: () => behaviorGates.betterCodeEdit.enabled(),
+            queryOf: queryOfView,
+          }),
+        },
+      ]),
+    ),
+  )
+
+  // Mod+A 代码块三态 Command（内容 → 整块 → 落穿全文全选；上游
+  // handleModA 链尾结构）：经 #11 keymap **合成一条链**接入（见下方 #11
+  // 块 run 回调——#11 planModASelection 返回 null 后接本链，仍不接管才
+  // 透传并顺带刷新设置；避免透传按键 refresh hook 被中间 keymap 打断）。
+  // #11 门（enhanceModA）关闭时 modARun 恒 false，本链仍独立生效——上
+  // 游两开关独立的语义由合成链 OR 形态直接承载。
+  const codeBlockModARun = createCodeBlockModACommand({
+    isEnabled: () => behaviorGates.betterCodeEdit.enabled(),
+    queryOf: queryOfView,
+  })
+
+  // （块内粘贴缩进对齐的 domEventHandlers 注册在 #12 增量块内——须共享
+  // #12 的 pasteMarker 单例且执行序在 SmartPaste 之前，见下方插入处。）
+
+  // ============================================================
   // 工单 #11 增量块：EnhanceModA 渐进选择 + 「选择当前块」命令。
   // 独立成块（不动上方既有装配），降低与并行工单的合并冲突。
   // ============================================================
@@ -299,7 +347,10 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
         {
           key: 'Mod-a',
           run: (view) => {
-            const handled = modARun(view)
+            // #10 增量合成链：#11 状态机（文本/引用/列表档位，围栏内显式
+            // 透传）返回 false 后接 BetterCodeEdit 代码块三态（上游 handleModA
+            // 链尾同构）；仍不接管才透传平台全选
+            const handled = modARun(view) || codeBlockModARun(view)
             // 透传按键顺带拉新设置（fire-and-forget，下一次按键生效——
             // 关闭→开启运行时翻转的兜底通道，主通道是焦点回归刷新）
             if (!handled) void modAGate.refresh()
@@ -344,6 +395,23 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
   //（上游 settings.SmartPaste）经上方 behaviorGates 接线（isSmartPasteEnabled
   // 注入位——关闭 = 不续接仍透传粘贴，审查 B-F5 修复）。
   const pasteMarker = createPasteMarker()
+  // #10 增量（BetterCodeEdit 块内粘贴缩进对齐，插在 SmartPaste 注册之前）：
+  // 代码块判定分支先于 SmartPaste（对齐上游 cm_extensions.ts 分支顺序
+  // 112 → 168——domEventHandlers 按扩展序执行，先注册先执行）：多行纯文
+  // 本粘贴进代码块时剥共同缩进 + base_indent 重排，命中即接管，SmartPaste
+  // 不再看（代码块内行尾粘贴不被列表/引用续接抢走）；单行/选区替换/块外
+  // 透传。普通扩展槽（落穿层）——平台富文本/图片粘贴先接管是正确让位序
+  //（#12 同款选型，docs/specs/better-code-edit.md「平台映射」节）。
+  sdk.registerExtension(
+    cm6.view.EditorView.domEventHandlers({
+      paste: createCodeBlockPasteHandler({
+        marker: pasteMarker,
+        editableFacet: cm6.view.EditorView.editable,
+        queryOf: queryOfView,
+        isBetterCodeEditEnabled: () => behaviorGates.betterCodeEdit.enabled(),
+      }),
+    }),
+  )
   sdk.registerExtension(
     cm6.view.EditorView.domEventHandlers({
       paste: createSmartPastePasteHandler({

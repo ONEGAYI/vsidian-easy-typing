@@ -1,13 +1,16 @@
-// 行级格式化矩阵（工单 #26）：formatLine 全场景回归——期望值经**上游差异化
-// 验证**固定（上游 core.ts formatLine 以伪 syntaxTree 注入本移植切出的
-// code/formula 区段，与 src/formatting/lineFormatter.ts 逐场景比对 72/72
-// 等价后回填；复跑方法见 docs/specs/auto-format.md「上游对照」节）。
+// 行级格式化矩阵（工单 #26；#4 补格收口至 88 场景）：formatLine 全场景
+// 回归——期望值经**上游差异化验证**固定（上游 core.ts formatLine 以伪
+// syntaxTree 注入本移植切出的 code/formula 区段，与
+// src/formatting/lineFormatter.ts 逐场景比对等价后回填；复跑方法见
+// docs/specs/auto-format.md「上游对照」节）。
 //
 // 矩阵维度：语言对（默认三对 + 日/韩/俄/CJK 元类/自定义类/未知类/空表）×
 // 前缀词典（字面词精确/前缀暂缓/跨脚本扩展/词典过期补插/正则条目）× 大写
 // 开关（句首形态族 + 句中标点族 + 守卫）× 行内分区（代码/公式/链接/
 // $qquad$ 计为文本空隔/软空格符号/<br>/转义 $）× 光标位置语义（键入
-// 区间/越界回退）。
+// 区间/越界回退）× 行内间距三档（none/soft/strict × code/formula/
+// wikilink/mdlink，含 strict 补足 soft 状态、链接智能空格子分支与非
+// text 分区直接相邻——#4 验收矩阵）。
 import { describe, expect, it } from 'vitest'
 import { formatLine, type LineFormatSettings, type LineSyntaxContext } from '../src/formatting/lineFormatter'
 import { SpaceState } from '../src/formatting/inlineParts'
@@ -211,6 +214,52 @@ const MATRIX: MatrixEntry[] = [
       { name: "code-mode-strict", line: "中文`a`", curCh: 5, prevCh: 4,
         settings: {"InlineCodeSpaceMode":2},
         expected: {"line":"中文 `a`","cursorCh":6,"changes":[{"text":"中文 ","begin":0,"end":2,"origin":"中文"}]} },
+      // ── #4 验收矩阵：行内间距三档 × code/formula/wikilink/mdlink（期望值
+      // 经上游差异化验证 16/16 等价回填，out/test/diff4 复跑）──
+      { name: "formula-mode-none", line: "中文$x$中文", curCh: 7, prevCh: 6,
+        settings: {"InlineFormulaSpaceMode":0},
+        expected: {"line":"中文$x$中文","cursorCh":7,"changes":[]} },
+      { name: "formula-mode-strict", line: "中文，$x$中文", curCh: 8, prevCh: 7,
+        settings: {"InlineFormulaSpaceMode":2},
+        expected: {"line":"中文， $x$ 中文","cursorCh":10,"changes":[{"text":"中文， ","begin":0,"end":3,"origin":"中文，"},{"text":" 中文","begin":6,"end":8,"origin":"中文"}]} },
+      { name: "formula-soft-end-punct-noop", line: "中文，$x$", curCh: 6, prevCh: 5,
+        expected: {"line":"中文，$x$","cursorCh":6,"changes":[]} },
+      { name: "wikilink-mode-none-nonsmart", line: "中文[[a]]中文", curCh: 8, prevCh: 7,
+        settings: {"InlineLinkSmartSpace":false,"InlineLinkSpaceMode":0},
+        expected: {"line":"中文[[a]]中文","cursorCh":8,"changes":[]} },
+      { name: "wikilink-mode-none-smart", line: "中文[[a]]中文", curCh: 8, prevCh: 7,
+        settings: {"InlineLinkSpaceMode":0},
+        expected: {"line":"中文 [[a]] 中文","cursorCh":10,"changes":[{"text":"中文 ","begin":0,"end":2,"origin":"中文"},{"text":" 中文","begin":7,"end":9,"origin":"中文"}]} },
+      { name: "wikilink-nonsmart-soft", line: "中文[[a]]中文", curCh: 8, prevCh: 7,
+        settings: {"InlineLinkSmartSpace":false},
+        expected: {"line":"中文 [[a]] 中文","cursorCh":10,"changes":[{"text":"中文 ","begin":0,"end":2,"origin":"中文"},{"text":" 中文","begin":7,"end":9,"origin":"中文"}]} },
+      { name: "mdlink-mode-none-nonsmart", line: "中文[a](b)中文", curCh: 9, prevCh: 8,
+        settings: {"InlineLinkSmartSpace":false,"InlineLinkSpaceMode":0},
+        expected: {"line":"中文[a](b)中文","cursorCh":9,"changes":[]} },
+      { name: "mdlink-mode-none-smart", line: "中文[a](b)中文", curCh: 9, prevCh: 8,
+        settings: {"InlineLinkSpaceMode":0},
+        expected: {"line":"中文 [a](b) 中文","cursorCh":11,"changes":[{"text":"中文 ","begin":0,"end":2,"origin":"中文"},{"text":" 中文","begin":8,"end":10,"origin":"中文"}]} },
+      { name: "mdlink-mode-strict-nonsmart", line: "中文[a](b)中文", curCh: 9, prevCh: 8,
+        settings: {"InlineLinkSmartSpace":false,"InlineLinkSpaceMode":2},
+        expected: {"line":"中文 [a](b) 中文","cursorCh":11,"changes":[{"text":"中文 ","begin":0,"end":2,"origin":"中文"},{"text":" 中文","begin":8,"end":10,"origin":"中文"}]} },
+      { name: "mdlink-nonsmart-soft", line: "中文[a](b)中文", curCh: 9, prevCh: 8,
+        settings: {"InlineLinkSmartSpace":false},
+        expected: {"line":"中文 [a](b) 中文","cursorCh":11,"changes":[{"text":"中文 ","begin":0,"end":2,"origin":"中文"},{"text":" 中文","begin":8,"end":10,"origin":"中文"}]} },
+      // ── #4 验收矩阵：链接智能空格子分支 ──
+      { name: "smart-revert-space", line: "中文 [[别名]]中文", curCh: 11, prevCh: 10,
+        expected: {"line":"中文[[别名]]中文","cursorCh":10,"changes":[{"text":"中文","begin":0,"end":3,"origin":"中文 "}]} },
+      { name: "smart-empty-link-both-sides", line: "中文[[]]中文", curCh: 8, prevCh: 7,
+        expected: {"line":"中文[[]]中文","cursorCh":8,"changes":[]} },
+      { name: "smart-link-end-punct-noinsert", line: "中文[[别名，]]中文", curCh: 11, prevCh: 10,
+        expected: {"line":"中文[[别名，]]中文","cursorCh":11,"changes":[]} },
+      { name: "link-strict-smart-precedence", line: "中文[[别名]]", curCh: 8, prevCh: 7,
+        settings: {"InlineLinkSpaceMode":2},
+        expected: {"line":"中文 [[别名]]","cursorCh":9,"changes":[{"text":"中文 ","begin":0,"end":2,"origin":"中文"}]} },
+      // ── #4 验收矩阵：非 text 分区直接相邻（端到端）──
+      { name: "code-formula-adjacent", line: "中文`a`$x$中文", curCh: 10, prevCh: 9,
+        expected: {"line":"中文 `a` $x$ 中文","cursorCh":13,"changes":[{"text":"中文 ","begin":0,"end":2,"origin":"中文"},{"text":" ","begin":5,"end":5,"origin":""},{"text":" 中文","begin":8,"end":10,"origin":"中文"}]} },
+      { name: "code-link-adjacent", line: "中文`a`[[b]]中文", curCh: 12, prevCh: 11,
+        expected: {"line":"中文 `a` [[b]] 中文","cursorCh":15,"changes":[{"text":"中文 ","begin":0,"end":2,"origin":"中文"},{"text":" ","begin":5,"end":5,"origin":""},{"text":" 中文","begin":10,"end":12,"origin":"中文"}]} },
       { name: "soft-right-symbol", line: "中文+$a$", curCh: 6, prevCh: 5,
         settings: {"SoftSpaceRightSymbols":"+"},
         expected: {"line":"中文+ $a$","cursorCh":7,"changes":[{"text":"中文+ ","begin":0,"end":3,"origin":"中文+"}]} },
@@ -245,9 +294,9 @@ const MATRIX: MatrixEntry[] = [
 ]
 
 describe('formatLine 上游验证矩阵', () => {
-  it('矩阵规模完整（72 场景，防止表被误删）', () => {
-    expect(MATRIX.length).toBe(72)
-    expect(new Set(MATRIX.map((e) => e.name)).size).toBe(72)
+  it('矩阵规模完整（88 场景，防止表被误删）', () => {
+    expect(MATRIX.length).toBe(88)
+    expect(new Set(MATRIX.map((e) => e.name)).size).toBe(88)
   })
 
   for (const entry of MATRIX) {
