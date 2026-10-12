@@ -83,10 +83,12 @@ import { detectScopeViaQuery, docOfText, type ScopeInfo, type SyntaxQuery } from
  * 评审 P3：拒绝不静默归 Text 施加规则修饰，spec §二拒绝口径）。
  *
  * 近似口径（评审 R2-A1 落档）：Delete/SelectKey 管线传入事务前重建文档与
- * 事务前坐标，而查询在平台实时（事务后）文档上判定——删除大段时坐标
- * 钳制文末，与事务前实况可能分叉（仅非 All 用户规则在场触发，默认配置
- * 零影响）；#21 真实宿主联调核对，中期修复（快照坐标反向换算或快照 doc
- * 判定）另票，详见 docs/specs/rule-engine.md「事务前重建与坐标换算」节。
+ * 事务前坐标，而查询在平台实时（事务后）文档上判定——删除大段时坐标可
+ * 越实时文档长度（越界 pos 的平台查询行为未声明：拒绝则该次不接管、钳
+ * 制则文末判定，两果均保守），与事务前实况可能分叉（仅非 All 用户规则
+ * 在场触发，默认配置零影响）；#21 真实宿主联调核对，中期修复（快照坐标
+ * 反向换算或快照 doc 判定）另票，详见 docs/specs/rule-engine.md「事务前
+ * 重建与坐标换算」节。
  */
 function resolveScopeForEngine(
   engine: RuleEngine,

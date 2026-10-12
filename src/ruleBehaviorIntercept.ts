@@ -260,7 +260,8 @@ export type InputContextOwnership = (ctx: AddonInputContext) => boolean
  *   docUri 同源比对——AddonInputContext.docUri 与实例 views 句柄的
  *   targetDocUri 同源（#407：embed 驱动时是引用目标文档 URI），短串相等
  *   µs 级，优先于全文比对；
- * - mainDocUri 不可得（views/viewIdentity 面缺席——防御深度）时回退快照
+ * - mainDocUri 不可得（views/viewIdentity 面缺席——防御深度；或 views.get
+ *   未命中实例的销毁竞态窄窗口）时回退快照
  *   全文比对：主实例驱动时 ctx.snapshot.text 与主视图当前文档一致（行为
  *   链同步驱动，快照描述视图现状）；
  * - 两者皆不可得（mainDocText 亦 null = 活动视图缺席）→ false：驱动只可能
