@@ -19,6 +19,8 @@ const pageEditorPath = path.join(repoRoot, 'src/page-editor.ts')
 const source = readFileSync(pageEditorPath, 'utf8')
 
 function lineOf(anchor: string): number {
+  // 锚点取「注册调用语境」子串（paste:/run: 前缀），而非工厂名本身——
+  // 工厂名首次出现是 import 行，与注册序无因果（第 2 轮复核 P3-2 修复）
   const index = source.indexOf(anchor)
   expect(index, `锚点不在 page-editor.ts 源码中: ${anchor}`).toBeGreaterThanOrEqual(0)
   return source.slice(0, index).split('\n').length
@@ -26,11 +28,11 @@ function lineOf(anchor: string): number {
 
 describe('page-editor 装配序契约（BetterCodeEdit 三接线）', () => {
   it('#10 粘贴对齐注册在 #12 SmartPaste 之前（代码块分支先看，上游分支顺序）', () => {
-    expect(lineOf('createCodeBlockPasteHandler')).toBeLessThan(lineOf('createSmartPastePasteHandler'))
+    expect(lineOf('paste: createCodeBlockPasteHandler({')).toBeLessThan(lineOf('paste: createSmartPastePasteHandler({'))
   })
 
   it('#10 Backspace 注册在 #8 BetterBackspace 之后（同层注册序即尝试序，#8 先试）', () => {
-    expect(lineOf('createBetterBackspaceCommand')).toBeLessThan(lineOf('createCodeBlockBackspaceCommand'))
+    expect(lineOf('run: createBetterBackspaceCommand(')).toBeLessThan(lineOf('run: createCodeBlockBackspaceCommand('))
   })
 
   it('Mod+A 合成链在单一 keymap binding 内（#11 || #10 原子 OR，refresh hook 不被打断）', () => {

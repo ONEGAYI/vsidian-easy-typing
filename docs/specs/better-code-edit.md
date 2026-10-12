@@ -142,8 +142,10 @@ TaboutPairStrs 一致），不会与 #125 重复触发。
   #12 SmartPaste 之前**（domEventHandlers 按扩展序执行，先注册先执行）
   ——对齐上游 cm_extensions.ts 分支顺序（代码块分支 112 在 SmartPaste
   分支 168 之前）：**多行**粘贴进代码块命中即接管，SmartPaste 不再看；
-  单行粘贴不在此列——代码块行尾单行粘贴以 `- `/`> ` 开头时 #12 续接
-  仍生效（上游 SmartPaste 分支同样无代码块排除，实然同形，非本仓回归）。
+  单行粘贴不在此列——光标在代码块内的**字面列表/引用行**（如围栏内
+  写的列表示例）行尾粘贴单行文本时 #12 续接仍生效（续接判定只看光标
+  行形态 `parseSmartPasteTarget`，上游 SmartPaste 分支同样无代码块排除，
+  实然同形，非本仓回归）。
   Mod+Shift+V 纯文本粘贴（#12 plainPasteCommand 合成的 paste 事件）同样
   先经本 handler——代码块内多行纯文本粘贴同样被对齐（上游全 paste 事务
   可见语义同形）。落穿层让位序：平台富文本/图片粘贴处理器在前（图片粘贴
