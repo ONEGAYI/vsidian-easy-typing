@@ -41,6 +41,7 @@ import type { AddonViewHandle } from '../types/vendor/shared/addonEditApi'
 import type { EditorViewRegistry } from './plainPasteCommand'
 import type { AutoFormatGate, AutoFormatEngineSettings } from './autoFormatIntercept'
 import { formatLine, type LineFormatSettings } from './formatting/lineFormatter'
+import { docOfLines, FORMAT_SKIP_BY_PLATFORM, platformLineKindAt, type SyntaxDoc, type SyntaxQuery } from './syntaxTreeQuery'
 import { isDocUriExcluded } from './fileExclusion'
 import { SETTINGS_TOPIC } from './settings/store'
 import { debugLog } from './logging'
@@ -120,90 +121,22 @@ export function buildConvertCodeBlockCommandDefinition(title: string): AddonComm
   }
 }
 
-// ===== 行分类（跳过口径的文本降级单遍实现） =====
-
-/** 围栏标记行（开/关同形；信息串只允许出现在开栏侧——#25 同口径） */
-const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})(.*)$/
-
-/** 表格行（含引用块内表格：> 前缀感知；行首 | 且行内还有第二个 |） */
-const TABLE_ROW = /^\s*(?:>\s*)*\|.*\|/
-
-/** 无首管道的表格分隔行（GFM 允许省略首尾管道；纯分隔字符构成） */
-const TABLE_DELIM_ROW = /^\s*(?:>\s*)*:?-+:?(\s*\|\s*:?-+:?)+\s*$/
+// ===== 行分类（#5 切片 B 树版：平台 kind 经 FORMAT_SKIP_BY_PLATFORM 投影） =====
 
 /**
- * 全文行分类（单遍状态机，O(总行数)——命令级全文重排不走
- * detectScopeFromText 的逐位置扫描）：
- * - frontmatter：文档以 --- 起始的围栏区（含首尾边界行——isInsideFrontmatter
- *   同口径），未闭合延至文末；
- * - 代码块：``` / ~~~ 围栏状态机（同字符关闭、长度不小于开栏、缩进 ≤3），
- *   标记行本身跳过；
- * - 整行公式：行首 $$ 进入块级公式（单行 $$...$$ 完整亦跳过），块内行跳过；
- * - 表格行：行首 |（引用前缀感知）——**与 #26 作用域口径一致跳过**
- *   （上游树版会格式化表格行，本票按票面口径跳过，差异记录于规格，
- *   语法树版 #5 换传时的升级点）；
- * - 其余 text 行格式化（行内 code/formula/wikilink 分区由 lineFormatter
- *   的 splitLineIntoParts 处理）。
+ * 全文行分类（跳过口径）：逐行 platformLineKindAt（代表位置查询）经
+ * FORMAT_SKIP_BY_PLATFORM 投影——frontmatter/code/formula/table 跳过、
+ * heading/quote/list/text 不跳过。表格行跳过是 #28 已验收决策（上游树版
+ * 会格式化表格行），树版换传后保持不翻案；单行闭合 `$$x$$`、``` 与 ~~~
+ * 不互闭等原降级状态机差异随平台语义消除（口径见 syntaxTreeQuery.ts 头
+ * 注释）。行内 code/formula/wikilink 分区由 lineFormatter 的
+ * splitLineIntoParts 处理。查询拒绝的行按跳过处理（保守：不格式化）。
  */
-export function classifyFormatSkipLines(lines: readonly string[]): boolean[] {
-  const skip: boolean[] = new Array<boolean>(lines.length).fill(false)
-  let frontmatterOpen = false
-  let fence: { char: string; length: number } | null = null
-  let formulaOpen = false
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!
-
-    // frontmatter（仅文档首行 --- 进入；含闭合边界行；未闭合延至文末）
-    if (i === 0 && line.trim() === '---') {
-      frontmatterOpen = true
-      skip[i] = true
-      continue
-    }
-    if (frontmatterOpen) {
-      skip[i] = true
-      if (line.trim() === '---') frontmatterOpen = false
-      continue
-    }
-
-    // 代码块围栏状态机
-    const fenceMatch = FENCE_LINE.exec(line)
-    if (fence !== null) {
-      skip[i] = true
-      if (
-        fenceMatch !== null &&
-        fenceMatch[1]![0] === fence.char &&
-        fenceMatch[1]!.length >= fence.length &&
-        fenceMatch[2]!.trim() === ''
-      ) {
-        fence = null
-      }
-      continue
-    }
-    if (fenceMatch !== null) {
-      fence = { char: fenceMatch[1]![0]!, length: fenceMatch[1]!.length }
-      skip[i] = true
-      continue
-    }
-
-    // 块级公式（行首 $$；单行完整 $$...$$ 不改状态）
-    const trimmed = line.trim()
-    if (formulaOpen) {
-      skip[i] = true
-      if (trimmed.startsWith('$$')) formulaOpen = false
-      continue
-    }
-    if (trimmed.startsWith('$$')) {
-      skip[i] = true
-      if (!(trimmed.length > 4 && trimmed.endsWith('$$'))) formulaOpen = true
-      continue
-    }
-
-    // 表格行（行首管道或无首管道的分隔行形态）
-    if (TABLE_ROW.test(line) || TABLE_DELIM_ROW.test(line)) {
-      skip[i] = true
-      continue
-    }
+export function classifyFormatSkipLines(doc: SyntaxDoc, query: SyntaxQuery): boolean[] {
+  const skip: boolean[] = new Array<boolean>(doc.lines)
+  for (let n = 1; n <= doc.lines; n++) {
+    const kind = platformLineKindAt(doc, query, n)
+    skip[n - 1] = kind === null ? true : FORMAT_SKIP_BY_PLATFORM[kind]
   }
   return skip
 }
@@ -243,29 +176,38 @@ function lineIndexOf(starts: number[], offset: number): number {
  *  formatArticle/formatSelectionOrCurLine 经 preFormatOneLine 传
  *  formatLine(..., curCh, 0) 的同形；键入区间 [0, curCh) 覆盖整行前缀，
  *  语言对全量生效。注意 prevCh=undefined 是「不重排间距」的跳过形态，
- *  非整行重排——#26 规格「命令重排入口形态」注记的勘误，见本票规格） */
+ *  非整行重排——#26 规格「命令重排入口形态」注记的勘误，见本票规格。
+ *  查询拒绝返回 null（该行保持原样）。 */
 function reformatCommandLine(
+  doc: SyntaxDoc,
+  query: SyntaxQuery,
+  lineNumber: number,
   line: string,
   curCh: number,
   settings: LineFormatSettings,
-): { line: string; cursorCh: number } {
-  const result = formatLine(line, curCh, 0, { ...settings, autoCapital: false })
+): { line: string; cursorCh: number } | null {
+  const result = formatLine(line, curCh, 0, { ...settings, autoCapital: false }, { doc, query, lineNumber })
+  if (result === null) return null
   return { line: result.line, cursorCh: result.cursorCh }
 }
 
 /** 格式化全文（上游 formatArticle）：光标行经 cursorCh 跟踪重定位。
  *  签名与其余 planner 对齐（anchor/head 主选区）；全文命令的光标取 head
- *  侧（上游 getCursor() 的 CM6 等价——选区在场时 head 即光标位）。 */
+ *  侧（上游 getCursor() 的 CM6 等价——选区在场时 head 即光标位）。
+ *  行分类走树版 classifyFormatSkipLines（#5——query 必选）。 */
 export function planFormatArticle(
   text: string,
   anchor: number,
   head: number,
   settings: LineFormatSettings,
+  query: SyntaxQuery | null,
 ): FormattingCommandPlan | null {
   void anchor //（光标语义只认 head 侧；参数保留换取四个 planner 的统一签名）
+  if (query === null) return null // 语法查询缺席：不执行（不 fallback 正则）
   const lines = text.split('\n')
+  const doc = docOfLines(lines)
   const starts = lineStarts(lines)
-  const skip = classifyFormatSkipLines(lines)
+  const skip = classifyFormatSkipLines(doc, query)
   const cursor = Math.min(Math.max(head, 0), text.length)
   const cursorLine = lineIndexOf(starts, cursor)
   const cursorCh = cursor - starts[cursorLine]!
@@ -281,11 +223,17 @@ export function planFormatArticle(
       continue
     }
     const curCh = i === cursorLine ? cursorCh : lines[i]!.length
-    const { line, cursorCh: newCh } = reformatCommandLine(lines[i]!, curCh, settings)
-    newLines.push(line)
-    if (i === cursorLine) newCursor = starts[i]! + newCh
-    if (line !== lines[i]!) {
-      changes.push({ offset: starts[i]!, length: lines[i]!.length, text: line })
+    const result = reformatCommandLine(doc, query, i + 1, lines[i]!, curCh, settings)
+    if (result === null) {
+      // 行内分区查询拒绝：该行保持原样（保守跳过）
+      newLines.push(lines[i]!)
+      if (i === cursorLine) newCursor = starts[i]! + Math.min(cursorCh, lines[i]!.length)
+      continue
+    }
+    newLines.push(result.line)
+    if (i === cursorLine) newCursor = starts[i]! + result.cursorCh
+    if (result.line !== lines[i]!) {
+      changes.push({ offset: starts[i]!, length: lines[i]!.length, text: result.line })
     }
   }
   if (changes.length === 0) return null
@@ -296,27 +244,30 @@ export function planFormatArticle(
   return { changes, selection: { anchor: finalCursor, head: finalCursor } }
 }
 
-/** 格式化选区/当前行（上游 formatSelectionOrCurLine） */
+/** 格式化选区/当前行（上游 formatSelectionOrCurLine；行分类树版 #5） */
 export function planFormatSelection(
   text: string,
   anchor: number,
   head: number,
   settings: LineFormatSettings,
+  query: SyntaxQuery | null,
 ): FormattingCommandPlan | null {
+  if (query === null) return null // 语法查询缺席：不执行（不 fallback 正则）
   const lines = text.split('\n')
+  const doc = docOfLines(lines)
   const starts = lineStarts(lines)
-  const skip = classifyFormatSkipLines(lines)
+  const skip = classifyFormatSkipLines(doc, query)
 
   if (anchor === head) {
     // 当前行：光标 ch 跟踪（上游无选区分支同形）
     const line = lineIndexOf(starts, anchor)
     if (skip[line]) return null
     const curCh = anchor - starts[line]!
-    const { line: newLine, cursorCh } = reformatCommandLine(lines[line]!, curCh, settings)
-    if (newLine === lines[line]) return null
+    const result = reformatCommandLine(doc, query, line + 1, lines[line]!, curCh, settings)
+    if (result === null || result.line === lines[line]) return null
     return {
-      changes: [{ offset: starts[line]!, length: lines[line]!.length, text: newLine }],
-      selection: { anchor: starts[line]! + cursorCh, head: starts[line]! + cursorCh },
+      changes: [{ offset: starts[line]!, length: lines[line]!.length, text: result.line }],
+      selection: { anchor: starts[line]! + result.cursorCh, head: starts[line]! + result.cursorCh },
     }
   }
 
@@ -329,11 +280,10 @@ export function planFormatSelection(
   const newLines = new Map<number, string>()
   for (let i = fromLine; i <= toLine; i++) {
     if (skip[i]) continue
-    const { line: newLine } = reformatCommandLine(lines[i]!, lines[i]!.length, settings)
-    if (newLine !== lines[i]!) {
-      newLines.set(i, newLine)
-      changes.push({ offset: starts[i]!, length: lines[i]!.length, text: newLine })
-    }
+    const result = reformatCommandLine(doc, query, i + 1, lines[i]!, lines[i]!.length, settings)
+    if (result === null || result.line === lines[i]!) continue
+    newLines.set(i, result.line)
+    changes.push({ offset: starts[i]!, length: lines[i]!.length, text: result.line })
   }
   if (changes.length === 0) return null
 
@@ -373,9 +323,16 @@ function trailingBlankType(text: string): TrailingBlankType {
 }
 
 /** 删除空行计划：空行=只含空白也算；同类块（列表/引用/块 id）间空行删除、
- * 异类块间保留；水平线前被删空行回保；严格换行（Vsidian 阅读渲染恒严格）
- * 连续空行保首个。选区非空时只扫选区行（前一行上下文感知）。 */
-export function planDeleteBlankLines(text: string, anchor: number, head: number): FormattingCommandPlan | null {
+ *  异类块间保留；水平线前被删空行回保；严格换行（Vsidian 阅读渲染恒严格）
+ *  连续空行保首个。选区非空时只扫选区行（前一行上下文感知）。纯正则
+ *  planner——settings/query 参数仅为统一 planner 签名（不消费）。 */
+export function planDeleteBlankLines(
+  text: string,
+  anchor: number,
+  head: number,
+  _settings?: LineFormatSettings,
+  _query?: SyntaxQuery | null,
+): FormattingCommandPlan | null {
   const lines = text.split('\n')
   const starts = lineStarts(lines)
   const last = lines.length - 1
@@ -459,11 +416,14 @@ export function planDeleteBlankLines(text: string, anchor: number, head: number)
   return { changes }
 }
 
-/** 选区转代码块（上游 convert2CodeBlock）：默认空语言围栏 + 光标落语言位 */
+/** 选区转代码块（上游 convert2CodeBlock）：默认空语言围栏 + 光标落语言位。
+ *  纯正则 planner——settings/query 参数仅为统一 planner 签名（不消费）。 */
 export function planConvertCodeBlock(
   text: string,
   anchor: number,
   head: number,
+  _settings?: LineFormatSettings,
+  _query?: SyntaxQuery | null,
 ): FormattingCommandPlan | null {
   const lines = text.split('\n')
   const starts = lineStarts(lines)
@@ -531,6 +491,9 @@ export interface RegisterFormattingCommandsDeps {
   readonly gate: AutoFormatGate
   /** #12 视图登记表（page-editor 共享实例注入；目标句柄 → 本页 CM6 视图解析） */
   readonly views: EditorViewRegistry
+  /** #5 语法查询工厂（instanceId → 查询；null = 反查失败/语法面缺席——
+   *  需要行分类的 planner 不执行，纯正则 planner 不受影响） */
+  readonly queryOf: (instanceId: string) => SyntaxQuery | null
   /** 通知发送（宿主 NOTICE_TOPIC；缺省静默——纯逻辑测试） */
   readonly notify?: (request: FormattingNoticeRequest) => void
   /** i18n 文案（命令标题） */
@@ -579,11 +542,20 @@ function dispatchPlan(
 /** 视图命令执行流（target = 平台命令回调携带的目标视图句柄，PR #432）：
  *  刷新设置 → 视图路径（句柄实例 ID 经登记表解析本页 CM6 视图，单事务
  *  派发）→ 句柄路径（登记面外的主正文句柄快照 + applyEdits 单请求）。
- *  无活动视图（target null）或嵌入/悬停句柄（扩展槽未装配、无执行载体）
- *  静默无动作——句柄即命令语义的目标文档，不向主文档兜底误写。 */
+ *  语法查询经句柄 instanceId 构造（#5）：查询缺席时需要行分类的 planner
+ *  返回 null 不执行（delete-blank-lines / convert-code-block 为纯正则
+ *  planner 不受影响）。无活动视图（target null）或嵌入/悬停句柄（扩展
+ *  槽未装配、无执行载体）静默无动作——句柄即命令语义的目标文档，不向
+ *  主文档兜底误写。 */
 function runViewCommand(
   deps: RegisterFormattingCommandsDeps,
-  planner: (text: string, anchor: number, head: number, settings: LineFormatSettings) => FormattingCommandPlan | null,
+  planner: (
+    text: string,
+    anchor: number,
+    head: number,
+    settings: LineFormatSettings,
+    query: SyntaxQuery | null,
+  ) => FormattingCommandPlan | null,
   userEvent: string,
 ): (target: AddonViewHandle | null) => void {
   return (target) => {
@@ -593,11 +565,12 @@ function runViewCommand(
         // 违约防御深度：undefined 按无活动视图降级（同 plainPaste 口径）
         if (target === null || target === undefined) return
         const engine = deps.gate.settings()
+        const query = deps.queryOf(target.info.instanceId)
         const view = deps.views.viewForInstance(target.info.instanceId)
         if (view !== null) {
           if (guardedSkip(view, target.info.targetDocUri, engine, deps)) return
           const sel = view.state.selection.main
-          const plan = planner(view.state.doc.toString(), sel.anchor, sel.head, engine.lineFormat)
+          const plan = planner(view.state.doc.toString(), sel.anchor, sel.head, engine.lineFormat, query)
           if (plan !== null) dispatchPlan(view, plan, userEvent)
           return
         }
@@ -614,7 +587,7 @@ function runViewCommand(
         if (!snap.ok) return
         const primary = snap.snapshot.selections[0]
         if (primary === undefined) return
-        const plan = planner(snap.snapshot.text, primary.anchor, primary.head, engine.lineFormat)
+        const plan = planner(snap.snapshot.text, primary.anchor, primary.head, engine.lineFormat, query)
         if (plan === null) return
         void target.editor
           .applyEdits({

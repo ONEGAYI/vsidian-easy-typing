@@ -1,0 +1,407 @@
+// 映射矩阵单测（工单 #5 切片 C，票面验收项）：钉住「上游判定语义 →
+// 平台 kind 枚举 → 消费维度投影」全链。上游 = easy-typing-obsidian
+// v6.0.9 的树版判定（getPosLineType v1 / getPosLineType2 v2 /
+// detectRuleScope / getCodeBlocksInfos）；平台 = experimental.syntax
+//（fake 判定链驱动，近似口径见 test/syntaxFake.ts 头注释）。
+//
+// 与 test/syntaxTreeQuery.test.ts 的分工：切片 A 测试钉 API 行为，
+// 本文件钉**映射语义**——每个用例标注上游语义来源（形态名/锚点）与
+// 口径差异依据（vsidian developer-guide §4.8 或 syntaxTreeQuery.ts
+// 头注释），是 docs/specs/syntax-line-types.md 映射对照表的机器可验
+// 副本：改映射表须同步改这里的期望。
+import { describe, expect, it } from 'vitest'
+import {
+  codeBlockAtViaQuery,
+  codeBlocksViaQuery,
+  detectScopeViaQuery,
+  FORMAT_SKIP_BY_PLATFORM,
+  lineInfoAt,
+  LINE_KIND_BY_PLATFORM,
+  platformLineKindAt,
+} from '../src/syntaxTreeQuery'
+import type { AddonSyntaxLineKind } from '../types/vendor/shared/addonSyntaxApi'
+import type { SyntaxQuery } from '../src/syntaxTreeQuery'
+import { quoteInfoAt } from '../src/blockScan'
+import { RuleScope } from '../src/rules/rule-engine'
+import { makeSyntaxFake } from './syntaxFake'
+
+/** 期望行（matrix 驱动断言的元素）：上游形态名 → 样本行 → 三个维度的期望 */
+interface MatrixExpectation {
+  /** 上游行类型语义形态（v1 = getPosLineType、v2 = getPosLineType2 的判定对象） */
+  readonly upstream: string
+  /** 平台 kind 期望（fake 判定链产出；null = 查询拒绝） */
+  readonly platform: AddonSyntaxLineKind
+  /** v2/ModA 消费维度（LINE_KIND_BY_PLATFORM 投影） */
+  readonly lineKind: string
+  /** v1/格式化跳过维度（FORMAT_SKIP_BY_PLATFORM 投影） */
+  readonly skip: boolean
+}
+
+describe('一、上游行类型 × 平台 kind 全枚举（形态样本 → 两消费维度投影）', () => {
+  // 矩阵文档：22 行覆盖上游 v1/v2 全部行类型语义形态，每种形态至少一个
+  // 真实文档行样本（引用内围栏与顶层围栏之间空行分隔——「相邻代码块零
+  // 分隔行 run 合并」的边界形态见第四组显式钉住）。
+  const MATRIX_DOC = [
+    '---', // L1 frontmatter 开界
+    'title: m', // L2 frontmatter（hmd-frontmatter，v1/v2 首查）
+    '---', // L3 frontmatter 闭界
+    '# 标题', // L4 heading（v1/v2 均不特判，归 text）
+    '| a | b |', // L5 table（v1 特判跳过；v2 归 text）
+    '普通段落', // L6 text
+    '', // L7 空行（v2 归 text；本仓 empty 补判）
+    '- 列表项', // L8 list（v2 行内任一 list）
+    '  续行', // L9 list 续行（v2：上方列表项的缩进续行）
+    '> 引用', // L10 quote（v2 行首 quote）
+    '> [!note] 标题', // L11 callout_title（平台无枚举——组件自判见下）
+    '> - 引用内列表', // L12 list（引用内列表，平台优先级 list > quote）
+    '> ```js', // L13 quote 内 callout 代码块（v1 判 codeblock 的形态）
+    '> const a = 1', // L14 codeblock 内容
+    '> ```', // L15 codeblock 闭栏
+    '', // L16 空行（分隔相邻代码块——run 分组边界，见第四组）
+    '```ts', // L17 codeblock 围栏行（code+block 节点）
+    'const b = 2', // L18 codeblock 内容
+    '```', // L19 codeblock 闭栏
+    '$$', // L20 formula 跨行块开栏（math 全行）
+    'c = d', // L21 formula 块体
+    '$$', // L22 formula 跨行块闭栏
+    '$$x$$', // L23 formula 单行闭合块（升级收益：降级版不识别）
+  ].join('\n')
+  const fake = makeSyntaxFake(MATRIX_DOC)
+  const { doc, query } = fake
+
+  // 行号 → 三维度期望（对照 docs/specs/syntax-line-types.md 映射对照表）
+  const matrix: readonly (readonly [number, MatrixExpectation])[] = [
+    [1, { upstream: 'frontmatter 开界（hmd-frontmatter）', platform: 'frontmatter', lineKind: 'frontmatter', skip: true }],
+    [2, { upstream: 'frontmatter 内容（hmd-frontmatter）', platform: 'frontmatter', lineKind: 'frontmatter', skip: true }],
+    [3, { upstream: 'frontmatter 闭界（hmd-frontmatter）', platform: 'frontmatter', lineKind: 'frontmatter', skip: true }],
+    [4, { upstream: 'heading（v1/v2 均不特判，归 text）', platform: 'heading', lineKind: 'text', skip: false }],
+    [5, { upstream: 'table（v1 特判跳过；v2 归 text）', platform: 'table', lineKind: 'text', skip: true }],
+    [6, { upstream: 'text', platform: 'text', lineKind: 'text', skip: false }],
+    [7, { upstream: 'text（空行；empty 为 lineInfoAt 本地补判，见下）', platform: 'text', lineKind: 'text', skip: false }],
+    [8, { upstream: 'list 标记行', platform: 'list', lineKind: 'list', skip: false }],
+    [9, { upstream: 'list 续行', platform: 'list', lineKind: 'list', skip: false }],
+    [10, { upstream: 'quote（v2 行首 quote）', platform: 'quote', lineKind: 'quote', skip: false }],
+    [11, { upstream: 'callout_title（平台无枚举，统一 quote）', platform: 'quote', lineKind: 'quote', skip: false }],
+    [12, { upstream: '引用内 list（v2 行内任一 list 先于行首 quote）', platform: 'list', lineKind: 'list', skip: false }],
+    [13, { upstream: 'quote 内 callout 代码块围栏（v1 判 codeblock）', platform: 'code', lineKind: 'code', skip: true }],
+    [14, { upstream: 'codeblock 内容行', platform: 'code', lineKind: 'code', skip: true }],
+    [15, { upstream: 'codeblock 闭栏行', platform: 'code', lineKind: 'code', skip: true }],
+    [17, { upstream: 'codeblock 围栏行（code+block 节点）', platform: 'code', lineKind: 'code', skip: true }],
+    [18, { upstream: 'codeblock 内容行', platform: 'code', lineKind: 'code', skip: true }],
+    [19, { upstream: 'codeblock 闭栏行', platform: 'code', lineKind: 'code', skip: true }],
+    [20, { upstream: 'formula 跨行块开栏（math 全行）', platform: 'formula', lineKind: 'formula', skip: true }],
+    [21, { upstream: 'formula 跨行块体（math 全行）', platform: 'formula', lineKind: 'formula', skip: true }],
+    [22, { upstream: 'formula 跨行块闭栏', platform: 'formula', lineKind: 'formula', skip: true }],
+    [23, { upstream: 'formula 单行闭合块（升级收益）', platform: 'formula', lineKind: 'formula', skip: true }],
+  ] as const
+
+  it.each(matrix)('L%i %s → %s / %s / skip=%s', (lineNo, exp) => {
+    expect(platformLineKindAt(doc, query, lineNo)).toBe(exp.platform)
+    // 消费维度投影 = 映射常量逐项核对（映射表与投影常量同步的防回潮）
+    expect(LINE_KIND_BY_PLATFORM[exp.platform]).toBe(exp.lineKind)
+    expect(FORMAT_SKIP_BY_PLATFORM[exp.platform]).toBe(exp.skip)
+  })
+
+  it('callout_title 的组件自判：平台缺口由 quoteInfoAt 纯正则细分（上游 getQuoteInfoInPos 同款）', () => {
+    // 平台 kind 对 callout 标题行统一 quote（无 callout 枚举）；isCallout
+    // 细分走 blockScan.quoteInfoAt 的 CALLOUT_PREFIX_RE 纯正则——上游
+    // syntax.ts:155-201 本就是纯正则，语义一致（developer-guide §4.8
+    // 「组件自判」先例）
+    expect(platformLineKindAt(doc, query, 11)).toBe('quote')
+    expect(quoteInfoAt(doc, 11)!.isCallout).toBe(true)
+    expect(quoteInfoAt(doc, 11)!.contentStart).toBe(10) // 跳过 '> [!note] '
+    // 普通引用行 isCallout=false；同引用块内 callout 标题行上溯并入（上游语义）
+    expect(quoteInfoAt(doc, 12)!.isCallout).toBe(true)
+    expect(quoteInfoAt(doc, 10)!.isCallout).toBe(false)
+  })
+
+  it('空行的 empty 补判：平台 kind 是 text，lineInfoAt 按行文本全空白补判 empty（段块邻行排除消费面）', () => {
+    // empty 不在映射常量内（上游 v2 归 text）——是 LineKind 既有独立 kind
+    // 的本地补判（syntaxTreeQuery.lineKindOf），供段块邻行排除消费
+    expect(lineInfoAt(doc, query, 7)!.kind).toBe('empty')
+    expect(lineInfoAt(doc, query, 6)!.kind).toBe('text')
+  })
+})
+
+describe('二、上游作用域 × 平台查询组合（detectRuleScope 三值）', () => {
+  // 上游 syntax.ts:208-225：resolveInner 节点名——含 math → Formula；
+  // 含 code 且不含 link → Code（+语言）；否则 Text
+  const doc = [
+    '$$', // L1
+    'x', // L2 跨行公式块体
+    '$$', // L3
+    'a $f$ b', // L4 行内公式
+    'a `c` b', // L5 行内代码
+    '[[a|`b`]]', // L6 wikilink 别名内 code span（上游 link 排除 → Text）
+    '[`t`](url)', // L7 mdlink 文本内 code span（同上）
+    '`[[c]]`', // L8 反引号内 wikilink 形态（已知差异，见下）
+    'plain', // L9
+    '| p | q |', // L10 表格行
+  ].join('\n')
+  const fake = makeSyntaxFake(doc)
+  const { doc: d, query } = fake
+  const posOf = (lineNo: number, col: number): number => d.line(lineNo).from + col
+
+  it('Formula：跨行块内、行内 $f$、单行闭合块', () => {
+    expect(detectScopeViaQuery(d, query, posOf(2, 0))).toEqual({ scope: RuleScope.Formula })
+    expect(detectScopeViaQuery(d, query, posOf(4, 3))).toEqual({ scope: RuleScope.Formula })
+    const single = makeSyntaxFake('$$x$$')
+    expect(detectScopeViaQuery(single.doc, single.query, 2)).toEqual({ scope: RuleScope.Formula })
+  })
+
+  it('Code：行内代码无语言；块级代码（含围栏行）带语言；缩进代码无语言（无围栏标记不产块信息）', () => {
+    expect(detectScopeViaQuery(d, query, posOf(5, 4))).toEqual({ scope: RuleScope.Code })
+    const block = makeSyntaxFake('```Python\nz = 1\n```')
+    expect(detectScopeViaQuery(block.doc, block.query, block.doc.line(2).from)).toEqual({
+      scope: RuleScope.Code,
+      language: 'python',
+    })
+    expect(detectScopeViaQuery(block.doc, block.query, block.doc.line(1).from + 3)).toEqual({
+      scope: RuleScope.Code,
+      language: 'python', // 围栏行属块区间（上游 getCodeBlockInfoInPos 闭区间同款）
+    })
+    const indented = makeSyntaxFake('    indented code')
+    expect(detectScopeViaQuery(indented.doc, indented.query, 4)).toEqual({ scope: RuleScope.Code })
+  })
+
+  it('链接排除（上游 !contains(link) 的组件自判）：wikilink 别名与 mdlink 文本内的 code span 判 Text', () => {
+    // '[[a|`b`]]'——`b` 处 inlineAt=code，但落在 REG_WIKILINK 区段内 → Text
+    expect(detectScopeViaQuery(d, query, posOf(6, 5))).toEqual({ scope: RuleScope.Text })
+    // '[`t`](url)'——`t` 处落在 REG_MDLINK 区段内 → Text
+    expect(detectScopeViaQuery(d, query, posOf(7, 2))).toEqual({ scope: RuleScope.Text })
+    // 链接内普通文字（无 code span）：上游 link 节点不含 code → Text，一致
+    expect(detectScopeViaQuery(d, query, posOf(6, 2))).toEqual({ scope: RuleScope.Text })
+  })
+
+  it('已知差异钉住：反引号内的 [[..]] 被链接区段正则圈走判 Text（上游树版判 Code）', () => {
+    // '`[[c]]`'——上游：code span 内的 [[..]] 不构成链接节点，resolve →
+    // InlineCode（含 code 不含 link）→ Code；本移植 linkSpansOfLine 纯
+    // 正则不感知 code span，[[c]] 命中 REG_WIKILINK → 区段优先剪除 → Text。
+    // 规格 docs/specs/syntax-line-types.md「已知口径差异」节落档
+    expect(detectScopeViaQuery(d, query, posOf(8, 3))).toEqual({ scope: RuleScope.Text })
+  })
+
+  it('Text：普通文本、表格行内、frontmatter 内', () => {
+    expect(detectScopeViaQuery(d, query, posOf(9, 2))).toEqual({ scope: RuleScope.Text })
+    expect(detectScopeViaQuery(d, query, posOf(10, 3))).toEqual({ scope: RuleScope.Text })
+    const fm = makeSyntaxFake('---\na: `x`\n---')
+    expect(detectScopeViaQuery(fm.doc, fm.query, 5)).toEqual({ scope: RuleScope.Text })
+  })
+})
+
+describe('三、口径差异钉住（探索笔记 §四差异表逐条）', () => {
+  it('段内 text $$x$$ tail 是 text；单行闭合 $$x$$ 独占行是 formula（依据：上游 v1/v2 全行校验 + 平台判定链单行闭合块补判）', () => {
+    const inline = makeSyntaxFake('text $$x$$ tail')
+    expect(platformLineKindAt(inline.doc, inline.query, 1)).toBe('text')
+    const alone = makeSyntaxFake('$$x$$')
+    expect(platformLineKindAt(alone.doc, alone.query, 1)).toBe('formula') // 升级收益：#11 降级版不识别
+  })
+
+  it('frontmatter 内 inlineAt 恒 none（依据：developer-guide §4.8「fm 是源码态」）', () => {
+    const fm = makeSyntaxFake('---\na: `x` $y$\n---')
+    const inFm = fm.query.inlineAt(6)
+    expect(inFm.ok && inFm.kind).toBe('none')
+  })
+
+  it('代码行内 inlineAt 恒 none（评审 R2-B7：代码上下文中 $/反引号字面——MATH_CODE_CONTEXTS 口径）', () => {
+    // 围栏行/代码体行上的反引号与 $ 均不产 code/formula——fake 判定链
+    // codeLine 先于 backtickSpans/dollarSpans（真实树代码上下文内无行内
+    // 标记节点）。代码行内容原样字面，消费面（分区/作用域）走块级 code。
+    const f = makeSyntaxFake('```\n`bt` $d$\n```')
+    const inBody = f.query.inlineAt(f.doc.line(2).from + 1)
+    expect(inBody.ok && inBody.kind).toBe('none')
+    const onFence = f.query.inlineAt(1)
+    expect(onFence.ok && onFence.kind).toBe('none')
+  })
+
+  it('嵌套优先级：> - item 两位置各判各的（前缀处 quote、内容处 list；依据：developer-guide §4.8）', () => {
+    const f = makeSyntaxFake('> - item')
+    const line = f.doc.line(1)
+    const prefix = f.query.lineTypeAt(line.from) // '>' 处
+    const content = f.query.lineTypeAt(line.from + 2) // '-' 内容处
+    expect(prefix.ok && prefix.kind).toBe('quote')
+    expect(content.ok && content.kind).toBe('list')
+  })
+
+  it('引用内表格/标题行的内容位置判 table/heading（上游 v2 归 quote；v2 维度投影回 text）', () => {
+    const f = makeSyntaxFake('> | a | b |\n> # H')
+    expect(platformLineKindAt(f.doc, f.query, 1)).toBe('table')
+    expect(platformLineKindAt(f.doc, f.query, 2)).toBe('heading')
+    // 消费维度：两者 v2 投影 text、跳过维度 table 跳过 / heading 不跳过
+    expect(LINE_KIND_BY_PLATFORM.table).toBe('text')
+    expect(FORMAT_SKIP_BY_PLATFORM.table).toBe(true)
+    expect(FORMAT_SKIP_BY_PLATFORM.heading).toBe(false)
+  })
+
+  it('未闭合 $$ 块按普通文本处理（依据：syntaxTreeQuery 头注释「未闭合不产出（稳定降级为源码）」）', () => {
+    const f = makeSyntaxFake(['$$', 'x'].join('\n'))
+    expect(platformLineKindAt(f.doc, f.query, 1)).toBe('text')
+    expect(platformLineKindAt(f.doc, f.query, 2)).toBe('text')
+  })
+
+  it('未闭合 frontmatter 按普通 Markdown 处理（同上稳定降级）', () => {
+    const f = makeSyntaxFake(['---', 'title: x'].join('\n'))
+    expect(platformLineKindAt(f.doc, f.query, 1)).toBe('text')
+    expect(platformLineKindAt(f.doc, f.query, 2)).toBe('text')
+  })
+
+  it('优先级 code > table：围栏内的表格式行判 code', () => {
+    const f = makeSyntaxFake(['```', '| a |', '```'].join('\n'))
+    expect(platformLineKindAt(f.doc, f.query, 2)).toBe('code')
+  })
+
+  it('松散列表项间空行门控（评审 R2-B3）：平台 BulletList 父节点覆盖项间空行判 list，LINE_KIND 维度门控回 empty', () => {
+    // 真实平台树对松散列表（loose list，项间空行）的空行判 list——
+    // BulletList 父节点区间覆盖项间空行；上游 v2 无父节点语义，空行按
+    // 行文本判 text（本仓 LineKind 空间为 empty）。门控与惰性延续行
+    // （P4）同款：平台 kind=list 且行文本全空白 → empty。fake 判定链
+    // 按行首形态学对空行判 text，天然不产该形态（近似边界，见
+    // test/syntaxFake.ts 头注释）——本用例直接构造恒 list 查询钉住
+    const fake = makeSyntaxFake('- a\n\n- b')
+    const listOnly: SyntaxQuery = {
+      lineTypeAt: () => ({ ok: true, kind: 'list' as AddonSyntaxLineKind, nodeNames: ['fake:list'] }),
+      inlineAt: () => ({ ok: true, kind: 'none' as const, nodeNames: ['fake:none'] }),
+    }
+    // 列表标记行：list 原判（不受门控影响）
+    expect(lineInfoAt(fake.doc, listOnly, 1)!.kind).toBe('list')
+    expect(lineInfoAt(fake.doc, listOnly, 3)!.kind).toBe('list')
+    // 项间空行（行文本全空白）：门控回 empty（对齐上游 v2 语义——空行归
+    // text/empty，不落列表分支）；empty 的 indent 按行文本计
+    expect(lineInfoAt(fake.doc, listOnly, 2)).toEqual({
+      kind: 'empty',
+      indent: 0,
+      markerEnd: 0,
+      quoteContentStart: null,
+    })
+    // 跳过维度（FORMAT_SKIP）不动：list 与 text 均不跳过，无行为差
+    expect(FORMAT_SKIP_BY_PLATFORM.list).toBe(false)
+    expect(FORMAT_SKIP_BY_PLATFORM.text).toBe(false)
+  })
+
+  it('引用块惰性延续行门控（评审 P4）：平台判 quote 的顶格续行，LINE_KIND 维度投影回 text；跳过维度平台原判不门控', () => {
+    // '> a' 下一行顶格 'b'——GFM 惰性延续：真实平台树判 quote；上游 v2 是
+    // 行首 quote 语义（getQuoteInfoInPos 的 quote_regex `^(\s*)(>+) ?` 不匹配
+    // → 判 text）。fake 判定链按行首形态学天然不产该形态（近似边界，见
+    // test/syntaxFake.ts 头注释）——本用例直接构造恒 quote 查询钉住门控
+    const fake = makeSyntaxFake('> a\nb')
+    const quoteOnly: SyntaxQuery = {
+      lineTypeAt: () => ({ ok: true, kind: 'quote' as AddonSyntaxLineKind, nodeNames: ['fake:quote'] }),
+      inlineAt: () => ({ ok: true, kind: 'none' as const, nodeNames: ['fake:none'] }),
+    }
+    // 真引用行（行首 > 前缀）：投影 quote，quoteContentStart 按前缀计算
+    expect(lineInfoAt(fake.doc, quoteOnly, 1)).toEqual({
+      kind: 'quote',
+      indent: 0,
+      markerEnd: 0,
+      quoteContentStart: 2,
+    })
+    // 惰性延续行（行首无 > 前缀）：门控回 text（对齐上游 v2 行首语义），
+    // quoteContentStart 随 kind 退化口径为 text 分支的 null（quote 分支的
+    // qm===null 退化经门控后不可达）
+    expect(lineInfoAt(fake.doc, quoteOnly, 2)).toEqual({
+      kind: 'text',
+      indent: 0,
+      markerEnd: 0,
+      quoteContentStart: null,
+    })
+    // 消费面影响核对：上游 v2 该行走文本分支（行 → 段块升档）；不门控时
+    // anchorKind=quote 会跳过文本分支且 quoteInfoAt（行首纯正则）返回 null
+    // 落穿到不接管——行为差异由此闭合
+    expect(quoteInfoAt(fake.doc, 2)).toBeNull()
+    // 跳过维度（v1/FORMAT_SKIP）保持平台 kind 原判、不门控：上游 v1 的
+    // quote 分支兜底本就是 text（core.ts:698-742——仅 callout 内代码块升
+    // codeblock，普通引用行一律 text 不跳过），平台 quote 不跳过，两侧行为
+    // 等价，无需门控
+    expect(FORMAT_SKIP_BY_PLATFORM.quote).toBe(false)
+  })
+})
+
+describe('四、CodeBlockInfo 提取矩阵（上游 getCodeBlocksInfos 查询版）', () => {
+  it('语言整串 trim 后小写（上游整串保留，不取首 token）', () => {
+    const f = makeSyntaxFake(['```Python Script', 'x', '```'].join('\n'))
+    expect(codeBlocksViaQuery(f.doc, f.query)![0]!.language).toBe('python script')
+  })
+
+  it('缩进围栏：indent = 围栏起始列，codeStartPos 加缩进', () => {
+    const f = makeSyntaxFake(['  ```js', '  x', '  ```'].join('\n'))
+    const block = codeBlocksViaQuery(f.doc, f.query)![0]!
+    expect(block.indent).toBe(2)
+    expect(block.startPos).toBe(2)
+    expect(block.codeStartPos).toBe(f.doc.line(2).from + 2)
+  })
+
+  it('相邻开闭栏（空代码体）：codeStartPos = codeEndPos = 开栏行尾', () => {
+    const f = makeSyntaxFake(['```', '```'].join('\n'))
+    const block = codeBlocksViaQuery(f.doc, f.query)![0]!
+    expect(block.codeStartPos).toBe(f.doc.line(1).to)
+    expect(block.codeEndPos).toBe(f.doc.line(1).to)
+  })
+
+  it('未闭合围栏延至文末（``` 与 ~~~ 混用不互闭——平台树语义）', () => {
+    const f = makeSyntaxFake(['```ts', 'a', '~~~', 'b'].join('\n'))
+    const block = codeBlocksViaQuery(f.doc, f.query)![0]!
+    expect(block.endPos).toBe(f.doc.length)
+    expect(block.codeEndPos).toBe(f.doc.line(4).to)
+    expect(block.language).toBe('ts')
+  })
+
+  it('引用内围栏：语言提取剥引用前缀；indent/startPos 含引用前缀；codeStart/codeEnd 取内容行', () => {
+    const f = makeSyntaxFake(['> ```js', '> const a = 1', '> ```'].join('\n'))
+    const block = codeBlocksViaQuery(f.doc, f.query)![0]!
+    expect(block.language).toBe('js')
+    expect(block.indent).toBe(2) // '> ' 计入围栏起始列（上游 start_pos - line.from 同义）
+    expect(block.startPos).toBe(f.doc.line(1).from + 2)
+    expect(block.endPos).toBe(f.doc.line(3).to)
+    expect(block.codeStartPos).toBe(f.doc.line(2).from + 2) // 内容行首 + 缩进
+    expect(block.codeEndPos).toBe(f.doc.line(2).to)
+  })
+
+  it('已知形态学边界钉住：相邻代码块零分隔行时连续 code 行 run 合并为一块（上游 iterate begin/end 节点为两块）', () => {
+    // '> ```' 闭栏行与下一行顶层 '```ts' 开栏之间无非 code 行——查询版按
+    // 连续 code run 分组取首行开栏，两块合一；上游树是两个 codeblock
+    // begin/end 节点。消费面影响：相邻异语言块的后者经 codeBlockAtViaQuery
+    // 取到首块语言。罕见形态（Markdown 笔记中两块间通常有空行），#5 切片 A
+    // 既定形态学，规格「已知口径差异」节落档，如需拆分另开票
+    const f = makeSyntaxFake(['> ```js', '> a', '> ```', '```ts', 'b'].join('\n'))
+    const blocks = codeBlocksViaQuery(f.doc, f.query)!
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]!.language).toBe('js')
+    // 局部扩展实现（评审 S6 前半）与全量 run 分组同边界：第二块体内
+    // （'b' 行）经 codeBlockAtViaQuery 仍取首块语言——run 合并语义不变
+    expect(codeBlockAtViaQuery(f.doc, f.query, f.doc.line(5).from + 1)).toEqual(blocks[0])
+    expect(detectScopeViaQuery(f.doc, f.query, f.doc.line(5).from + 1)).toEqual({
+      scope: RuleScope.Code,
+      language: 'js',
+    })
+  })
+
+  it('围栏缩进上限 0-3（评审 R2-B5）：4 空格缩进的 ``` 是缩进代码字面内容，不产出 CodeBlockInfo（3 空格仍产出）', () => {
+    // CommonMark 围栏开栏缩进上限 3 空格（对齐仓内 ruleScopeFallback 时代
+    // FENCE_LINE `/^ {0,3}/` 先例）；4 空格缩进的 ``` 是缩进代码块的字面
+    // 内容——上游对缩进代码无 codeblock-begin 不产出块信息。平台树同判
+    // code（缩进代码），故 run 在场而开栏形态学必须拒绝
+    const four = makeSyntaxFake(['    ```js', '    x'].join('\n'))
+    expect(codeBlocksViaQuery(four.doc, four.query)).toEqual([])
+    // 行级 kind 仍是 code；codeBlockAtViaQuery 同口径无块信息（语言提取
+    // 无从发生——Code 作用域无语言，与既有「缩进代码无语言」断言同型）
+    expect(codeBlockAtViaQuery(four.doc, four.query, four.doc.line(1).from + 4)).toBeNull()
+    // 3 空格缩进仍是围栏开栏（上限内），块信息照常产出、indent=3
+    const three = makeSyntaxFake(['   ```js', '   x'].join('\n'))
+    const block = codeBlocksViaQuery(three.doc, three.query)![0]!
+    expect(block.language).toBe('js')
+    expect(block.indent).toBe(3)
+    expect(block.startPos).toBe(3)
+  })
+
+  it('codeBlockAtViaQuery 局部扩展的闭区间口径：pos 在开栏行的围栏前缀内不算命中（对齐全量版 find 与上游 start_pos 语义）', () => {
+    // '  ```js'（缩进 2）pos=0（缩进段）：pos 行 kind 是 code，但
+    // clamped < block.startPos（=2）→ null；pos 在围栏字符处起命中
+    const f = makeSyntaxFake(['  ```js', '  x'].join('\n'))
+    expect(codeBlockAtViaQuery(f.doc, f.query, 0)).toBeNull()
+    expect(codeBlockAtViaQuery(f.doc, f.query, 2)!.language).toBe('js')
+    // 引用内围栏同口径：'> ```js' 的 '>' 前缀段（startPos=2）不算命中
+    const q = makeSyntaxFake(['> ```js', '> a'].join('\n'))
+    expect(codeBlockAtViaQuery(q.doc, q.query, 0)).toBeNull()
+    expect(codeBlockAtViaQuery(q.doc, q.query, 2)!.language).toBe('js')
+  })
+})

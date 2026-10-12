@@ -19,6 +19,7 @@ import {
   type RuleInputPipelineContext,
 } from '../src/ruleBehaviorPipeline'
 import { isPositionProtected, parseUserDefinedRegExp } from '../src/userDefinedRegex'
+import { makeRejectingQuery, makeSyntaxFake } from './syntaxFake'
 
 /** 按内置规则 id 集构造引擎（族拆分在 intercept 层，本文件按需拼装） */
 function engineOf(ruleIds: readonly string[]): RuleEngine {
@@ -193,17 +194,45 @@ describe('选区语义', () => {
   })
 })
 
-// ===== 作用域注入（降级判定接线，无 syntaxTree） =====
+// ===== 作用域注入（#5 切片 B：树版 detectScopeViaQuery 换传） =====
 
-describe('作用域注入（文本正则降级版 detectScopeFromText）', () => {
+describe('作用域注入（树版 detectScopeViaQuery）', () => {
   it('Text 限定规则在围栏代码内被 scopeHint=Code 拦下；正文内照常命中', () => {
     const engine = new RuleEngine()
     engine.addSimpleRule({ trigger: '。', replacement: '。!', options: 't' } satisfies SimpleRule)
     // 围栏内：```js\n。\n``` 光标 7（。 之后）
-    const inCode = planInputRuleModification(engine, inputCtx('```js\n。\n```', 7, 'input.type', '。'))
+    const inCode = planInputRuleModification(
+      engine,
+      inputCtx('```js\n。\n```', 7, 'input.type', '。'),
+      { scopeQuery: makeSyntaxFake('```js\n。\n```').query },
+    )
     expect(inCode).toBeNull()
-    const inText = planInputRuleModification(engine, inputCtx('x。', 2, 'input.type', '。'))
+    const inText = planInputRuleModification(
+      engine,
+      inputCtx('x。', 2, 'input.type', '。'),
+      { scopeQuery: makeSyntaxFake('x。').query },
+    )
     expect(inText?.changes[0]?.text).toBe('。!')
+  })
+
+  it('非 All 规则在场而查询缺席 → 不接管返回 null（#5：不 fallback 正则）', () => {
+    const engine = new RuleEngine()
+    engine.addSimpleRule({ trigger: '。', replacement: '。!', options: 't' } satisfies SimpleRule)
+    // options 不带 scopeQuery：无法判定作用域 → 不接管（查询缺席由装配层
+    // 解释为「不接管」，管线不猜）
+    expect(planInputRuleModification(engine, inputCtx('x。', 2, 'input.type', '。'))).toBeNull()
+  })
+
+  it('非 All 规则在场、查询拒绝（ok:false）→ 不接管返回 null（评审 P3：拒绝不静默归 Text 施加规则修饰）', () => {
+    const engine = new RuleEngine()
+    engine.addSimpleRule({ trigger: '。', replacement: '。!', options: 't' } satisfies SimpleRule)
+    // 若拒绝静默归 Text：本用例的正文命中（'。!'）仍会发生——期望 null 钉住
+    // 「查询拒绝 = 不接管」而非「查询拒绝 = Text」（spec §二拒绝口径）
+    expect(
+      planInputRuleModification(engine, inputCtx('x。', 2, 'input.type', '。'), {
+        scopeQuery: makeRejectingQuery(),
+      }),
+    ).toBeNull()
   })
 })
 
@@ -669,46 +698,47 @@ describe('保护区注入：SelectKey 管线（票面对称扩展，input 类回
   })
 })
 
-// ===== 作用域计算去重与 All 短路（审查 C-P1-1 修复） =====
+// ===== 作用域计算的 All 短路（#5 切片 B：memo 已删，短路保留） =====
 //
-// 热路径现状：同一输入事务被行为链逐族驱动，各管线对同一 (text, pos)
-// 重复全文 O(L) 扫描。两层去重的断言面：
-// - All 短路：族内全部规则作用域含 All 时（内置 20 条全 All），管线跳过
-//   作用域计算（scopeMemoComputeCount 不增），命中行为与显式判定一致；
-// - memo 复用：非 All 规则在场时的真实判定经单槽缓存，同 (text, pos)
-//   只算一次（跨管线调用共享）。
-import {
-  detectScopeFromTextMemoized,
-  resetScopeMemoForTest,
-  scopeMemoComputeCount,
-} from '../src/ruleScopeFallback'
+// 热路径现状：同一输入事务被行为链逐族驱动。两层设计的现存断言面：
+// - All 短路（保留）：族内全部规则作用域含 All 时（内置 20 条全 All），
+//   管线跳过作用域查询（fake 计数器不增），命中行为与显式判定一致；
+// - memo（已删除）：原 (text,pos) 单槽缓存针对的是降级版全文 O(L) 正则
+//   扫描的重复成本（审查 C-P1-1）；树版查询 µs 级无此成本，保留只会
+//   增加陈旧风险——随 ruleScopeFallback 一并删除（#5 切片 B 决策）。
+import { detectScopeViaQuery } from '../src/syntaxTreeQuery'
 
-describe('作用域计算：All 短路与事务级 memo（C-P1-1）', () => {
-  it('All 短路：全 All 族（内置 fw2hw）管线驱动不触发作用域计算', () => {
-    resetScopeMemoForTest()
+describe('作用域计算：All 短路（树版查询不触发）', () => {
+  it('All 短路：全 All 族（内置 fw2hw）管线驱动不触发作用域查询', () => {
     const engine = engineOf(['builtin-fw2hw-double'])
     expect(engine.allRulesUnscoped()).toBe(true)
-    const plan = planInputRuleModification(engine, inputCtx('。。', 2, 'input.type', '。'))
+    const fake = makeSyntaxFake('。。')
+    const plan = planInputRuleModification(engine, inputCtx('。。', 2, 'input.type', '。'), {
+      scopeQuery: fake.query,
+    })
     expect(plan?.changes).toEqual([{ offset: 0, length: 2, text: '.' }])
-    expect(scopeMemoComputeCount()).toBe(0)
+    expect(fake.counts.lineTypeAt).toBe(0)
+    expect(fake.counts.inlineAt).toBe(0)
   })
 
-  it('All 短路行为等价：全 All 族下短路（scopeHint=All）与显式文本判定的命中一致', () => {
+  it('All 短路行为等价：全 All 族下短路（scopeHint=All）与显式树版判定的命中一致', () => {
     const engine = engineOf(['builtin-fw2hw-double'])
     // 光标 15（文末，代码围栏外的句尾）——fw2hw 左正则尾锚命中 。。[13,15)
-    const ctx = inputCtx('```\ncode\n```\n。。', 15, 'input.type', '。')
+    const docText = '```\ncode\n```\n。。'
+    const ctx = inputCtx(docText, 15, 'input.type', '。')
     // 短路形态（管线实际路径）：scopeHint = All
     const viaPipeline = planInputRuleModification(engine, ctx)
-    // 显式形态：同一文档与光标按文本降级判定（Text）直接喂引擎
-    const scope = detectScopeFromTextMemoized('```\ncode\n```\n。。', 15)
-    expect(scope.scope).not.toBe('code') // 光标在围栏外，文本判定为非代码
+    // 显式形态：同一文档与光标按树版查询判定（Text）直接喂引擎
+    const scope = detectScopeViaQuery(makeSyntaxFake(docText).doc, makeSyntaxFake(docText).query, 15)
+    expect(scope).not.toBeNull() // fake 查询不会拒绝（评审 P3 后拒绝返回 null）
+    expect(scope!.scope).not.toBe('code') // 光标在围栏外，树版判定为非代码
     const explicit = engine.process({
       kind: RuleType.Input,
       docText: ctx.snapshot.text,
       selection: { from: 15, to: 15 },
       inserted: '。',
       changeType: 'input.type',
-      scopeHint: scope.scope,
+      scopeHint: scope!.scope,
     })
     expect(viaPipeline).not.toBeNull()
     expect(explicit).not.toBeNull()
@@ -720,50 +750,41 @@ describe('作用域计算：All 短路与事务级 memo（C-P1-1）', () => {
     expect(explicit?.newText).toBe('.')
   })
 
-  it('memo 复用：非 All 规则在场时同 (text, pos) 只算一次（跨管线共享）', () => {
-    resetScopeMemoForTest()
+  it('非 All 规则在场时真实查询（每次驱动各查各的——memo 已删，无缓存断言）', () => {
     const engine = new RuleEngine()
     engine.addSimpleRules([
       { id: 'user-t', trigger: 'zz', replacement: 'ZZ', options: 't', priority: 1 }, // Text 作用域
       ...DEFAULT_BUILTIN_RULES.filter((r) => r.id === 'builtin-fw2hw-double'),
     ])
     expect(engine.allRulesUnscoped()).toBe(false)
-    // 同一事务两次驱动（族链多族形态）：同 (text, pos) memo 命中
+    const fake = makeSyntaxFake('a zz')
     const ctx = inputCtx('a zz', 4, 'input.type', 'z')
-    const first = planInputRuleModification(engine, ctx)
-    const second = planInputRuleModification(engine, ctx)
+    const first = planInputRuleModification(engine, ctx, { scopeQuery: fake.query })
+    const second = planInputRuleModification(engine, ctx, { scopeQuery: fake.query })
     expect(first?.changes).toEqual([{ offset: 2, length: 2, text: 'ZZ' }])
     expect(second?.changes).toEqual([{ offset: 2, length: 2, text: 'ZZ' }])
-    expect(scopeMemoComputeCount()).toBe(1)
+    expect(fake.counts.lineTypeAt).toBeGreaterThan(0) // 真实走了查询
   })
 
-  it('memo 失效键：光标变化自然 miss（各算各的）', () => {
-    resetScopeMemoForTest()
-    const engine = new RuleEngine()
-    engine.addSimpleRules([{ id: 'user-t', trigger: 'zz', replacement: 'ZZ', options: 't' }])
-    const ctxA = inputCtx('a zz', 4)
-    const ctxB = inputCtx('a zz', 2)
-    planInputRuleModification(engine, ctxA)
-    planInputRuleModification(engine, ctxB)
-    expect(scopeMemoComputeCount()).toBe(2)
-  })
-
-  it('Delete / SelectKey 管线同享 All 短路与 memo', () => {
-    resetScopeMemoForTest()
-    // Delete 全 All 内置族：短路不计算
+  it('Delete / SelectKey 管线同享 All 短路', () => {
+    // Delete 全 All 内置族：短路不查询
     const deleteEngine = engineOf(DELETE_RULE_IDS)
+    const fakeDel = makeSyntaxFake('【')
     planDeleteRuleModification(
       deleteEngine,
       inputCtx('', 0, 'delete.backward', '', [{ anchor: 0, head: 0 }], { from: 0, to: 1, text: '【' }),
+      { scopeQuery: fakeDel.query },
     )
-    expect(scopeMemoComputeCount()).toBe(0)
-    // SelectKey 全 All 内置族：短路不计算
+    expect(fakeDel.counts.lineTypeAt).toBe(0)
+    // SelectKey 全 All 内置族：短路不查询
     const selectEngine = engineOf(SELECTKEY_RULE_IDS)
+    const fakeSel = makeSyntaxFake('·')
     planSelectKeyRuleModification(
       selectEngine,
       inputCtx('·', 1, 'input.type', '·', [{ anchor: 1, head: 1 }], { from: 0, to: 5, text: 'hello' }),
+      { scopeQuery: fakeSel.query },
     )
-    expect(scopeMemoComputeCount()).toBe(0)
+    expect(fakeSel.counts.lineTypeAt).toBe(0)
   })
 
   it('allRulesUnscoped 惰性缓存：规则集变化后失效重算', () => {

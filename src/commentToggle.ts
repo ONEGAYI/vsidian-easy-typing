@@ -13,13 +13,14 @@
 //   `%%  %%` 正中时整对删除）；选中文本以 `%%` 包裹/解包（紧贴无空格）。
 // - **未知语言**（表外语言或无信息串围栏）：无操作（上游 return false）。
 //
-// 代码块语言感知：复用 #25 的 `detectScopeFromText`（文本正则降级版，
-// `src/ruleScopeFallback.ts`）——围栏状态机（```/~~~ 同字符关闭、长度不短于
-// 开栏）提取信息串首 token 作语言。#5（语法树版围栏识别）落地后随
-// ruleScopeFallback 同步升级，调用面（scope + language 形状）不变。
-// 降级口径与上游树版的差异见 docs/specs/comment-toggle.md「降级口径」：
-// 围栏标记行按 Text 走 `%%` 分支（上游树版把围栏行划入代码块区间，会在
-// 围栏行写注释前缀破坏围栏——降级版语义更稳）。
+// 代码块语言感知：#5 切片 B 起走树版 syntaxTreeQuery.detectScopeViaQuery
+//（平台 experimental.syntax 位置查询；codeBlockAtViaQuery 提取开栏信息
+// 串整串 trim 小写作语言——上游整串保留口径），调用面（scope + language
+// 形状）不变，ruleScopeFallback 降级实现已随 #5 删除。降级口径与上游树
+// 版的既有差异（围栏标记行按 Text 走 `%%` 分支——上游树版把围栏行划入
+// 代码块区间，会在围栏行写注释前缀破坏围栏；树版 lineTypeAt 对围栏行判
+// code，行为与上游树版一致，原降级版「更稳」的围栏行 `%%` 分支随之消
+// 失——语义变化记录于本票）。
 //
 // 命令注册（平台稳定 API）：mode=live（注释编辑仅 Live 正文有意义）、
 // writes=true（写操作快捷键仅在 Live 正文接管宿主绑定）。默认键位
@@ -41,7 +42,7 @@ import type { EditorState } from '@codemirror/state'
 import type { AddonCommandDefinition } from '../types/vendor/shared/addonCommands'
 import type { AddonViewHandle } from '../types/vendor/shared/addonEditApi'
 import type { EditorViewRegistry } from './plainPasteCommand'
-import { detectScopeFromText } from './ruleScopeFallback'
+import { detectScopeViaQuery, type SyntaxQuery } from './syntaxTreeQuery'
 import { debugLog } from './logging'
 import { RuleScope } from './rules/rule-engine'
 
@@ -171,14 +172,17 @@ export interface CommentTogglePlan {
 }
 
 /**
- * 注释切换决策：选区起点处作用域判定（#25 detectScopeFromText 降级版）——
- * 代码块内按围栏语言行切换（未知语言 → null 无操作）；其余（含围栏标记
- * 行，降级口径）走 Markdown `%%` 分支（恒有计划）。多选区只处理主选区
- *（上游口径）；全部变更单事务承载（撤销一笔）。
+ * 注释切换决策：选区起点处作用域判定（#5 切片 B 树版
+ * detectScopeViaQuery——state.doc 即 SyntaxDoc）——代码块内按围栏语言行
+ * 切换（未知语言 → null 无操作）；其余（含代码块外的公式/正文）走
+ * Markdown `%%` 分支（恒有计划）；查询拒绝（null，评审 P3：拒绝不静默归
+ * Text 走 %% 分支）→ null 无动作（spec §二拒绝口径）。多选区只处理主选
+ * 区（上游口径）；全部变更单事务承载（撤销一笔）。
  */
-export function planCommentToggle(state: EditorState): CommentTogglePlan | null {
+export function planCommentToggle(state: EditorState, query: SyntaxQuery): CommentTogglePlan | null {
   const selection = state.selection.main
-  const scope = detectScopeFromText(state.doc.toString(), selection.from)
+  const scope = detectScopeViaQuery(state.doc, query, selection.from)
+  if (scope === null) return null // 查询拒绝：不接管（handler 不派发）
   if (scope.scope === RuleScope.Code) {
     return planCodeBlockCommentToggle(state, scope.language)
   }
@@ -268,6 +272,8 @@ export function buildToggleCommentCommandDefinition(title: string): AddonCommand
 /** 命令依赖（页面装配注入生产实现，测试接替身） */
 export interface ToggleCommentCommandDeps {
   readonly views: EditorViewRegistry
+  /** #5 语法查询工厂（instanceId → 查询；null = 反查失败/语法面缺席 → 静默无动作） */
+  readonly queryOf: (instanceId: string) => SyntaxQuery | null
 }
 
 /**
@@ -291,7 +297,13 @@ export function createToggleCommentCommandHandler(
       return
     }
     if (view.compositionStarted || view.state.readOnly) return
-    const plan = planCommentToggle(view.state)
+    const query = deps.queryOf(target.info.instanceId)
+    if (query === null) {
+      // 反查失败/语法面缺席（平台违约防御深度）：不判定即无动作
+      debugLog('comment-toggle skipped: syntax query unavailable for instance')
+      return
+    }
+    const plan = planCommentToggle(view.state, query)
     if (plan === null) return
     view.dispatch({
       changes: plan.changes,

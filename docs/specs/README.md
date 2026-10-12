@@ -18,13 +18,14 @@
 - [tabout.md](tabout.md)——Tab 跳出配对符（工单 #7）：22 对配符栈匹配算法、Tab 按键拦截（实验 cm6 keymap 落穿层）与平台 Tab 冲突核对。
 - [tabstop.md](tabstop.md)——Tabstop 占位符导航态（工单 #15）：分组纯逻辑与导航 StateField、Tab/Shift-Tab 跳转（抢先层 Prec.high，#7 仲裁落地）、当前占位符高亮（复用平台 find 变量）与 #25 行为链接线接口；跳转顺序 $0 → $1 → $2（上游口径）。
 - [backspace.md](backspace.md)——BetterBackspace 空列表/引用清除与重编号（工单 #8）：前缀解析与清除/重编号算法、Backspace 按键拦截（实验 cm6 keymap 抢先层）与平台退格冲突核对。
-- [enhance-moda.md](enhance-moda.md)——EnhanceModA 渐进选择与「选择当前块」（工单 #11）：无外部状态的层级推进状态机、Mod+A 抢先层（Prec.high）接管边界、块边界正则降级（#5 升级点）与命令注册契约。
+- [enhance-moda.md](enhance-moda.md)——EnhanceModA 渐进选择与「选择当前块」（工单 #11）：无外部状态的层级推进状态机、Mod+A 抢先层（Prec.high）接管边界、树版懒查询判定（#5 换传，降级差异消除记录）与命令注册契约。
 - [smart-paste.md](smart-paste.md)——SmartPaste 智能粘贴续接与纯文本粘贴标记（工单 #12）：列表/引用前缀续接算法、粘贴拦截（实验 cm6 domEventHandlers 让位序）、纯文本粘贴命令（平台稳定 API + #417 规范键序）与平台粘贴冲突核对。
 - [new-line-below.md](new-line-below.md)——NewLineBelow 当前行下方新建行（工单 #13）：Mod+Enter 行尾插入 + 列表/引用前缀延续算法（列位置语义核对结论）、抢先层接管平台 defaultKeymap `insertBlankLine` 的仲裁核对、`newLineBelow` 设置门；严格换行（同票决策项）裁剪至 [ADR-0002](../adr/0002-strict-line-break-mapping.md)——已决策 C 先行（平台 vsidian#423 + 插件 #30 等待接线）。
 - [fold-enter.md](fold-enter.md)——折叠标题处 Enter 新建同级标题（工单 #18）：折叠态判定消费 experimental.headingFold.folds()、Enter 抢先层（Prec.high）仲裁、折叠保持验证与平台 headingFold 首消费反馈。
-- [protected-zones.md](protected-zones.md)——自定义正则保护区（工单 #27）：多行正则解析（`|++`/`|--` 旗标语义）与默认模板、格式化管线注入缝消费、「用户规则尊重保护区」双开开关与规则管线接入、wikilink/mdlink 正则降级（#5 升级点）。
+- [protected-zones.md](protected-zones.md)——自定义正则保护区（工单 #27）：多行正则解析（`|++`/`|--` 旗标语义）与默认模板、格式化管线注入缝消费、「用户规则尊重保护区」双开开关与规则管线接入、#5 树版换传后 code/formula 分区与保护区剪除语义（升级点已实施）。
 - [auto-format.md](auto-format.md)——自动格式化（工单 #26）：语言对间距/前缀词典/自动大写/软空格符号的行级算法（上游差异化验证矩阵）、onInput 管线（格式化当前行口径、#27 保护区注入缝、作用域文本降级）与 06-autoformat 行为族（input-rules 独占组链序、#12 粘贴联动）。
-- [comment-toggle.md](comment-toggle.md)——注释切换命令（工单 #2）：语言注释符表（上游 26 键逐条）与行/块切换、Markdown `%%` 切换、围栏语言感知复用 #25 降级版（#5 升级点）、平台键位冲突核对（与内建 htmlComment 同弦并存）与视图登记表共享决策（供 #28 对照）。
+- [comment-toggle.md](comment-toggle.md)——注释切换命令（工单 #2）：语言注释符表（上游 26 键逐条）与行/块切换、Markdown `%%` 切换、围栏语言感知树版判定（#5 换传，降级口径收敛记录）、平台键位冲突核对（与内建 htmlComment 同弦并存）与视图登记表共享决策（供 #28 对照）。
 - [formatting-commands.md](formatting-commands.md)——格式化命令族（工单 #28）：格式化全文/选区、删除空行（strictLineBreaks 恒 true 的 CommonMark 映射）、切换自动格式化、选区转代码块五命令（平台稳定 commands API + 键位冲突核对：Mod+Shift+L 与内置 findAllOccurrences 同弦、Ctrl+Tab 被 Tab 固定链拒绝）；文件排除（ExcludeFiles × #407 docUri 的段边界后缀映射，行为族与命令双侧消费）；#26 规格 prevCh=undefined 注记的勘误（命令重排实为 prevCh=0）。
+- [syntax-line-types.md](syntax-line-types.md)——语法树行类型与作用域映射（工单 #5）：上游判定语义 → 平台 experimental.syntax kind 枚举 → 消费维度投影的映射对照表（callout 与链接排除两处组件自判缺口）、已知口径差异全量（fm 源码态、嵌套优先级、单行 `$$x$$`、`` `[[a]]` `` 链接区段优先剪除等）、六个消费方索引、fake 近似边界声明与升级路径。
 
 里程碑与工单总览见 [README](../../README.md) 与 [Issues](https://github.com/ONEGAYI/vsidian-easy-typing/issues)。面向用户的操作手册在 [docs/guides/](../guides/)（#19 移植上游三篇专题 Doc——自定义规则 / 自动格式化 / 编辑增强，与本目录的实施规格互为表里：规格面向开发者记边界与对照，指南面向用户讲用法与差异）。

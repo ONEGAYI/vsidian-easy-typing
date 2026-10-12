@@ -36,7 +36,7 @@
 - **注释行判定的无状态化**：上游 `regNull = /^\s*$|^\/\//g` 带 `g` 标志用于 `.test()`，跨行共享 lastIndex 产生「隔行跳过」的交替怪癖（连续多空行/注释行时第二行反而被当正则解析）。本移植取意图语义的无状态实现（每行独立判定）；出厂模板两种实现行为一致（tag 注释行都跳过），差异只在用户自写连续注释/空行时出现，且无状态版更符合注释语义。
 - **零宽命中防御**：可零宽匹配的用户正则（如 `x*`）上游会死循环（exec 零宽命中 lastIndex 不前进）；本移植跳过零宽命中并手动推进游标。出厂模板无零宽形态，只在用户自写零宽正则时分歧。
 - **非法正则反馈通道**：上游 Notice（Obsidian API）/ console.error → 本仓 debugLog（logging 约定，纯逻辑模块零平台依赖）。
-- **wikilink/mdlink 精确识别的正则降级**（票面边界）：上游规则侧检查经 `splitTextWithLinkAndUserDefined`（链接本来就是纯正则，语义一致）；格式化侧上游 code/formula 由语法树先行摘出，本移植经 `splitLineIntoParts` 文本扫描剪除（#26 已落，语义等价记录于 auto-format.md）。**#5 语法树适配后的升级点**：`splitLineIntoParts` 的 code/formula 扫描换传语法树令牌后，保护区与天然保护区的剪除逻辑无需改动（区间减法语义不变）；规则侧探针不受影响。
+- **wikilink/mdlink 精确识别**（票面边界）：上游规则侧检查经 `splitTextWithLinkAndUserDefined`（链接本来就是纯正则，语义一致）；格式化侧上游 code/formula 由语法树先行摘出。**#5 升级点已实施**：`splitLineIntoParts` 的 code/formula 扫描已换传平台语法查询（`inlineAt` 位置查询 + 链接区段剪除，见 [syntax-line-types.md](syntax-line-types.md)），保护区与天然保护区的**剪除逻辑无需改动**（区间减法语义不变，如预判）；规则侧探针不受影响。
 
 ## 已知边界
 

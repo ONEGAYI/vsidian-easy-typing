@@ -1,34 +1,54 @@
-// 正则降级的行级块结构扫描（工单 #11——列表/引用块边界识别）。
+// 行级块结构扫描（工单 #11 建立、#5 切片 A 升级为平台语法查询版、切片 B
+// 收紧 query 为必选并改懒查询形态）。
 //
 // 上游事实源：easy-typing-obsidian v6.0.9 的树版判定
-// keyboard_handlers.ts:512（getPosLineType2）与 syntax.ts:155-201
+// keyboard_handlers.ts:748-788（getPosLineType2）与 syntax.ts:155-201
 // （getQuoteInfoInPos——上游本就是纯正则，逐字移植）；段块邻行判定来自
 // keyboard_handlers.ts:783-809（getBlockLinesInPos 的 text 判定）。
 //
-// **降级原因与升级点**：#5（列表/引用块边界的语法树识别）blocked——平台
-// experimental.cm6.language 的 syntaxTree 在 live 状态恒为未解析空树
-// （vsidian #406 诚实边界），行类型判定退化为行首形态学扫描（对齐 #2/#7
-// 正则降级先例）。#5 落地（或平台补树查询能力）后，本模块整体替换为树版
-// 判定，调用面（kind/quoteInfoAt/paragraphBlockAt 的形状）保持不变。
+// **树版判定（#5 落地）**：行类型 = 平台 experimental.syntax.lineTypeAt
+// （vsidian PR #433/#434，B+ 形态位置查询）经 src/syntaxTreeQuery.ts 的
+// 映射表投影；行内几何（indent/markerEnd/quoteContentStart）仍从行文本
+// 正则计算（行内形态学与树无关）。映射对照表、查询适配器接口与代码块/
+// 作用域 API 见 syntaxTreeQuery.ts——本文件只保留 ModA 消费面的行扫描
+// 适配与上游纯正则部分。
 //
-// 与上游树版的已 documented 差异见 docs/specs/enhance-moda.md「降级口径」：
-// - 单行 `$$x$$` 不识别为公式块（树版识别）；
-// - 围栏开闭不校验围栏字符/长度配对（``` 与 ~~~ 互相闭合、短 fence 闭合
-//   长 fence 均按开闭切换近似）；
-// - 列表续行（缩进 ≥2 且上方最近非空行属列表）按形态学归 list——树版按
-//   解析归属，边界情形（如缩进 < 2 的续行、续行后接顶格文本）可能不同。
+// #11 的正则状态机全文扫描已随升级删除，不并存两套判定；其 documented
+// 降级差异（单行 $$x$$ 不识别、围栏 ```/~~~ 互闭、frontmatter/$$ 未闭合
+// 的延续近似）随平台语义消除，口径见 syntaxTreeQuery.ts 头注释。
 //
-// 本模块纯字符串输入（CM6 doc 行文本数组），不 import CM6——可在 node
-// 下直接单测。行号口径 1-based（与 doc.line(n) 对齐），数组下标 = 行号-1。
+// **懒查询形态（#5 切片 B）**：quoteInfoAt/paragraphBlockAt 收 SyntaxDoc
+// （CM6 Text 结构性满足，state.doc 直传）逐行按需查询——上游本来就是
+// 行文本正则的判定（getQuoteInfoInPos 的 quote_regex 门与扩展、列表
+// 缩进 /^\s*/）保留纯行文本计算，不消耗查询；行类型判定（上游
+// getPosLineType2 的消费位）逐行 lineInfoAt 局部查，查询拒绝返回 null
+// 由消费方按「不接管」解释（不 fallback 正则——exploration 笔记 §5.4）。
+//
+// 本模块纯字符串 + 查询适配器输入，不 import CM6——可在 node 下直接
+// 单测。行号口径 1-based（与 doc.line(n) 对齐）。
+import {
+  CALLOUT_PREFIX_RE,
+  HEADING_RE,
+  docOfLines,
+  lineInfoAt,
+  scanLinesViaQuery,
+  QUOTE_PREFIX_RE,
+  type SyntaxDoc,
+  type SyntaxQuery,
+} from './syntaxTreeQuery'
 
-/** 行级类型（降级形态学口径；上游 LineType 的子集 + empty 独立） */
+// 行内形态学正则事实源已移至 syntaxTreeQuery（#5）；此处再导出保持
+// modaSelection 等既有导入路径不变。
+export { CALLOUT_PREFIX_RE, HEADING_RE, LIST_MARKER_RE, QUOTE_PREFIX_RE } from './syntaxTreeQuery'
+
+/** 行级类型（平台 kind 经 LINE_KIND_BY_PLATFORM 投影的 v2/ModA 消费维度） */
 export type LineKind =
-  | 'text' // 普通文本（含标题、表格行、水平线——上游 v2 均归 text，不特判）
+  | 'text' // 普通文本（平台 table/heading 投影为 text——上游 v2 不特判；跳过维度出口见 FORMAT_SKIP_BY_PLATFORM）
   | 'empty' // 空行/纯空白（上游 v2 归 text；独立 kind 供段块邻行排除消费）
-  | 'list' // 列表标记行或续行
-  | 'quote' // 引用前缀行（含 callout 标题行）
-  | 'code' // 代码围栏内部（含围栏行）
-  | 'formula' // $$ 公式块内部（含围栏行）
+  | 'list' // 列表标记行或续行（引用内列表含引用前缀计入 markerEnd）
+  | 'quote' // 引用前缀行（含 callout 标题行——平台无 callout 枚举）
+  | 'code' // 代码块行（含围栏行与缩进代码）
+  | 'formula' // $$ 公式块行（含跨行块与单行闭合块）
   | 'frontmatter' // 文首 --- 围栏内部（含边界行）
 
 /** 单行扫描结果（偏移均为行内偏移） */
@@ -42,113 +62,17 @@ export interface LineInfo {
   readonly quoteContentStart: number | null
 }
 
-/** 列表标记（上游 handleModA 的 reg_list 逐字移植：无序/有序/任务项，标记后须有空白） */
-export const LIST_MARKER_RE = /^(\s*)([-*+] \[[^\]]\]|[-*+]|\d+\.)\s/
-/** 引用前缀（上游 getQuoteInfoInPos 的 quote_regex 逐字移植） */
-export const QUOTE_PREFIX_RE = /^(\s*)(>+) ?/
-/** callout 标记（上游 getQuoteInfoInPos 的 callout_regex 逐字移植） */
-export const CALLOUT_PREFIX_RE = /^(\s*)(>)+ \[![^\s]+\][+-]? ?/
-/** 标题行（上游 getBlockLinesInPos 的 reg_headings 逐字移植——仅 ATX 形态） */
-export const HEADING_RE = /^#+ /
-/** 代码围栏标记（降级口径：任意缩进的 ```/~~~ 开行；上游树版不涉正则） */
-export const FENCE_MARKER_RE = /^\s*(?:`{3,}|~{3,})/
-/** 公式块围栏标记（降级口径：整行为 $$；单行 $$x$$ 不识别） */
-export const FORMULA_MARKER_RE = /^\s*\$\$\s*$/
-
-const EMPTY_RE = /^\s*$/
-/** 列表续行的缩进阈值（对齐上游整列表扫描的 `indent >= 2` 判定） */
-const CONTINUATION_MIN_INDENT = 2
-
-const PLAIN_LINE: LineInfo = Object.freeze({
-  kind: 'text',
-  indent: 0,
-  markerEnd: 0,
-  quoteContentStart: null,
-}) as LineInfo
-
 /**
- * 全文档行扫描：围栏/公式/frontmatter 代状态 + 列表标记/续行 + 引用前缀。
- * O(行数) 单遍；调用方（按键/命令）每次决策扫描一次。**代价与上游树版
- * 不同阶**（上游 syntaxTree 增量查询近 O(1)，本降级版 O(行数)）——已知
- * 成本：10 万行文档每键全行扫描；enhanceModA 默认关、仅 Mod+a 路径可达
- * （审查 B-P2-3 订正；上游续行判定实际只看局部，#5 树版落地后窗口化）
+ * 全文档行扫描（查询版）：逐行平台行类型查询 + 映射表投影（实现见
+ * syntaxTreeQuery.scanLinesViaQuery）。ModA 按键路径已改懒查询
+ * （modaSelection，性能红线），本入口供测试与全量行分类消费。
+ * 查询拒绝返回 null（评审 R2-B6：全仓拒绝语义 null 归一，与
+ * scanLinesViaQuery / lineInfoAt 一致）——拒绝只发生在非 live/已销毁
+ * 视图（本就不该接管），不 fallback 正则（防复活已拆除的降级路径，
+ * exploration 笔记 §5.4）。
  */
-export function scanLines(texts: readonly string[]): LineInfo[] {
-  const result: LineInfo[] = []
-  let inCode = false
-  let inFormula = false
-  let inFrontmatter = texts.length > 0 && texts[0]!.trim() === '---'
-
-  for (let i = 0; i < texts.length; i++) {
-    const text = texts[i]!
-
-    // frontmatter 代（含边界行；未闭合延续到文末）
-    if (inFrontmatter) {
-      result.push(frontmatterLine())
-      if (i > 0 && text.trim() === '---') inFrontmatter = false
-      continue
-    }
-
-    // 围栏代：标记行切换，内部行一律 code（优先于一切行首形态）
-    if (FENCE_MARKER_RE.test(text)) {
-      result.push(codeLine(text))
-      inCode = !inCode
-      continue
-    }
-    if (inCode) {
-      result.push(codeLine(text))
-      continue
-    }
-
-    // 公式块代（$$ 整行开闭；不嵌套、不与围栏并存）
-    if (FORMULA_MARKER_RE.test(text)) {
-      result.push(formulaLine())
-      inFormula = !inFormula
-      continue
-    }
-    if (inFormula) {
-      result.push(formulaLine())
-      continue
-    }
-
-    if (EMPTY_RE.test(text)) {
-      result.push(emptyLine(text))
-      continue
-    }
-
-    const quoteMatch = text.match(QUOTE_PREFIX_RE)
-    if (quoteMatch) {
-      const calloutMatch = text.match(CALLOUT_PREFIX_RE)
-      result.push({
-        kind: 'quote',
-        indent: quoteMatch[1]!.length,
-        markerEnd: 0,
-        quoteContentStart: calloutMatch ? calloutMatch[0].length : quoteMatch[0].length,
-      })
-      continue
-    }
-
-    const listMatch = text.match(LIST_MARKER_RE)
-    if (listMatch) {
-      result.push({
-        kind: 'list',
-        indent: listMatch[1]!.length,
-        markerEnd: listMatch[0].length,
-        quoteContentStart: null,
-      })
-      continue
-    }
-
-    // 续行近似：缩进 ≥2 且上方最近非空行已属列表结构（标记行或续行）
-    const indent = countIndent(text)
-    if (indent >= CONTINUATION_MIN_INDENT && nearestNonEmptyKind(result) === 'list') {
-      result.push({ kind: 'list', indent, markerEnd: 0, quoteContentStart: null })
-      continue
-    }
-
-    result.push({ ...PLAIN_LINE, indent })
-  }
-  return result
+export function scanLines(texts: readonly string[], query: SyntaxQuery): LineInfo[] | null {
+  return scanLinesViaQuery(docOfLines(texts), query)
 }
 
 /** 引用块信息（上游 getQuoteInfoInPos 逐字移植；行号 1-based） */
@@ -163,36 +87,40 @@ export interface QuoteInfo {
   readonly isCallout: boolean
 }
 
-/** 当前行的引用块信息；非引用行返回 null（上游：lineAt(pos) 不匹配 quote_regex） */
-export function quoteInfoAt(
-  texts: readonly string[],
-  scan: readonly LineInfo[],
-  lineNumber: number,
-): QuoteInfo | null {
-  const idx = lineNumber - 1
-  const info = scan[idx]
-  if (!info || info.kind !== 'quote') return null
+/**
+ * 当前行/引用块信息：纯行文本正则判定（#5 切片 B 对齐上游形态——上游
+ * getQuoteInfoInPos 本就是 quote_regex/callout_regex 行文本匹配 + 区间
+ * 扩展，不查树、不依赖行类型；frontmatter/围栏内的 `>` 行同上游照样
+ * 命中）。非引用行返回 null（上游 quote_regex 不匹配）。
+ */
+export function quoteInfoAt(doc: SyntaxDoc, lineNumber: number): QuoteInfo | null {
+  const line = doc.line(lineNumber)
+  const qm = QUOTE_PREFIX_RE.exec(line.text)
+  if (qm === null) return null
+  const cm = CALLOUT_PREFIX_RE.exec(line.text)
+  const contentStart = cm !== null ? cm[0].length : qm[0].length
 
   // 下方：连续引用行
   let endLine = lineNumber
-  for (let i = idx + 1; i < texts.length; i++) {
-    if (scan[i]!.kind === 'quote') endLine = i + 1
+  for (let i = lineNumber + 1; i <= doc.lines; i++) {
+    if (QUOTE_PREFIX_RE.test(doc.line(i).text)) endLine = i
     else break
   }
   // 上方：引用行/callout 行连续扩展；callout 分支不 break（上游注释掉的 break）
   let startLine = lineNumber
   let isCallout = false
-  for (let i = idx; i >= 0; i--) {
-    if (CALLOUT_PREFIX_RE.test(texts[i]!)) {
+  for (let i = lineNumber; i >= 1; i--) {
+    const text = doc.line(i).text
+    if (CALLOUT_PREFIX_RE.test(text)) {
       isCallout = true
-      startLine = i + 1
-    } else if (QUOTE_PREFIX_RE.test(texts[i]!)) {
-      startLine = i + 1
+      startLine = i
+    } else if (QUOTE_PREFIX_RE.test(text)) {
+      startLine = i
     } else {
       break
     }
   }
-  return { startLine, endLine, contentStart: info.quoteContentStart ?? 0, isCallout }
+  return { startLine, endLine, contentStart, isCallout }
 }
 
 /** 段块范围（行号 1-based，闭区间） */
@@ -202,62 +130,37 @@ export interface BlockRange {
 }
 
 /**
- * 光标所在文本段块（上游 getBlockLinesInPos 降级）：当前行无条件入块；
- * 邻行仅收纳 kind=text 且非空且非标题（`^#+ `）的行。
+ * 光标所在文本段块（上游 getBlockLinesInPos）：当前行无条件入块；邻行
+ * 仅收纳 kind=text 且非空且非标题（`^#+ `）的行——行类型逐行 lineInfoAt
+ * 局部查（懒查询：遇非 text 行即停，不预扫全文）。查询拒绝返回 null
+ * （整体不接管，由消费方解释）。
  */
 export function paragraphBlockAt(
-  texts: readonly string[],
-  scan: readonly LineInfo[],
+  doc: SyntaxDoc,
+  query: SyntaxQuery,
   lineNumber: number,
-): BlockRange {
+): BlockRange | null {
   let startLine = lineNumber
   let endLine = lineNumber
-  for (let i = lineNumber - 2; i >= 0; i--) {
-    const line = texts[i]!
-    if (scan[i]!.kind === 'text' && line !== '' && !HEADING_RE.test(line)) {
-      startLine = i + 1
+  for (let i = lineNumber - 1; i >= 1; i--) {
+    const line = doc.line(i)
+    const info = lineInfoAt(doc, query, i)
+    if (info === null) return null
+    if (info.kind === 'text' && line.text !== '' && !HEADING_RE.test(line.text)) {
+      startLine = i
       continue
     }
     break
   }
-  for (let i = lineNumber; i < texts.length; i++) {
-    const line = texts[i]!
-    if (scan[i]!.kind === 'text' && line !== '' && !HEADING_RE.test(line)) {
-      endLine = i + 1
+  for (let i = lineNumber + 1; i <= doc.lines; i++) {
+    const line = doc.line(i)
+    const info = lineInfoAt(doc, query, i)
+    if (info === null) return null
+    if (info.kind === 'text' && line.text !== '' && !HEADING_RE.test(line.text)) {
+      endLine = i
       continue
     }
     break
   }
   return { startLine, endLine }
-}
-
-// ---- 内部工具 ----
-
-function countIndent(text: string): number {
-  const match = text.match(/^\s*/)
-  return match ? match[0].length : 0
-}
-
-/** 上方最近非空行的 kind（无则 null）——续行归属判定 */
-function nearestNonEmptyKind(scan: readonly LineInfo[]): LineKind | null {
-  for (let i = scan.length - 1; i >= 0; i--) {
-    if (scan[i]!.kind !== 'empty') return scan[i]!.kind
-  }
-  return null
-}
-
-function codeLine(text: string): LineInfo {
-  return { kind: 'code', indent: countIndent(text), markerEnd: 0, quoteContentStart: null }
-}
-
-function formulaLine(): LineInfo {
-  return { kind: 'formula', indent: 0, markerEnd: 0, quoteContentStart: null }
-}
-
-function frontmatterLine(): LineInfo {
-  return { kind: 'frontmatter', indent: 0, markerEnd: 0, quoteContentStart: null }
-}
-
-function emptyLine(text: string): LineInfo {
-  return { kind: 'empty', indent: countIndent(text), markerEnd: 0, quoteContentStart: null }
 }

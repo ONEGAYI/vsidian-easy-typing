@@ -29,7 +29,7 @@ L3 平台接线层    extension.ts / rulesHost.ts / settings/store.ts / host-api
 L2 接入层        *Intercept.ts（行为链/keymap/粘贴的注册与 gate）
                  *Command.ts（命令注册）  *Pipeline.ts（onInput 纯函数管线）
                       │  （决策与派发分离：plan 只读状态，command 派发事务）
-L1 算法层        formatting/（行级格式化）  blockScan.ts / ruleScopeFallback.ts
+L1 算法层        formatting/（行级格式化）  blockScan.ts / syntaxTreeQuery.ts
                  *Algorithm.ts / modaSelection.ts / tabstop*.ts / pasteMarker.ts
                  userDefinedRegex.ts / fileExclusion.ts / commentToggle.ts
                       │
@@ -46,7 +46,7 @@ L0 纯逻辑内核    rules/（rule-engine / default-rules / function-table /
 - **L2 接入层**——本仓最具示范性的分层，核心是**决策与派发分离**：`planXxx(...)` 只读 `EditorState` 返回计划（或 null = 不接管），`createXxxCommand/Handler` 把计划派发为 CM6 事务或平台计划对象。好处：决策可在 vitest 里用真实 `EditorState` 离线驱动，派发层只剩薄薄的注册与接线。
 - **L3 平台接线层**——唯一允许 import vendor 类型（仍然 type-only）与 vscode API 的层。负责两段生命周期装配、通道挂载、设置拉取与广播、SDK 面注册。
 
-**降级层是一个特设角色**：`blockScan.ts`（行类型/块边界的正则扫描）与 `ruleScopeFallback.ts`（作用域判定的文本降级）是 #5（语法树适配）blocked 期间的替代实现——升级点在模块头注释标注，#5 落地后整体替换、调用面形状不变。
+**降级层曾是特设角色，已随 #5 退场**：#11/#25 等 blocked 期间的正则降级实现（`blockScan.ts` 的行类型状态机、已删除的 `ruleScopeFallback.ts`）已随 #5（语法树适配）整体替换为树版判定——作用域判定现归 `syntaxTreeQuery.ts` 的 `detectScopeViaQuery`（平台 `experimental.syntax` 位置查询），`blockScan.ts` 只保留 ModA 消费面的行扫描适配与上游纯正则部分。
 
 ## 三、触发四通道
 

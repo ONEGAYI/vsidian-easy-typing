@@ -77,7 +77,9 @@ describe('人工验证清单结构契约（#21）', () => {
 
   it('宿主版本矩阵三要素：vsidian 基线 commit / VSIX 安装态 / 1.82.3 下界', () => {
     const doc = readDoc()
-    expect(doc).toContain('9107e2f0554d8b5c1637d16e1d1b375543b01c1c')
+    // 基线 commit 与 vendor 快照锚定同步（#5 re-vendor 至 d26f1e86——
+    // syntax 查询面 merge；文档「维度一」节与 DEFAULT_COMMIT 同源）
+    expect(doc).toContain('d26f1e8660d75f551ea4b37c297df87ede6c48c4')
     expect(doc).toContain('--install-extension')
     expect(doc).toContain('1.82.3')
     // 先装宿主再装组件（extensionDependencies 依赖顺序）在步骤中写明

@@ -224,4 +224,4 @@ CHANGELOG 中文、Keep a Changelog 风格，开发中条目一律记入顶部 U
 - **#4 行内间距策略**——依赖 #5 与 vsidian#406（experimental.cm6 暴露 `@codemirror/language`）；纯决策逻辑可先行开发，接线待依赖落地；
 - **#10 BetterCodeEdit**——依赖 #5（代码块边界识别）；实验入口，vsidian#402 落地后迁移。
 
-blocked 期间的降级先例：#11/#27 等票以正则降级版先行（`src/blockScan.ts`、`src/ruleScopeFallback.ts`），#5 落地后整体替换为树版判定、调用面形状保持不变——**降级实现 + 升级点标注**是处理平台缺口的标准姿势。
+降级先例的收束：#11/#27 等票 blocked 期间以正则降级版先行（`src/blockScan.ts`、已删除的 `src/ruleScopeFallback.ts`），#5 落地后已整体替换为树版判定（作用域判定归 `src/syntaxTreeQuery.ts` 的 `detectScopeViaQuery`）、调用面形状保持不变——**降级实现 + 升级点标注**是处理平台缺口的标准姿势。

@@ -16,6 +16,7 @@ import type { VsidianAddonPageSdk } from '../types/vendor/shared/addonPage'
 import type { AddonCommandDefinition } from '../types/vendor/shared/addonCommands'
 import type { AddonViewHandle } from '../types/vendor/shared/addonEditApi'
 import { planModASelection, planSelectBlock } from './modaSelection'
+import type { SyntaxQuery } from './syntaxTreeQuery'
 import { SETTINGS_TOPIC } from './settings/store'
 import type { Messages } from './i18n'
 
@@ -25,15 +26,22 @@ export type Cm6StateSubset = {
 }
 
 /**
- * Mod+A keymap Command 工厂：门控关闭或状态机失配 → return false 透传
+ * Mod+A keymap Command 工厂：门控关闭、语法查询缺席（反查失败/语法面
+ * 缺席——不接管透传，#5 切片 B）或状态机失配 → return false 透传
  * （平台原生全选）；命中 → 派发纯选区事务（零写回零 dirty，对齐 #7
  * taboutCommand 的事务口径）并接管。
  */
-export function createModACommand(options: { isEnabled: () => boolean }): (view: EditorView) => boolean {
-  const { isEnabled } = options
+export function createModACommand(options: {
+  isEnabled: () => boolean
+  /** #5 语法查询工厂（view → 查询；null = instanceId 反查失败/语法面缺席） */
+  queryOf: (view: EditorView) => SyntaxQuery | null
+}): (view: EditorView) => boolean {
+  const { isEnabled, queryOf } = options
   return (view: EditorView): boolean => {
     if (!isEnabled()) return false
-    const plan = planModASelection(view.state)
+    const query = queryOf(view)
+    if (query === null) return false
+    const plan = planModASelection(view.state, query)
     if (plan === null) return false
     view.dispatch({ selection: { anchor: plan.anchor, head: plan.head } })
     return true
@@ -88,13 +96,15 @@ export function buildSelectBlockCommandDefinition(messages: Pick<Messages, 'comm
 export interface SelectBlockCommandDeps {
   /** 实验 cm6 运行时状态面（快照决策构造临时 EditorState 用——值只经实验入口） */
   readonly cm6: { readonly state: Cm6StateSubset }
+  /** #5 语法查询工厂（instanceId → 查询；null = 反查失败/语法面缺席 → 无动作） */
+  readonly queryOf: (instanceId: string) => SyntaxQuery | null
 }
 
 /**
  * 「选择当前块」命令 handler（上游 selectBlockInCursor 决策）：目标
  * 视图句柄（平台命令回调携带，PR #432）快照决策 + setSelection（零文本
- * 变更事务）。空白行无操作（上游语义）；无活动视图（target null）或
- * 快照失败（view-disposed）无动作不抛错。
+ * 变更事务）。空白行无操作（上游语义）；无活动视图（target null）、
+ * 快照失败（view-disposed）或语法查询缺席无动作不抛错。
  */
 export function createSelectBlockCommandHandler(
   deps: SelectBlockCommandDeps,
@@ -102,6 +112,8 @@ export function createSelectBlockCommandHandler(
   return (target) => {
     // 违约防御深度：undefined 按无活动视图降级（同 plainPaste 口径）
     if (target === null || target === undefined) return
+    const query = deps.queryOf(target.info.instanceId)
+    if (query === null) return
     const snap = target.editor.getSnapshot()
     if (!snap.ok) return
     const primary = snap.snapshot.selections[0]
@@ -110,7 +122,7 @@ export function createSelectBlockCommandHandler(
       doc: snap.snapshot.text,
       selection: { anchor: primary.anchor, head: primary.head },
     })
-    const plan = planSelectBlock(state)
+    const plan = planSelectBlock(state, query)
     if (plan !== null) {
       target.editor.setSelection([{ anchor: plan.anchor, head: plan.head }])
     }

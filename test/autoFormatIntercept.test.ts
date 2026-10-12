@@ -7,17 +7,31 @@ import { createPasteMarker } from '../src/pasteMarker'
 import { pickMessages } from '../src/i18n'
 import { SETTINGS_TOPIC } from '../src/settings/store'
 import { RICH_STRUCTURE_DEFAULTS } from '../src/settings/defaults'
-import { INPUT_RULE_EXCLUSIVE_GROUP } from '../src/ruleBehaviorIntercept'
+import {
+  INPUT_RULE_EXCLUSIVE_GROUP,
+  inputContextIsMainInstance,
+  type InputContextOwnership,
+} from '../src/ruleBehaviorIntercept'
 import {
   AUTO_FORMAT_LOCAL_ID,
   createAutoFormatGate,
   defaultAutoFormatEngineSettings,
   registerAutoFormatBehavior,
 } from '../src/autoFormatIntercept'
+import type { SyntaxQuery } from '../src/syntaxTreeQuery'
+import { makeSyntaxFake } from './syntaxFake'
 import type { AddonBehaviorRegistration } from '../types/vendor/shared/addonBehaviors'
+
+/** 最近一次 inputCtx 的文档文本——reg.onInput(inputCtx(...)) 中 inputCtx
+ *  先求值，queryOf 在 onInput 内部读取（#5 判定源与断言坐标一致） */
+let lastCtxDoc = ''
+
+/** 语法查询工厂（#5 接线形态：活动文档同文 fake） */
+const syntaxQueryOf = (): SyntaxQuery | null => makeSyntaxFake(lastCtxDoc).query
 
 /** AddonInputContext 形状（快照后：text 已含键入） */
 function inputCtx(text: string, head: number, inputText: string, userEvent = 'input.type') {
+  lastCtxDoc = text
   return {
     userEvent,
     inputText,
@@ -57,6 +71,7 @@ function registerAll(options: {
     },
     language: options.language ?? 'zh-CN',
     marker: createPasteMarker(),
+    queryOf: syntaxQueryOf,
   })
   return { registrations, requestedTopics, onChangedCallbacks, outcomes }
 }
@@ -128,12 +143,31 @@ describe('onInput 全链（真实 AddonInputContext 形状）', () => {
       channel: { request: () => Promise.resolve({ ok: true as const, result: { effective: {} } }) },
       language: 'zh-CN',
       marker,
+      queryOf: syntaxQueryOf,
     })
     const reg = registrations[0]!
     expect(reg.onInput(inputCtx('中文a', 3, 'a', 'delete.backward'))).toBeNull()
     marker.markPaste(true)
     expect(reg.onInput(inputCtx('中文a', 3, 'a'))).toBeNull()
     expect(marker.plainPasteInProgress).toBe(false) // 纯文本意图已一次性消费
+  })
+
+  it('语法查询缺席（queryOf 返回 null）→ 恒 null 不格式化（#5：不 fallback）', () => {
+    const registrations: AddonBehaviorRegistration[] = []
+    registerAutoFormatBehavior({
+      behaviors: {
+        register: (reg) => {
+          registrations.push(reg)
+          return { ok: true as const, key: 'k' }
+        },
+        onChanged: () => () => {},
+      },
+      channel: { request: () => Promise.resolve({ ok: true as const, result: { effective: {} } }) },
+      language: 'zh-CN',
+      marker: createPasteMarker(),
+      queryOf: () => null,
+    })
+    expect(registrations[0]!.onInput(inputCtx('中文a', 3, 'a'))).toBeNull()
   })
 
   it('设置门：装载时与每次 onChanged 拉取 effective', () => {
@@ -228,6 +262,7 @@ describe('#27 保护区：设置驱动内置计算', () => {
       },
       language: 'zh-CN',
       marker: createPasteMarker(),
+      queryOf: syntaxQueryOf,
     })
     await Promise.resolve() // gate refresh 微任务
     return registrations[0]!
@@ -275,6 +310,7 @@ describe('#27 保护区：设置驱动内置计算', () => {
       },
       language: 'zh-CN',
       marker: createPasteMarker(),
+      queryOf: syntaxQueryOf,
       // 外部只保护 [0,3)（{{中）：a 与 }} 仍在区外，格式化可发生
       protectedRangesFor: (line) =>
         line.startsWith('{{中')
@@ -284,6 +320,52 @@ describe('#27 保护区：设置驱动内置计算', () => {
     const reg = registrations[0]!
     // 快照 {{中文a}}：外部区间 [0,3)，a 与 }} 区间外——中文|a 边界照常格式化
     expect(applyPlan('{{中文a}}', reg.onInput(inputCtx('{{中文a}}', 5, 'a')))).toBe('{{中文 a}}')
+  })
+})
+
+// 实例一致性守卫（评审 R2-B1）：平台行为链同样驱动嵌入（embed）Live 实例
+// ——其 ctx.snapshot/docUri 是嵌入实例的，而 queryOf 恒返回主实例查询，
+// 作用域判定会以主文档同偏移误判嵌入文档。守卫注入后 onInput 入口比对，
+// 不一致即放弃该次行为修饰。
+describe('实例一致性守卫（评审 R2-B1：嵌入实例驱动不接管）', () => {
+  function registerWithGuard(ownsContext: InputContextOwnership): AddonBehaviorRegistration {
+    const registrations: AddonBehaviorRegistration[] = []
+    registerAutoFormatBehavior({
+      behaviors: {
+        register: (reg) => {
+          registrations.push(reg)
+          return { ok: true as const, key: 'k' }
+        },
+        onChanged: () => () => {},
+      },
+      channel: { request: () => Promise.resolve({ ok: true as const, result: { effective: {} } }) },
+      language: 'zh-CN',
+      marker: createPasteMarker(),
+      queryOf: syntaxQueryOf,
+      ownsContext,
+    })
+    return registrations[0]!
+  }
+
+  it('ctx.snapshot.text ≠ 主视图文档（嵌入实例快照）→ onInput 直接 null（查询与格式化均不发生）', () => {
+    // 守卫走快照全文比对路径（mainDocUri 不可得）：主视图文档是另一文本
+    const reg = registerWithGuard((ctx) => inputContextIsMainInstance(ctx, null, '主实例的另一篇文档'))
+    expect(reg.onInput(inputCtx('中文a', 3, 'a'))).toBeNull()
+  })
+
+  it('ctx.docUri ≠ 主实例 targetDocUri（嵌入目标文档）→ null；docUri 同源比对路径', () => {
+    const reg = registerWithGuard((ctx) => inputContextIsMainInstance(ctx, 'file:///v/main.md', null))
+    // 主实例驱动（同 URI）：照常格式化（守卫不误伤主实例键入）
+    expect(reg.onInput({ ...inputCtx('中文a', 3, 'a'), docUri: 'file:///v/main.md' })).not.toBeNull()
+    // 嵌入实例驱动（引用目标 B 的 URI）：不接管
+    expect(reg.onInput({ ...inputCtx('中文a', 3, 'a'), docUri: 'file:///v/embed-b.md' })).toBeNull()
+  })
+
+  it('守卫返回 false 先于其余门控（与查询拒绝同一「不接管」语义，不占独占组）', () => {
+    // 快照文本与主视图一致但守卫判否（活动视图缺席形态：主视图未挂）——
+    // 即便设置全开 + 查询在场也直接放弃
+    const reg = registerWithGuard(() => false)
+    expect(reg.onInput(inputCtx('中文a', 3, 'a'))).toBeNull()
   })
 })
 

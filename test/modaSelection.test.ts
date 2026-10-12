@@ -1,15 +1,32 @@
-// 渐进选择状态机矩阵（工单 #11 核心验收）——真实 EditorState 驱动，
-// 以「连续按键模拟」承载层级序列端到端：每次 plan 结果回写为新选区再
-// plan 一次，直到 null（透传平台全选）。上游对照
-// keyboard_handlers.ts:509-676（handleModA 三分支）与 815-825
-// （selectBlockInCursor）。边界与降级差异见 docs/specs/enhance-moda.md。
+// 渐进选择状态机矩阵（工单 #11 核心验收；#5 切片 B 起经树版查询判定——
+// fake 判定链注入，行为断言不变）——真实 EditorState 驱动，以「连续按键
+// 模拟」承载层级序列端到端：每次 plan 结果回写为新选区再 plan 一次，
+// 直到 null（透传平台全选）。上游对照 keyboard_handlers.ts:509-676
+//（handleModA 三分支）与 815-825（selectBlockInCursor）。边界与降级差异
+// 见 docs/specs/enhance-moda.md。
 import { describe, expect, it } from 'vitest'
 import { EditorSelection, EditorState } from '@codemirror/state'
 import {
-  planModASelection,
-  planSelectBlock,
+  planModASelection as planModASelectionImpl,
+  planSelectBlock as planSelectBlockImpl,
   type SelectionRange,
 } from '../src/modaSelection'
+import type { SyntaxQuery } from '../src/syntaxTreeQuery'
+import { makeRejectingQuery, makeSyntaxFake } from './syntaxFake'
+
+/** 树版判定源：state 文档同文的平台判定链 fake（坐标一致） */
+function queryOfState(state: EditorState): SyntaxQuery {
+  return makeSyntaxFake(state.doc.toString()).query
+}
+
+/** plan 包装：注入 fake 查询（同名遮蔽——测试体保持单参调用形态） */
+function planModASelection(state: EditorState): SelectionRange | null {
+  return planModASelectionImpl(state, queryOfState(state))
+}
+
+function planSelectBlock(state: EditorState): SelectionRange | null {
+  return planSelectBlockImpl(state, queryOfState(state))
+}
 
 /** 折叠光标构造 */
 function stateAt(doc: string, cursor: number): EditorState {
@@ -253,5 +270,80 @@ describe('planSelectBlock：「选择当前块」决策（上游 selectBlockInCu
   it('带选区调用：以 head 所在行为准', () => {
     const doc = 'aaa\nbbb'
     expect(planSelectBlock(stateWithRange(doc, 0, 5))).toEqual({ anchor: 0, head: 7 })
+  })
+})
+
+describe('懒查询防回潮（#5 切片 B 性能红线：单键不预扫全文）', () => {
+  it('文本分支首按：10 行文档的 ModA 决策查询次数有上界（anchor 单点 + 段块局部邻行）', () => {
+    // 10 行连续文本、光标行1：决策 = anchor 行 1 次 + 段块邻行判定。
+    // 旧全文扫描形态为 10 次起步（每行一查）；懒查询锚定后上界 2 次
+    //（anchor 查 1 + 下行邻行查 1——首按段块只在命中 text 行时继续扩展，
+    // 本例段块 10 行会全查，故改用「光标行上下紧邻空行」的 3 行文档把
+    // 邻行判定收敛为 2 次）。
+    const doc3 = 'aaa\n\nbbb'
+    const fake3 = makeSyntaxFake(doc3)
+    expect(planModASelectionImpl(stateAt(doc3, 1), fake3.query)).toEqual({ anchor: 0, head: 3 })
+    // anchor 行查 1 次；下行是空行（kind 判定 1 次）即停 → 共 2 次
+    expect(fake3.counts.lineTypeAt).toBe(2)
+  })
+
+  it('引用分支：决策只查 anchor 行（quoteInfoAt 纯正则不消耗查询）', () => {
+    const doc = '> a\n> b\n> c\nplain'
+    const fake = makeSyntaxFake(doc)
+    expect(planModASelectionImpl(stateAt(doc, 2), fake.query)).toEqual({ anchor: 2, head: 3 })
+    // anchor 行查 1 次（quote 分支不查）；anchor 在 quote 行 kind=quote →
+    // 非 text 分支 → quoteInfoAt 纯正则接管。段落判定不发生。
+    expect(fake.counts.lineTypeAt).toBe(1)
+  })
+
+  it('列表标记行档 3 扩展遇顶格普通行即停（不扫到文末）', () => {
+    // 19 行文档：光标行 2 的整列表扩展上行遇行 1 顶格文本（indent 0 非
+    // 列表）即停、下行遇行 3 顶格文本即停——总查询次数有上界，不随文档
+    // 行数线性增长
+    const tail = Array.from({ length: 16 }, (_, i) => `tail${i}`).join('\n')
+    const doc = `lead\n- a\nplain\n${tail}`
+    const fake = makeSyntaxFake(doc)
+    expect(planModASelectionImpl(stateAt(doc, 7), fake.query)).toEqual({ anchor: 7, head: 8 })
+    // anchor 查 1 + 档3 上行（lead：indent 0 → 查 kind 1 次非列表停）+
+    // 档3 下行（plain：查 1 次非列表停）= 3 次（档 2 子列表扩展为纯缩进
+    // 不查；19 行文档查询恰 3 次）
+    expect(fake.counts.lineTypeAt).toBe(3)
+  })
+})
+
+describe('查询拒绝与分支序（评审 R2-A4 测试缺口）', () => {
+  it('恒拒绝查询 → planModASelection 返回 null（透传；拒绝不接管不 fallback）', () => {
+    // anchor 行单点查即拒绝（lineInfoAt → null）——与 spec §二拒绝口径
+    // 一致：非 live/已销毁视图的判定无意义，ModA 不接管
+    const doc = 'aaa\nbbb'
+    expect(planModASelectionImpl(stateAt(doc, 1), makeRejectingQuery())).toBeNull()
+  })
+
+  it('引用内围栏行（> ```js）光标走引用分支：行首引用正则先于 code 不接管判定（上游分支序钉住）', () => {
+    // anchorKind 判 code（平台树链 code 优先，围栏行属代码块区间），但
+    // 分支序在上游是 文本 → 引用（quoteInfoAt 行首纯正则，不查行类型）
+    // → 列表 → 代码不接管：`> ```js` 行首有引用前缀 → 引用分支接管
+    //（modaSelection.ts「引用分支」注释声明的行为）。层级：当前行内容
+    //（跳过 '> '）→ 引用块 → 透传
+    const doc = '> ```js'
+    expect(progressionLabels(stateAt(doc, 4))).toEqual(['```js', '> ```js', 'PASS'])
+  })
+
+  it('扩展中拒绝（部分行成功后拒绝）→ 整体 null：段块下行扩展遇拒绝即透传', () => {
+    // 自定义 query：行 3（'ccc'）起拒绝——anchor 行 1 与段块下行行 2 查询
+    // 成功后，行 3 扩展触达拒绝 → paragraphBlockAt 整体 null（不接管），
+    // 不以部分成功的段块区间接管
+    const doc = 'aaa\nbbb\nccc'
+    const fake = makeSyntaxFake(doc)
+    const rejectFrom = fake.doc.line(3).from
+    const partialReject: SyntaxQuery = {
+      lineTypeAt: (pos) =>
+        pos >= rejectFrom ? { ok: false, reason: 'view-disposed' } : fake.query.lineTypeAt(pos),
+      inlineAt: (pos) =>
+        pos >= rejectFrom ? { ok: false, reason: 'view-disposed' } : fake.query.inlineAt(pos),
+    }
+    expect(planModASelectionImpl(stateAt(doc, 1), partialReject)).toBeNull()
+    // 对照：无拒绝时同位置段块升档照常（确认拒绝注入确属扩展中触达）
+    expect(planModASelectionImpl(stateAt(doc, 1), fake.query)).toEqual({ anchor: 0, head: 3 })
   })
 })

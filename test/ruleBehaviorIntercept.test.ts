@@ -20,6 +20,7 @@ import {
   createRuleErrorReporter,
   createRulePipelineGate,
   createRuleSnapshotSource,
+  inputContextIsMainInstance,
   registerRuleDeleteSelectKeyBehaviors,
   registerRuleInputBehaviors,
   resolveRuleFamilies,
@@ -173,6 +174,48 @@ describe('注册形状契约（AddonBehaviorRegistration）', () => {
       snapshot: { text: '（）', selections: [{ anchor: 1, head: 1 }], version: 1, revision: 1 },
     })
     expect(onDelete).toBeNull()
+  })
+
+  it('实例一致性守卫（评审 R2-B1）：ctx.snapshot.text ≠ 主视图文档（嵌入实例驱动）→ onInput 直接 null', () => {
+    // 平台行为链同样驱动嵌入（embed）Live 实例——其快照是嵌入文档的，
+    // 而 queryOf 恒返回主实例查询，作用域判定会误判。守卫走快照全文比对
+    // 路径（mainDocUri 不可得）：主视图文档须与快照一致才放行（快照已含
+    // 本次键入，主视图文档同含）
+    const registrations: RuleBehaviorRegistrationSubset[] = []
+    const MAIN_DOC = '主实例的另一篇文档（'
+    registerRuleInputBehaviors({
+      behaviors: {
+        register: (reg) => {
+          registrations.push(reg)
+          return { ok: true as const, key: `ONEGAYI.vsidian-easy-typing#${reg.id}` }
+        },
+        onChanged: () => () => {},
+      },
+      channel: neverResolvingChannel(),
+      language: 'zh-CN',
+      ownsContext: (ctx) => inputContextIsMainInstance(ctx, null, MAIN_DOC),
+    })
+    const autopair = registrations.find((r) => r.id === '02-autopair')!
+    // 嵌入实例驱动（快照是嵌入文档的，≠ 主视图文档）：本会产出括号补全
+    // 计划的形态 → null
+    expect(
+      autopair.onInput({
+        userEvent: 'input.type',
+        inputText: '（',
+        replaced: null,
+        docUri: 'file:///embed/b.md',
+        snapshot: { text: '（', selections: [{ anchor: 1, head: 1 }], version: 1, revision: 1 },
+      }),
+    ).toBeNull()
+    // 主实例驱动（快照与主视图一致）：守卫放行，计划照常
+    const passThrough = autopair.onInput({
+      userEvent: 'input.type',
+      inputText: '（',
+      replaced: null,
+      docUri: 'file:///main.md',
+      snapshot: { text: MAIN_DOC, selections: [{ anchor: 10, head: 10 }], version: 1, revision: 1 },
+    })
+    expect(passThrough).not.toBeNull()
   })
 
   it('tabstop 暂存通道（#15×#25 接线）：命中含占位符的计划后可取、读即消费', () => {

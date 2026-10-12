@@ -7,8 +7,9 @@
 // detectRuleScope 经 syntaxTree 判行类型）；vsidian live 编辑器的
 // experimental.cm6.language.syntaxTree 恒为未解析空树（平台已知边界，见
 // vsidian#406 诚实边界）。因此本内核不做任何语法树判定：TxContext 的
-// scopeHint / scopeLanguage 由调用方注入——#25 行为链接入时传正则降级版
-// 判定，#5 语法树版就绪后换传即可，内核零改动。
+// scopeHint / scopeLanguage 由调用方注入——#25 行为链接入时曾传正则降级
+// 版判定，#5 起已换传树版（经管线 options.scopeQuery 注入，判定实现
+// src/syntaxTreeQuery.ts），内核零改动承诺兑现。
 //
 // 【与上游的刻意偏差】（其余逐行对照）：
 // 1. Notice 剥离：上游三处 `new Notice(...)`（替换函数解析失败 / 非法正则 /

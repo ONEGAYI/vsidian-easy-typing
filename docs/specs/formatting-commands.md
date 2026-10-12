@@ -72,14 +72,15 @@ VSCode 的 Ctrl+Shift+S（另存为）/ Ctrl+Shift+K（删除行）/ Ctrl+Shift+
   保留 + 水平线前被删空行回保（上游 L206-237 逐条）。上游在 Obsidian
   默认（false）下会删光所有空行——那在 CommonMark 渲染下会把段落合并，
   不适用，映射结论固化 strict 分支。
-- **格式化跳过口径**（票面指定，与 #26 作用域口径一致）：代码块
-  （``` / ~~~ 围栏状态机）、frontmatter（含边界行）、表格行（行首管道或
-  无首管道分隔行，引用前缀感知）、整行公式（行首 $$ 块）跳过。**与上游
-  差异**：上游树版 `getPosLineType` 对 table 行**会**格式化（text 与
-  table 都过 formatLine）；本票按票面口径跳过表格行——文本降级无法可靠
-  区分表格行与含管道文本，且 #26 键入路径同样不格式化表格（平台门控），
-  两条路径口径一致。语法树版（#5 换传）可恢复上游表格行格式化，记录为
-  升级点。
+- **格式化跳过口径**（票面指定，与 #26 作用域口径一致；#5 树版换传后维持
+  显式决策）：代码块、frontmatter（含边界行）、表格行、整行公式（含单行
+  闭合 `$$x$$`——#5 起识别）跳过，行分类走 `classifyFormatSkipLines` 的
+  平台 kind 投影（`FORMAT_SKIP_BY_PLATFORM`，见 [syntax-line-types.md](syntax-line-types.md)）。
+  **与上游差异（#28 已验收决策，#5 树版换传后不翻案）**：上游树版
+  `getPosLineType` 对 table 行**会**格式化（text 与 table 都过 formatLine）；
+  本票按票面口径跳过表格行——#26 键入路径同样不格式化表格（平台门控），
+  两条路径口径一致。平台 kind 判定已能区分 table（`lineTypeAt` 直判），跳过
+  是**显式决策**而非降级近似，不随树版恢复上游行为。
 - **#26 规格勘误**：auto-format.md「给后续票的提示」写
   `formatLine(line, curCh, prevCh=undefined, ...)` 是命令重排入口——**不
   准确**。`prevCh=undefined` 在本移植是「跳过间距引擎」形态
@@ -171,14 +172,14 @@ pathname + `decodeURIComponent`（坏编码回退原文）→ '\' 归一 '/' →
 
 ## 已知边界与升级点
 
-- **表格行跳过**（见语义要点）：上游树版格式化表格行，本票口径跳过；
-  #5（语法树换传）落地后可恢复，届时 `classifyFormatSkipLines` 换树版
-  行类型即可，plan 层零改动。
-- **行分类近似**（继承 #25 文本降级）：无首管道且非分隔行形态的表格行
-  （GFM 允许省略首尾管道的普通行）按文本格式化；`$$` 只认行首形态（行中
-  `$$` 开栏不识别）；引用块内围栏（`> ``` `）不进围栏状态机（上游 callout
-  内代码块另有专门回溯逻辑，本降级引用内围栏内容按文本处理——引用行本
-  身仍是文本行，上游同判 text）。
+- **表格行跳过**（见语义要点）：上游树版格式化表格行，本票口径跳过——
+  #5 树版换传后维持显式决策不翻案（`classifyFormatSkipLines` 已走平台 kind
+  投影，plan 层零改动，跳过由 `FORMAT_SKIP_BY_PLATFORM.table = true` 钉住）。
+- **行分类近似消除记录**（#5 树版换传，原 #25 文本降级差异消除）：无首
+  管道表格行、行中 `$$` 开栏、引用块内围栏（`> ``` `）等形态均由平台
+  `lineTypeAt` 判定（GFM 树语义；引用内围栏判 code、块内行不格式化）；
+  `classifyFormatSkipLines` 头注释与 [syntax-line-types.md](syntax-line-types.md)
+  记录口径。
 - **光标恰在脚本边界时不插空格**（上游怪癖忠实保留）：光标行传真实
   cursorCh，`formatLine` 的 token 中心算法在光标恰落在语言对边界上时该
   边界不插（如 `中文|abc` 光标在边界 → 无变更；光标进词内 → 插）。上游

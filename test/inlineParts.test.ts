@@ -1,16 +1,21 @@
-// 行内分区测试（工单 #26）：文本降级版切分（code/formula 扫描 + wikilink/
-// mdlink 正则 + #27 保护区注入缝）与边界空格状态机。切分形态学是本移植
-// 自有降级（上游走语法树），用形态断言钉住；分区间的格式化等价性由
-// lineFormatter 上游验证矩阵承载。
+// 行内分区测试（工单 #26；#5 切片 B 起树版查询驱动）：code/formula 分区
+// 由 fake 判定链（inlineAt 位置查询）切出 + 链接区段剪除（上游
+// !contains('link') 的组件自判——链接区段优先，syntaxTreeQuery.detectScopeViaQuery
+// 同款口径）+ wikilink/mdlink 正则（上游逐字）+ #27 保护区注入缝。切分
+// 形态断言钉住；分区间的格式化等价性由 lineFormatter 上游验证矩阵承载。
 import { describe, expect, it } from 'vitest'
 import {
   SpaceState,
   splitLineIntoParts,
   type InlinePart,
+  type ProtectedInlineRange,
 } from '../src/formatting/inlineParts'
+import { makeSyntaxFake } from './syntaxFake'
 
-function parts(line: string, protectedRanges?: Parameters<typeof splitLineIntoParts>[1]): InlinePart[] {
-  return splitLineIntoParts(line, protectedRanges)
+function parts(line: string, protectedRanges?: readonly ProtectedInlineRange[]): InlinePart[] {
+  // 单行文档的 fake：doc/query 同文，行号 1（fake 判定链不拒绝，非空断言）
+  const fake = makeSyntaxFake(line)
+  return splitLineIntoParts(fake.doc, fake.query, 1, protectedRanges)!
 }
 
 function shape(list: InlinePart[]): Array<[string, string, number, number]> {
@@ -95,8 +100,55 @@ describe('链接识别（上游正则逐字）', () => {
     ])
   })
 
-  it('代码/公式区段内的链接形态不识别（上游树版等价位）', () => {
-    expect(shape(parts('`[[a]]`'))).toEqual([['`[[a]]`', 'code', 0, 7]])
+  it('code 区段整包链接形态：链接区段优先剪出（#5 组件自判口径——期望随树版翻转）', () => {
+    // 期望翻转依据：链接区段剪除是「链接区段优先」的纯位置语义（上游
+    // !contains('link') 的组件自判，syntaxTreeQuery.detectScopeViaQuery 同款
+    // ——[[...]] 区段内的位置一律归链接）。code span [0,7) 剪除 [[a]] 区段
+    // [1,6) 后剩两侧反引号残段，[[a]] 由链接正则段捕获为 wikilink。
+    expect(shape(parts('`[[a]]`'))).toEqual([
+      ['`', 'code', 0, 1],
+      ['[[a]]', 'wikilink', 1, 6],
+      ['`', 'code', 6, 7],
+    ])
+  })
+
+  it('链接区段内的 code 形态归链接（上游语义：wikilink 内反引号不是 code）', () => {
+    expect(shape(parts('[[w `c` e]]'))).toEqual([['[[w `c` e]]', 'wikilink', 0, 11]])
+  })
+})
+
+describe('双 span 间隙形态（评审 R2-B2：T-F-T 非单调，间隙文本不得吞入分区）', () => {
+  // 原实现的二分找右边界依赖「同 kind 位置前缀单调」——同一行内
+  // span-gap-span（T-F-T）形态不单调，二分会收敛到第二 span 末尾把间隙
+  // 文本吞进 code/formula 分区（如 `a`和`bc` 整行变一个 code 分区）。
+  // 线性右扫在首个不同 kind 处停，间隙由外层游标走 none 路径。
+
+  it('双 code span 短间隙：间隙文本保留为 text 分区', () => {
+    expect(shape(parts('`a`和`bc`'))).toEqual([
+      ['`a`', 'code', 0, 3],
+      ['和', 'text', 3, 4],
+      ['`bc`', 'code', 4, 8],
+    ])
+  })
+
+  it('双 formula span 短间隙：同形态不吞间隙', () => {
+    expect(shape(parts('中$x$和$y$后'))).toEqual([
+      ['中', 'text', 0, 1],
+      ['$x$', 'formula', 1, 4],
+      ['和', 'text', 4, 5],
+      ['$y$', 'formula', 5, 8],
+      ['后', 'text', 8, 9],
+    ])
+  })
+
+  it('双 code span 长间隙：两个独立分区，间隙全为 text', () => {
+    const gap = '——很长的一段中文间隔文本——'
+    const line = '`a`' + gap + '`b`'
+    expect(shape(parts(line))).toEqual([
+      ['`a`', 'code', 0, 3],
+      [gap, 'text', 3, 3 + gap.length],
+      ['`b`', 'code', 3 + gap.length, line.length],
+    ])
   })
 })
 

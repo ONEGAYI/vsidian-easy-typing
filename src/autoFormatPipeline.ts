@@ -22,18 +22,19 @@
 // 事务不驱动行为（#25 记录），此判定防御覆盖粘贴窗内的普通键入与未来
 // 驱动面变化。
 //
-// 【作用域跳过】（上游 getPosLineType !== text → 不格式化，语法树版的
-// 文本降级）：复用 #25 detectScopeFromText——Code（围栏内容）与 Formula
-//（块级 $$ 与行内 $ 区间）跳过；frontmatter 由 isInsideFrontmatter 补判
-//（平台行为链已门控 frontmatter/块代码/表格格区，此处为管线级防御重复，
-// 表格不另判——依赖平台门控，记录于规格）。行内代码/公式作为分区由
-// lineFormatter 处理，无需行级跳过；光标落在其内时 detectScopeFromText
-// 的近似（误判 Formula/Code → 跳过整行）继承 #25 已知边界。
-// 【作用域判定经 memo】（审查 C-P1-1）：autoformat 与规则族在同一输入
-// 事务被驱动，detectScopeFromTextMemoized 同 (text, pos) 复用单槽缓存
-//（autoformat 真实消费 scope 值——要求 Text 才格式化，不做 All 短路）。
-import { detectScopeFromTextMemoized } from './ruleScopeFallback'
+// 【作用域跳过】（上游 getPosLineType !== text → 不格式化）：#5 切片 B 起
+// 走树版 detectScopeViaQuery（平台 experimental.syntax 经 syntaxTreeQuery 适
+// 配）——Code（块级围栏/行内代码，链接区段排除）与 Formula 跳过；行级
+// frontmatter 由 isInsideFrontmatter 补判（平台行为链已门控 frontmatter/
+// 块代码/表格格区，此处为管线级防御重复，表格不另判——依赖平台门控，
+// 记录于规格）。行内代码/公式作为分区由 lineFormatter 处理，无需行级跳
+// 过。查询拒绝 → detectScopeViaQuery 返回 null（评审 P3：拒绝不静默归
+// Text）——作用域门控处即拦截不格式化，不待行内分区的 inlineAt 拒绝兜底。
+// 【memo 已删除】（原 (text,pos) 单槽缓存的动机是同一事务 6 次同键重复
+// 全文 O(L) 正则扫描，审查 C-P1-1；查询版 µs 级无此成本，保留只会增加
+// 陈旧风险——#5 切片 B 决策）。
 import { RuleScope } from './rules/rule-engine'
+import { detectScopeViaQuery, docOfText, type SyntaxDoc, type SyntaxQuery } from './syntaxTreeQuery'
 import {
   pipelineConsumesUserEvent,
   type RuleInputBehaviorPlan,
@@ -54,6 +55,8 @@ export interface AutoFormatPasteSignal {
 
 export interface AutoFormatLineOptions {
   readonly settings: LineFormatSettings
+  /** 语法查询适配器（#5 树版判定源，必选——无查询不格式化，不 fallback） */
+  readonly query: SyntaxQuery
   /** 保护区区间集（**行内坐标**；#27 注入缝，默认无） */
   readonly protectedRanges?: readonly ProtectedInlineRange[]
   /** #12 粘贴标记（不传 = 无粘贴信号，供纯逻辑测试） */
@@ -98,15 +101,18 @@ export function planAutoFormatLineModification(
   const fromB = head - inputText.length
   if (fromB < 0) return null // 防御：inputText 与光标失配（多选区拼接等）
 
-  // 作用域门控（文本降级版）：Code / Formula / frontmatter 行不格式化
-  if (detectScopeFromTextMemoized(text, head).scope !== RuleScope.Text) return null
+  // 作用域门控（树版）：Code / Formula / frontmatter 行不格式化；查询拒绝
+  //（null，评审 P3）→ 不接管不格式化。docOfText 带单槽缓存（评审 R2-B4）
+  const doc: SyntaxDoc = docOfText(text)
+  const scope = detectScopeViaQuery(doc, options.query, head)
+  if (scope === null || scope.scope !== RuleScope.Text) return null
   if (isInsideFrontmatter(text, fromB)) return null
 
-  // 行定位与行内坐标（上游 formatLineOfDoc 的 offsetToPos 换算）
-  const lineStart = text.lastIndexOf('\n', fromB - 1) + 1
-  let lineEnd = text.indexOf('\n', lineStart)
-  if (lineEnd === -1) lineEnd = text.length
-  const line = text.slice(lineStart, lineEnd)
+  // 行定位与行内坐标（上游 formatLineOfDoc 的 offsetToPos 换算；行结构
+  // 直接从 SyntaxDoc 取——与查询同一坐标源）
+  const lineInfo = doc.lineAt(fromB)
+  const lineStart = lineInfo.from
+  const line = lineInfo.text
 
   // Enter 定稿分支（上游 insertedStr.contains('\n')）：curCh=prevCh=fromB
   // 列（定稿模式——词典只认精确命中、延迟边界补插）；光标跨插入段平移
@@ -114,9 +120,15 @@ export function planAutoFormatLineModification(
   const curCh = hasNewline ? fromB - lineStart : head - lineStart
   const prevCh = fromB - lineStart
 
-  const result = formatLine(line, curCh, prevCh, options.settings, {
-    protectedRanges: [...(options.protectedRanges ?? [])],
-  })
+  const result = formatLine(
+    line,
+    curCh,
+    prevCh,
+    options.settings,
+    { doc, query: options.query, lineNumber: lineInfo.number },
+    { protectedRanges: [...(options.protectedRanges ?? [])] },
+  )
+  if (result === null) return null // 行内分区查询拒绝：不格式化
   if (result.changes.length === 0) return null
 
   const cursorShift = hasNewline ? inputText.length : 0

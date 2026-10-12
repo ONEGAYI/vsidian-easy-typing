@@ -1,6 +1,6 @@
-// EnhanceModA 渐进选择状态机与「选择当前块」决策（工单 #11）——上游
-// easy-typing-obsidian keyboard_handlers.ts:509-676（handleModA）与
-// 815-815-825（selectBlockInCursor，原拼写 selectBlockInCurser）移植。
+// EnhanceModA 渐进选择状态机与「选择当前块」决策（工单 #11；#5 切片 B
+// 懒查询改造）——上游 easy-typing-obsidian keyboard_handlers.ts:509-676
+//（handleModA）与 815-825（selectBlockInCursor，原拼写 selectBlockInCurser）移植。
 //
 // **无外部状态的渐进设计（上游语义）**：状态机不持有跨按键状态——每次
 // 按键从「当前选区 vs 层级档位区间」的包含关系推断所在层级并推进一档；
@@ -14,17 +14,19 @@
 // - 列表续行：内容 → 起点项标记后内容（anchor 落回标记行，此后按标记行
 //   分支继续升档）。
 //
-// 行类型/块边界判定走 src/blockScan.ts 正则降级（#5 blocked 的先行
-// 降级，差异见 docs/specs/enhance-moda.md）。多选区按主选区处理
+// **懒查询（#5 切片 B，性能红线）**：行类型判定 = anchor 行单点查 +
+// 段块/引用块/列表块邻行逐行局部查（lineInfoAt）——单键成本
+// O(anchor 查询 + 块局部行数)，**不预扫全文**（查询版 µs×全文行数在
+// 10 万行文档达百毫秒级，不可接受；正则全文扫描的旧形态已随 #5 删除）。
+// SyntaxDoc 直接用 state.doc（CM6 Text 结构性满足）。上游本就是行文本
+// 正则的判定（getQuoteInfoInPos 的 quote_regex、handleModA 列表扩展的
+// /^\s*/ 缩进）保留纯行文本计算，不消耗查询。
+// 查询拒绝（非 live/已销毁视图）→ 返回 null 不接管（不 fallback 正则，
+// #33 拆防御链先例，exploration 笔记 §5.4）。多选区按主选区处理
 // （上游 selection.main），派发后收敛为单选区。
 import type { EditorState } from '@codemirror/state'
-import {
-  LIST_MARKER_RE,
-  paragraphBlockAt,
-  quoteInfoAt,
-  scanLines,
-  type LineInfo,
-} from './blockScan'
+import { LIST_MARKER_RE, paragraphBlockAt, quoteInfoAt } from './blockScan'
+import { lineInfoAt, type SyntaxDoc, type SyntaxQuery } from './syntaxTreeQuery'
 
 /** 选区目标（LF 偏移，anchor/head 与 CM6 语义一致） */
 export interface SelectionRange {
@@ -36,19 +38,20 @@ export interface SelectionRange {
 const INDENTED_FENCE_RE = /^\s+```/
 
 /** Mod+A 渐进选择决策：null = 透传平台全选 */
-export function planModASelection(state: EditorState): SelectionRange | null {
+export function planModASelection(state: EditorState, query: SyntaxQuery): SelectionRange | null {
   const selection = state.selection.main
   const doc = state.doc
   const anchorLine = doc.lineAt(selection.anchor)
   const headLine = doc.lineAt(selection.head)
-  const texts = docLines(state)
-  const scan = scanLines(texts)
-  const anchorKind = scan[anchorLine.number - 1]!.kind
+  const anchorInfo = lineInfoAt(doc, query, anchorLine.number)
+  if (anchorInfo === null) return null // 查询拒绝：不接管
+  const anchorKind = anchorInfo.kind
 
   // ---- 文本分支（空行与标题行按上游 v2 归 text 参与本分支）----
   // 「当前行」取 anchor 所在行、「段块」取 head 所在行扩展（上游口径）。
   if (anchorKind === 'text' || anchorKind === 'empty') {
-    const block = paragraphBlockAt(texts, scan, headLine.number)
+    const block = paragraphBlockAt(doc, query, headLine.number)
+    if (block === null) return null // 查询拒绝：不接管
     const blockStart = doc.line(block.startLine)
     const blockEnd = doc.line(block.endLine)
     // 已整含段块（含超集）→ 透传
@@ -64,8 +67,9 @@ export function planModASelection(state: EditorState): SelectionRange | null {
     return { anchor: anchorLine.from, head: anchorLine.to }
   }
 
-  // ---- 引用分支（head 所在行匹配引用前缀即接管；callout 标题行含内）----
-  const quote = quoteInfoAt(texts, scan, headLine.number)
+  // ---- 引用分支（head 所在行匹配引用前缀即接管；上游 getQuoteInfoInPos
+  // 纯行文本正则，不查行类型；callout 标题行含内）----
+  const quote = quoteInfoAt(doc, headLine.number)
   if (quote !== null) {
     const blockStart = doc.line(quote.startLine).from
     const blockEnd = doc.line(quote.endLine).to
@@ -82,7 +86,7 @@ export function planModASelection(state: EditorState): SelectionRange | null {
 
   // ---- 列表分支（anchor 所在行为列表标记行或续行）----
   if (anchorKind === 'list') {
-    return planListSelection(state, texts, scan, anchorLine)
+    return planListSelection(state, doc, query, anchorLine)
   }
 
   // 代码围栏 / 公式块 / frontmatter 内：不接管（上游 BetterCodeEdit 的
@@ -91,13 +95,12 @@ export function planModASelection(state: EditorState): SelectionRange | null {
 }
 
 /** 「选择当前块」决策：空/纯空白行无操作（null），否则段块整选 */
-export function planSelectBlock(state: EditorState): SelectionRange | null {
+export function planSelectBlock(state: EditorState, query: SyntaxQuery): SelectionRange | null {
   const selection = state.selection.main
   const headLine = state.doc.lineAt(selection.head)
   if (/^\s*$/.test(headLine.text)) return null
-  const texts = docLines(state)
-  const scan = scanLines(texts)
-  const block = paragraphBlockAt(texts, scan, headLine.number)
+  const block = paragraphBlockAt(state.doc, query, headLine.number)
+  if (block === null) return null // 查询拒绝：不接管
   return {
     anchor: state.doc.line(block.startLine).from,
     head: state.doc.line(block.endLine).to,
@@ -106,15 +109,20 @@ export function planSelectBlock(state: EditorState): SelectionRange | null {
 
 // ---- 列表分支（上游 handleModA L569-670 逐段移植）----
 
+/** 行是否列表行（懒查询；查询拒绝返回 null——整体不接管） */
+function isListLine(doc: SyntaxDoc, query: SyntaxQuery, lineNumber: number): boolean | null {
+  const info = lineInfoAt(doc, query, lineNumber)
+  return info === null ? null : info.kind === 'list'
+}
+
 function planListSelection(
   state: EditorState,
-  texts: readonly string[],
-  scan: readonly LineInfo[],
+  doc: SyntaxDoc,
+  query: SyntaxQuery,
   anchorLine: { number: number; from: number; to: number },
 ): SelectionRange | null {
-  const doc = state.doc
   const selection = state.selection.main
-  const anchorText = texts[anchorLine.number - 1]!
+  const anchorText = doc.line(anchorLine.number).text
   const listMatch = anchorText.match(LIST_MARKER_RE)
 
   // 续行（无标记）：内容 → 起点项标记后内容（此后 anchor 落回标记行）
@@ -122,15 +130,17 @@ function planListSelection(
     if (INDENTED_FENCE_RE.test(anchorText)) return null
     const curIndent = countIndent(anchorText)
     const content: SelectionRange = { anchor: anchorLine.from + curIndent, head: anchorLine.to }
-    // 上溯最近列表行（上游 getPosLineType2 == list）
+    // 上溯最近列表行（上游 getPosLineType2 == list——逐行局部查询）
     let startLine = anchorLine.number
-    for (let i = anchorLine.number - 2; i >= 0; i--) {
-      if (scan[i]!.kind === 'list') {
-        startLine = i + 1
+    for (let i = anchorLine.number - 1; i >= 1; i--) {
+      const isList = isListLine(doc, query, i)
+      if (isList === null) return null // 查询拒绝：不接管
+      if (isList) {
+        startLine = i
         break
       }
     }
-    const startMatch = texts[startLine - 1]!.match(LIST_MARKER_RE)
+    const startMatch = doc.line(startLine).text.match(LIST_MARKER_RE)
     const startOffset = startMatch ? startMatch[0].length : 0
     const fromItem: SelectionRange = { anchor: doc.line(startLine).from + startOffset, head: anchorLine.to }
     if (selection.anchor <= content.anchor && selection.head >= content.head) return fromItem
@@ -142,26 +152,22 @@ function planListSelection(
   const levels: SelectionRange[] = []
   // 档 1：当前行内容（不含标记）
   levels.push({ anchor: anchorLine.from + listMatch[0].length, head: anchorLine.to })
-  // 档 2：当前行及其子列表（下方缩进严格更深者连续纳入）
+  // 档 2：当前行及其子列表（下方缩进严格更深者连续纳入——行文本 /^\s*/
+  // 缩进，上游同款，不消耗查询）
   let childEndLine = anchorLine.number
-  for (let i = anchorLine.number; i < texts.length; i++) {
-    if (scan[i]!.indent <= curIndent) break
-    childEndLine = i + 1
+  for (let i = anchorLine.number + 1; i <= doc.lines; i++) {
+    if (countIndent(doc.line(i).text) <= curIndent) break
+    childEndLine = i
   }
   const childRange: SelectionRange = { anchor: anchorLine.from, head: doc.line(childEndLine).to }
   levels.push(childRange)
-  // 档 3：整列表（上方/下方按「列表行或缩进 ≥2」连续扩展）
-  let startLine = anchorLine.number
-  for (let i = anchorLine.number - 2; i >= 0; i--) {
-    if (scan[i]!.kind === 'list' || scan[i]!.indent >= 2) startLine = i + 1
-    else break
-  }
-  let endLine = anchorLine.number
-  for (let i = anchorLine.number; i < texts.length; i++) {
-    if (scan[i]!.kind === 'list' || scan[i]!.indent >= 2) endLine = i + 1
-    else break
-  }
-  const wholeRange: SelectionRange = { anchor: doc.line(startLine).from, head: doc.line(endLine).to }
+  // 档 3：整列表（上方/下方按「列表行或缩进 ≥2」连续扩展；缩进先行短路
+  // 减少查询次数——上/下两向同形，提取为 extendListEdge，评审 S2）
+  const upEdge = extendListEdge(doc, query, anchorLine.number, -1)
+  if (upEdge === null) return null // 查询拒绝：不接管
+  const downEdge = extendListEdge(doc, query, anchorLine.number, 1)
+  if (downEdge === null) return null // 查询拒绝：不接管
+  const wholeRange: SelectionRange = { anchor: doc.line(upEdge).from, head: doc.line(downEdge).to }
   if (wholeRange.anchor !== childRange.anchor || wholeRange.head !== childRange.head) {
     levels.push(wholeRange)
   }
@@ -183,10 +189,31 @@ function planListSelection(
 
 // ---- 内部工具 ----
 
-function docLines(state: EditorState): string[] {
-  const texts: string[] = []
-  for (const text of state.doc.iterLines()) texts.push(text)
-  return texts
+/**
+ * 档 3 的单向边缘扩展（评审 S2 自上/下两同形循环提取；行为逐字等价）：
+ * 从 fromLine 起，列表行或缩进 ≥2 的行（缩进先行短路，减少查询次数）
+ * 连续纳入并推进边缘，其余行停。返回边缘行号；查询拒绝返回 null
+ * （整体不接管）。step=-1 向上（边界 1）、step=1 向下（边界 doc.lines）。
+ */
+function extendListEdge(
+  doc: SyntaxDoc,
+  query: SyntaxQuery,
+  fromLine: number,
+  step: -1 | 1,
+): number | null {
+  let edge = fromLine
+  for (let i = fromLine + step; i >= 1 && i <= doc.lines; i += step) {
+    const text = doc.line(i).text
+    if (countIndent(text) >= 2) {
+      edge = i
+      continue
+    }
+    const isList = isListLine(doc, query, i)
+    if (isList === null) return null // 查询拒绝：不接管
+    if (isList) edge = i
+    else break
+  }
+  return edge
 }
 
 function countIndent(text: string): number {

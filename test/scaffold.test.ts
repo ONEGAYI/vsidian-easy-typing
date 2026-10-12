@@ -47,11 +47,13 @@ describe('manifest 契约（vsidianAddon 清单与依赖锁定）', () => {
     expect(pkg.vsidianAddon.api).toBe('^1.0.0')
     // #18 起消费 experimental.headingFold（folds() 折叠查询）；防御链拆除
     //（vsidian PR #432 对接线）起消费 experimental.viewIdentity（命令目标
-    // 句柄与折叠寻址的反查面）。版本事实源是 vsidian addonApiCatalog 实验
+    // 句柄与折叠寻址的反查面）；#5 起消费 experimental.syntax（行类型与
+    // 行内标记查询）。版本事实源是 vsidian addonApiCatalog 实验
     // 表，范围必须 ^
     expect(pkg.vsidianAddon.experimental).toEqual({
       cm6: '^1.1.0',
       headingFold: '^1.0.0',
+      syntax: '^1.0.0',
       viewIdentity: '^1.0.0',
     })
   })

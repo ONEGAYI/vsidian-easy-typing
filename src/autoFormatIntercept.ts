@@ -37,11 +37,13 @@ import { debugLog } from './logging'
 import { SETTINGS_TOPIC } from './settings/store'
 import {
   INPUT_RULE_EXCLUSIVE_GROUP,
+  type InputContextOwnership,
   type RuleBehaviorRegisterOutcome,
   type RuleBehaviorsFacetSubset,
   type RulePipelineChannelSubset,
 } from './ruleBehaviorIntercept'
 import { planAutoFormatLineModification } from './autoFormatPipeline'
+import type { SyntaxQuery } from './syntaxTreeQuery'
 import { isDocUriExcluded } from './fileExclusion'
 import { createThrottledRefresh } from './throttle'
 import { SpaceState } from './formatting/inlineParts'
@@ -186,6 +188,13 @@ export interface RegisterAutoFormatDeps {
   readonly language: string
   /** #12 粘贴标记单例（page-editor 装配，经参数注入——勿 import 页面实例） */
   readonly marker: PasteMarker
+  /** #5 语法查询工厂（活动视图 → 查询；null = 反查失败/语法面缺席 → 不
+   *  格式化——行为链 onInput 无视图句柄，查询经活动视图 instanceId 构造） */
+  readonly queryOf?: () => SyntaxQuery | null
+  /** 实例一致性守卫（评审 R2-B1；缺省 = 不设防，兼容纯管线测试形态）：
+   *  返回 false = 本次驱动来自非主实例（嵌入 Live 等）→ onInput 直接放弃
+   *  （返回 null 不占独占组）——快照/查询实例错配的格式化整体不发生 */
+  readonly ownsContext?: InputContextOwnership
   /** 保护区区间计算器（#27 注入缝的接入位；返回行内坐标区间集，缺省无保护区） */
   readonly protectedRangesFor?: (line: string) => readonly ProtectedRangeSeed[]
 }
@@ -233,11 +242,17 @@ export function registerAutoFormatBehavior(deps: RegisterAutoFormatDeps): RuleBe
     exclusiveGroup: INPUT_RULE_EXCLUSIVE_GROUP,
     history: 'atomic',
     onInput: (ctx: AddonInputContext) => {
+      // 实例一致性守卫（评审 R2-B1）：嵌入实例驱动（快照非主实例文档）→
+      // 放弃该次行为修饰（null 不占独占组）
+      if (deps.ownsContext !== undefined && !deps.ownsContext(ctx)) return null
       const engine = gate.settings()
       // 上游 AutoFormat 总门（规则五族不受影响）；文件排除（#407 docUri，
       // #28 接入）——上游 cm_extensions.ts:417 `!AutoFormat || isCurrentFileExclude` 同序
       if (!engine.autoFormat) return null
       if (isDocUriExcluded(ctx.docUri, engine.excludeFiles)) return null
+      // #5 语法查询源：缺席（反查失败/语法面缺席）不格式化（不 fallback 正则）
+      const query = deps.queryOf?.() ?? null
+      if (query === null) return null
       // #27 保护区：外部注入（#26 注入缝）优先；缺省用设置驱动的内置计算
       //（上游 core.ts:181-183——UserDefinedRegSwitch 开才带 UserDefinedRegExp
       // 进分区解析，关 = 无 user 分区）
@@ -261,6 +276,7 @@ export function registerAutoFormatBehavior(deps: RegisterAutoFormatDeps): RuleBe
         },
         {
           settings: engine.lineFormat,
+          query,
           marker: deps.marker,
           protectedRanges,
         },
