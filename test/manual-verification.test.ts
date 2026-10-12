@@ -36,10 +36,11 @@ const DOMAIN_SECTION_PREFIXES: readonly string[] = [
   '## 十五、IME 定稿链路专项（',
   '## 十六、命令族（',
   '## 十七、界面语言 i18n 完整化（',
+  '## 十八、代码块编辑增强 BetterCodeEdit（',
 ]
 
 describe('人工验证清单结构契约（#21）', () => {
-  it('功能域节全覆盖（十七节，含 #28/#19 占位节）', () => {
+  it('功能域节全覆盖（十八节，含 #28/#19 占位节与 #10 新增节）', () => {
     const doc = readDoc()
     for (const prefix of DOMAIN_SECTION_PREFIXES) {
       expect(doc.includes(prefix), `缺少功能域节：${prefix}…`).toBe(true)
