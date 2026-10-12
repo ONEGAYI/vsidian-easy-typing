@@ -555,7 +555,7 @@ defineAddonPage(ADDON_ID, async (sdk: VsidianAddonPageSdk) => {
       return info === null ? null : info.kind
     }
 
-    // Enter 抢先层（Prec.high，ADR-0002 §三.B.2 定案）：**注册序在 #18
+    // Enter 抢先层（Prec.high，ADR-0002 §三方案 B 风险 2 定案）：**注册序在 #18
     // foldEnter keymap 之后**（同层按注册序即尝试序——折叠标题行先试，
     // 非折叠标题行本层按 text 接管，上游 v2 不特判 heading）；列表行本层
     // 决策落穿 → 平台续行链（普通槽）处理，无遮蔽。命中面 = 双门开 +

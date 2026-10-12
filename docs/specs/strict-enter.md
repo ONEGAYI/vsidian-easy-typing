@@ -33,7 +33,7 @@ Mod+Enter（当前行下方新建行）在双门开时同模式改写插入串�
 
 ## 四、平台映射与键位仲裁
 
-- **Enter**：Prec.high 抢先层，**注册序在 #18 foldEnter keymap 之后**（同层注册序即尝试序——ADR-0002 §三.B.2 定案）：折叠标题行折叠层先命中；非折叠标题行本层按 text 接管（上游 v2 不特判 heading）；列表行本层决策落穿 → 平台续行链（普通槽）处理，无遮蔽。多选区在 Command 层拦（上游 handleEnter 链首检查的对齐形态）。
+- **Enter**：Prec.high 抢先层，**注册序在 #18 foldEnter keymap 之后**（同层注册序即尝试序——ADR-0002 §三方案 B 风险 2 定案）：折叠标题行折叠层先命中；非折叠标题行本层按 text 接管（上游 v2 不特判 heading）；列表行本层决策落穿 → 平台续行链（普通槽）处理，无遮蔽。多选区在 Command 层拦（上游 handleEnter 链首检查的对齐形态）。
 - **Mod+Enter**：沿 #13 既有 Prec.high keymap，严格改写在 Command 内注入（`strict` 依赖块）——透传路径与多选区透传语义零改动。
 - **树判定消费**：`queryOfView`（#5 工厂）+ `lineInfoAt`；Mod+Enter 的行形态判定是行文本正则（上游同源——树 kind 仅用于 code/formula 排除）。
 
@@ -58,4 +58,6 @@ Mod+Enter（当前行下方新建行）在双门开时同模式改写插入串�
 - 多级引用前缀仅取首级：`> > deep` 的前缀提取是 `> `（QUOTE_PREFIX_RE `(>+ ?)` 单串语义，上游同口径）——严格分支的引用延续/双行引用均只带一级前缀（#13 A43 已有同款口径）。
 - 引用内表格/标题行（`> | a |`）走正文分支：平台嵌套优先级判 table/heading → 投影 text，不续引用前缀（上游 v2 判 quote 走引用分支）——#5 既定「消费面按平台语义」差异。
 - 行内公式（单行 `$$x$$`）与 frontmatter 内不接管：kind 判定归 formula/frontmatter 落穿。
+- 嵌套引用内的 callout 标题行（`> > [!note]`）：组件 callout 自判正则只认单级 `>` 前缀，嵌套形态走引用分支接管；上游 v2 按 HyperMD 行 token 判 callout_title 落穿——嵌套形态的 token 产出未在上游环境核实，此为正则近似与树判定的覆盖面分叉（review-loops 第 1 轮记录，待上游实测定案，不在无证据时放宽落穿面）。
+- 整行恰为单美元行内公式（`$x$`）：平台树判定投影 text 走正文接管；上游 v2 对全行 math token 判 formula 落穿——上游 token 形态未核实，极低频形态（review-loops 第 1 轮记录）。
 - 阅读模式不生效：本功能挂 Live 实例扩展槽（实验 cm6 keymap），阅读视图无输入路径——与 #13/#18 同边界。

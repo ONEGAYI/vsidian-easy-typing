@@ -95,7 +95,7 @@ export const enMessages: Messages = {
     },
     strictModeEnter: {
       name: 'Strict Line breaks Mode',
-      desc: 'When the host renders strict line breaks (Vsidian reading breaks off) and this switch is on, pressing Enter once in normal text lines produces two line breaks or two trailing spaces per the selected mode; quote lines continue their prefix per the mode.',
+      desc: 'When the host renders strict line breaks (Vsidian \'Reading loose line breaks\' off) and this switch is on, pressing Enter once in normal text lines produces two line breaks or two trailing spaces per the selected mode; quote lines continue their prefix per the mode.',
     },
     strictLineMode: {
       name: 'Enter mode under strict line breaks',

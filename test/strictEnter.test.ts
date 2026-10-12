@@ -99,6 +99,16 @@ describe('planStrictEnter 边界门槛（上游口径原样钉住）', () => {
     const fake = makeSyntaxFake('para\n\nnext')
     expect(planStrictEnter(fake.doc, rejectedQuery, 'enter_twice', 2)).toBeNull()
   })
+
+  it('pos 超界钳制防御（负值 → 0 即行首不处理；超长 → 末行行尾照常决策）', () => {
+    const fake = makeSyntaxFake('hello\nworld')
+    expect(planStrictEnter(fake.doc, fake.query, 'enter_twice', -5)).toBeNull()
+    expect(planStrictEnter(fake.doc, fake.query, 'enter_twice', 999)).toEqual({
+      insertAt: 11,
+      insert: '\n\n',
+      cursor: 13,
+    })
+  })
 })
 
 // ============================================================
@@ -391,6 +401,19 @@ describe('keymap Command createStrictEnterCommand：接管/透传与派发形态
     const { view, calls } = fakeView(multiStateAt('para\n\nnext', [2, 8]))
     expect(commandOn('enter_twice', 'para\n\nnext')(view)).toBe(false)
     expect(calls).toHaveLength(0)
+  })
+
+  it('非空选区：插入点取 main.to，选区文本保留原处（上游怪行为钉住，防顺手修正）', () => {
+    const state = EditorState.create({ doc: 'abcd\n\nnext', selection: { anchor: 2, head: 4 } })
+    const { view, calls } = fakeView(state)
+    expect(commandOn('enter_twice', 'abcd\n\nnext')(view)).toBe(true)
+    expect(calls[0]!.changes).toEqual({ from: 4, to: 4, insert: '\n\n' })
+    const tr = state.update({
+      changes: { from: 4, to: 4, insert: '\n\n' },
+      selection: { anchor: 6, head: 6 },
+    })
+    expect(tr.state.doc.toString()).toBe('abcd\n\n\n\nnext')
+    expect(tr.state.doc.sliceString(2, 4)).toBe('cd')
   })
 
   it('IME 组合中不接管（防御对齐 #8/#13/#18）', () => {

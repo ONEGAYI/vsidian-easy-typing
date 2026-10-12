@@ -121,26 +121,18 @@ export function planNewLineBelow(state: EditorState): NewLineBelowPlan {
 
 /**
  * Mod+Enter 严格改写插入串（#30：上游 goNewLineAfterCurLine 744-761 决策
- * 序的纯逻辑拆出，便于矩阵测试）：返回 null = 不改写（沿用普通 '
-' +
+ * 序的纯逻辑拆出，便于矩阵测试）：返回 null = 不改写（沿用普通 '\n' +
  * 前缀）。行文本正则判定列表/引用（上游同源口径——Mod+Enter 不用树判定
  * 判行形态，树 kind 仅用于 code/formula 排除，由调用方传入）。
  *
  * - 空白行：不改写（上游空白行分支在严格判定之前 return）；
  * - code / formula：不改写（上游 733-737 排除——块内严格换行无意义）；
- * - 列表行：所有模式不改写（上游 listMatch 恒 '
-' + 前缀）；
- * - two_space：两空格 + '
-' + 前缀（正文与引用同形态；整行已两空格
+ * - 列表行：所有模式不改写（上游 listMatch 恒 '\n' + 前缀）；
+ * - two_space：两空格 + '\n' + 前缀（正文与引用同形态；整行已两空格
  *   不重复——上游 745 检查 lineContent）；
- * - 引用行 enter_twice：'
-' + 前缀 + '
-' + 前缀（双行引用）；
- *   引用行 mix：两空格 + '
-' + 前缀（引用用两空格）；
- * - 其余正文行（enter_twice / mix）：'
-
-' + 前缀。
+ * - 引用行 enter_twice：'\n' + 前缀 + '\n' + 前缀（双行引用）；
+ *   引用行 mix：两空格 + '\n' + 前缀（引用用两空格）；
+ * - 其余正文行（enter_twice / mix）：'\n\n' + 前缀。
  */
 export function strictNewLineBelowInsert(
   lineText: string,
@@ -153,18 +145,14 @@ export function strictNewLineBelowInsert(
   if (listMatch !== null) return null
   const spaceStr = lineText.endsWith('  ') ? '' : '  '
   const quoteMatch = QUOTE_MARKER.exec(lineText)
-  if (mode === 'two_space') return `${spaceStr}
-${newLineBelowPrefix(lineText)}`
+  // 换行一律 '\n' 字面量拼接——不用内嵌实际换行的模板字符串（CRLF
+  // checkout 会把内嵌换行变 \r\n，违反 webview LF 坐标协议）
+  if (mode === 'two_space') return spaceStr + '\n' + newLineBelowPrefix(lineText)
   if (quoteMatch !== null) {
     const prefix = newLineBelowPrefix(lineText)
-    return mode === 'enter_twice' ? `
-${prefix}
-${prefix}` : `${spaceStr}
-${prefix}`
+    return mode === 'enter_twice' ? '\n' + prefix + '\n' + prefix : spaceStr + '\n' + prefix
   }
-  return `
-
-${newLineBelowPrefix(lineText)}`
+  return '\n\n' + newLineBelowPrefix(lineText)
 }
 
 /** Mod+Enter 严格改写依赖（page-editor 注入，测试可替换；#30） */

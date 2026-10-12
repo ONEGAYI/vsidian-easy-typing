@@ -79,7 +79,7 @@ describe('page-editor 共享设置通道装配契约（#32）', () => {
 
 // #30 strictEnter 装配契约：Enter 键同层（Prec.high）仲裁靠注册序——
 // #18 foldEnter 先注册先尝试（折叠标题行优先），#30 strictEnter 后注册；
-// 装配序被 CM6 升级或块重排破坏时红灯（ADR-0002 §三.B.2 定案）。
+// 装配序被 CM6 升级或块重排破坏时红灯（ADR-0002 §三方案 B 风险 2 定案）。
 describe('page-editor #30 装配契约（strictEnter 仲裁与接线）', () => {
   it('#30 strict Enter 注册在 #18 foldEnter 之后（同层注册序即尝试序，折叠先试）', () => {
     expect(lineOf('run: createFoldEnterCommand(')).toBeLessThan(
