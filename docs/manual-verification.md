@@ -34,7 +34,7 @@
 
 ### 维度一：vsidian 宿主版本（API 基线）
 
-本组件清单声明 `vsidianAddon.api ^1.0.0`（1.0.0 候选，未对外发行）+ 实验入口 `cm6 ^1.1.0`、`headingFold ^1.0.0`、`viewIdentity ^1.0.0`（防御链拆除起消费——命令目标句柄解析与折叠寻址反查）与 `syntax ^1.0.0`（#5 起行类型/作用域/行内分区树版判定）。SDK 类型 vendor 快照锚定 vsidian 主仓 commit **`d26f1e8660d75f551ea4b37c297df87ede6c48c4`**（`scripts/vendorSdkTypes.mjs` 的 `DEFAULT_COMMIT`；#434 merge——语法查询面 experimental.syntax，及此前的视图身份基座平台 PR #432）。矩阵基线即此 commit 构建的 vsidian VSIX；vsidian 升级后先跑本仓 `npm run vendor:check` 确认类型快照未漂移，再开新一轮矩阵。
+本组件清单声明 `vsidianAddon.api ^1.0.0`（1.0.0 候选，未对外发行）+ 实验入口 `cm6 ^1.1.0`、`headingFold ^1.0.0`、`viewIdentity ^1.0.0`（防御链拆除起消费——命令目标句柄解析与折叠寻址反查）、`syntax ^1.0.0`（#5 起行类型/作用域/行内分区树版判定）与 `hostSettings ^1.0.0`（#30 起宿主设置白名单读取——`editor.readingBreaks` 严格渲染门控）。SDK 类型 vendor 快照锚定 vsidian 主仓 commit **`9f2d292753291db5fa5c45cc3f6dcbbd71c2e37c`**（`scripts/vendorSdkTypes.mjs` 的 `DEFAULT_COMMIT`；vsidian PR #458 merge——宿主设置读取面 experimental.hostSettings，及此前的 #434 语法查询面与 #432 视图身份基座）。矩阵基线即此 commit 构建的 vsidian VSIX；vsidian 升级后先跑本仓 `npm run vendor:check` 确认类型快照未漂移，再开新一轮矩阵。
 
 **平台 VSIX 最低版本要求**：当前 vsidian API 未正式发行（1.0.0 候选），最低版本口径 = 锚定 commit（`DEFAULT_COMMIT`）构建的 VSIX；API 发行后改为「本组件消费的 API 首次可用的 release 点」并同步更新本标注。装载验证、两道对齐闸与 re-vendor 纪律见 [dev 联调指南](guides/dev-testing.md)。
 
@@ -653,6 +653,39 @@
 
 预期：三个跳过项由 vsidian 内核承载，与上游口径存在既定差异（B21）；若观感不符预期，属内核口径问题（#120 / CM6 defaultKeymap / #125），不由本组件另起炉灶（会破坏三段链整行制一致性）。
 
+## 二十、严格换行三模式补偿（#30）
+
+前置：宿主 Vsidian「阅读换行渲染」设置关闭（严格渲染，默认态）且本组件设置页开启 `strictModeEnter`（默认关）；模式键 `strictLineMode`（`enter_twice` / `two_space` / `mix_mode`）。双门任一关闭时本节全部项预期为「无补偿、平台普通换行」。
+
+### A73. Enter 三模式键序（正文与引用行）
+
+1. `enter_twice`：段尾（下一行为空行）正文行按一次 Enter——预期插入空行分段（源文 `\n\n`，光标落新行行首）。
+2. `two_space`：同位置按 Enter——预期行尾出现两空格后换行（源文 `  \n`）；行尾已有两空格时不重复（只换行）。
+3. `mix_mode`：正文行为 `enter_twice` 形态；引用行（`> 文字`）为 `two_space` 形态（两空格 + 换行 + `> ` 前缀）；`enter_twice` 下引用行为双行引用（换行 + `> ` + 换行 + `> `）。
+4. 阅读视图核对：补偿后的换行在阅读模式可见（分段或硬换行）——这是补偿的目的语义。
+
+### A74. 边界门槛与落穿面
+
+1. 段中边界：`enter_twice`/`mix_mode` 模式下光标在**下一行非空白**的行内按 Enter——预期不补偿（平台普通换行，不插空行）；`two_space` 同场景仍补偿（两空格不改段结构）。
+2. 空白行与行首：空白行按 Enter、任意行**行首**（列 0）按 Enter——预期不补偿。
+3. 纯引用前缀行（`> ` 后无内容）与 callout 标题行（`> [!note] …`）——预期不补偿。
+4. 列表行（`- a`、`1. a`、`- [ ] a`）按 Enter——预期不补偿（平台续行链处理）。
+5. 顶格代码块闭栏行行尾：`enter_twice` 且下一行为空行——预期插空行（`\n\n`）；下一行非空白时不补偿。
+6. 折叠标题行按 Enter——预期折叠层接管（A38 行为不变，补偿层让位）。
+
+### A75. Mod+Enter 严格形态（双平台）
+
+1. Windows/Linux 按 Ctrl+Enter、macOS 按 Cmd+Enter（同键位双平台形态）。
+2. 正文行行尾：`enter_twice`/`mix_mode` 预期下方插**空行**再新行（`\n\n` 起始）；`two_space` 预期行尾两空格 + 换行。
+3. 引用行行尾：`enter_twice` 双行引用、其余两空格 + `> ` 前缀；列表行行尾不补偿（前缀延续照旧）；代码块/公式块内不补偿（普通换行 + 缩进延续）。
+4. 撤销：Ctrl+Z 单笔回退整次改写（含两空格/双换行与光标）。
+
+### A76. 双门控翻转与热更跟随
+
+1. 组件门：设置页关闭 `strictModeEnter` 后回到编辑器按 Enter/Mod+Enter——预期立即恢复平台行为（焦点回归刷新生效）。
+2. 宿主门：Vsidian 设置开启「阅读换行渲染」（宽松）后**不重开面板**，直接回编辑器按 Enter——预期补偿立即停用（拉取式跟随热更）；关闭该设置后补偿恢复。
+3. `strictLineMode` 运行时切换（如 `enter_twice` → `two_space`）——预期回到编辑器后按键即按新模式（无需重开）。
+
 ## 已知边界与「不是缺陷」汇总
 
 验证中遇到下表行为时按「不是缺陷」处理——各条已在对应规格落档，报告时引用编号（B 编号）：
@@ -681,6 +714,7 @@
 | B20 | 代码块/frontmatter/表格/公式块上下文规则与格式化不驱动（平台行为链门控「只作用于正文」） | 规则/格式化 | rule-engine.md、auto-format.md |
 | B21 | 代码块编辑增强跳过项由内核承载存在口径差异：块内 Tab 整行 2 空格制（上游光标位插 tab 字符）、Enter 缩进按 2 空格列规整（上游逐字复制）、行内代码 Tab 两步越出（上游未闭合反引号跳行尾）——口径差异感知，非缺陷 | BetterCodeEdit | better-code-edit.md |
 | B22 | 代码块边界实然行为：开栏/闭栏行围栏字符区命中 Mod+A 三态与粘贴对齐（上游闭区间语义）、开栏行围栏前缀段（缩进/引用前缀）不命中透传（#5 闭区间自围栏字符起）、空块 Mod+A 二次落穿（上游重复派发同选区，本仓闭环）、闭栏行缩进边界列 Backspace 并入上一内容行、闭栏行反缩进（缩进少于块缩进）时分支①删围栏字符而非空白（上游同公式实然）、粘贴首行无缩进时其余行自身缩进保留并叠加块缩进 | BetterCodeEdit | better-code-edit.md |
+| B23 | 严格换行补偿边界：多级引用 `> > x` 前缀仅取首级（`> `，上游单串正则同口径）；引用内表格/标题行走正文分支不续引用前缀（#5 平台嵌套优先级投影差异）；行内公式与 frontmatter 不接管；阅读模式不生效（Live 实例扩展槽边界） | 严格换行 | strict-enter.md |
 
 ## 历轮执行记录落档约定
 

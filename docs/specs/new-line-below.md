@@ -4,8 +4,9 @@
 > 命令 id `easy-typing-goto-new-line-after-cur-line`，默认热键
 > `[{ modifiers: ["Mod"], key: "Enter" }]`——**上游有默认绑定**，本仓同键
 > 位 Mod-Enter）。在当前行下方插入新行并延续列表/引用前缀；光标落新行。
-> 本票同批决策票「严格换行」（同函数内的 StrictModeEnter 分支）**不实施**，
-> 方案对比见 [ADR-0002](../adr/0002-strict-line-break-mapping.md)。
+> 同函数内的 StrictModeEnter 严格分支已随 [#30](https://github.com/ONEGAYI/vsidian-easy-typing/issues/30)
+> 落地（见「严格换行分支注入」节与 [strict-enter.md](strict-enter.md)；决策记录
+> [ADR-0002](../adr/0002-strict-line-break-mapping.md)）。
 
 ## 验收口径（票面映射）
 
@@ -22,7 +23,7 @@
 | --- | --- | --- |
 | 下方新建行决策 | `src/keyboard_handlers.ts:682-777`（goNewLineAfterCurLine） | `src/newLineBelow.ts`（newLineBelowPrefix + planNewLineBelow） |
 | 默认键位 | `src/main.ts:159` 附近（Mod+Enter 热键，恒注册命令、无设置门） | `src/page-editor.ts` #13 增量块（keymap Mod-Enter，设置门控） |
-| 严格换行分支 | `src/keyboard_handlers.ts:728-762`（StrictModeEnter × strictLineBreaks） | **不移植进本票**——已决策 C 先行（ADR-0002 §四：平台 vsidian#423 → 插件 #30 等待接线） |
+| 严格换行分支 | `src/keyboard_handlers.ts:728-762`（StrictModeEnter × strictLineBreaks） | #30 落地：`strictNewLineBelowInsert` 纯函数 + Command `strict` 依赖注入（见 [strict-enter.md](strict-enter.md)） |
 
 ### 语义要点（与上游逐一对齐）
 
@@ -40,7 +41,8 @@
 - **引用延续**（`^(\s*)(>+ ?)`）：延续 `>` 串与既有尾空格形态，缩进保留。
 - 恒接管型命令：任何行（含标题、表格行、代码块内——上游不做上下文
   排除）都按行形态学决策，无「不命中」分支；上游的上下文排除只存在于
-  严格换行分支（未移植）。
+  严格换行分支（#30 已落地——code/formula/空白行不改写，见
+  [strict-enter.md](strict-enter.md)）。
 - **非空选区不特判**（上游口径：取 `main.head` 所在行；派发后选区被新
   光标取代，选区文本保留原处）。
 
@@ -110,14 +112,21 @@
 - 浏览器真实键盘端到端（Mod-Enter 真实键序、撤销单笔回退、设置开关运行
   时翻转）归 #21 人工验证清单。
 
+## 严格换行分支注入（#30 落地）
+
+上游 728-762 的严格分支（StrictModeEnter × strictLineBreaks）经
+`strictNewLineBelowInsert` 纯函数 + Command `strict` 依赖块注入本命令：
+
+- 双门（本仓设置 `strictModeEnter` × vsidian `editor.readingBreaks` 严格
+  渲染，`experimental.hostSettings` 同步读取）开时按三模式改写插入串——
+  正文行 `enter_twice`/`mix` 插 `\n\n`、`two_space` 两空格；引用行
+  `enter_twice` 双行引用、其余两空格 + 前缀；列表行所有模式不额外处理；
+- 空白行与 code/formula 行不改写（上游排除语义）；宿主无 hostSettings
+  面时 `strict` 依赖缺省，零改写零回归；
+- 光标落点语义不变（新行前缀末尾 = `insertAt + insert.length`）。
+
+决策矩阵与门控细节单一事实源在 [strict-enter.md](strict-enter.md)。
+
 ## 明确不包含
 
-- **严格换行三模式**（StrictModeEnter/StrictLineMode 在本函数内的分支及
-  独立的 `enterStrictLineBreak` Enter 拦截）：依赖 Obsidian
-  `strictLineBreaks` 渲染配置语义——2026-10-09 已决策 C 先行路线：平台
-  渲染设置（vsidian#423）先行，编辑侧三模式补偿转
-  [#30](https://github.com/ONEGAYI/vsidian-easy-typing/issues/30)
-  （wait-for-upstreaming）等待平台落地后实施；届时 Enter 键将与 #18
-  折叠拦截及平台列表续行竞争，仲裁在 ADR「实施前置」节落档
-  （[ADR-0002](../adr/0002-strict-line-break-mapping.md) §四决策记录）。
 - 浏览器真实键盘端到端与设置页观感（#21 人工验证清单）。

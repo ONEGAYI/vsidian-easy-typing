@@ -76,3 +76,22 @@ describe('page-editor 共享设置通道装配契约（#32）', () => {
     expect(directUses.length).toBe(5)
   })
 })
+
+// #30 strictEnter 装配契约：Enter 键同层（Prec.high）仲裁靠注册序——
+// #18 foldEnter 先注册先尝试（折叠标题行优先），#30 strictEnter 后注册；
+// 装配序被 CM6 升级或块重排破坏时红灯（ADR-0002 §三.B.2 定案）。
+describe('page-editor #30 装配契约（strictEnter 仲裁与接线）', () => {
+  it('#30 strict Enter 注册在 #18 foldEnter 之后（同层注册序即尝试序，折叠先试）', () => {
+    expect(lineOf('run: createFoldEnterCommand(')).toBeLessThan(
+      lineOf('run: createStrictEnterCommand('),
+    )
+  })
+
+  it('Mod+Enter 严格注入接线在位（createNewLineBelowCommand 携带 strict 依赖块）', () => {
+    expect(source).toContain('strict: {')
+  })
+
+  it('宿主严格渲染门消费 hostSettings 白名单键（editor.readingBreaks，#457 契约）', () => {
+    expect(source).toContain("get('editor.readingBreaks')")
+  })
+})

@@ -20,8 +20,9 @@
 - [backspace.md](backspace.md)——BetterBackspace 空列表/引用清除与重编号（工单 #8）：前缀解析与清除/重编号算法、Backspace 按键拦截（实验 cm6 keymap 抢先层）与平台退格冲突核对。
 - [enhance-moda.md](enhance-moda.md)——EnhanceModA 渐进选择与「选择当前块」（工单 #11）：无外部状态的层级推进状态机、Mod+A 抢先层（Prec.high）接管边界、树版懒查询判定（#5 换传，降级差异消除记录）与命令注册契约。
 - [smart-paste.md](smart-paste.md)——SmartPaste 智能粘贴续接与纯文本粘贴标记（工单 #12）：列表/引用前缀续接算法、粘贴拦截（实验 cm6 domEventHandlers 让位序）、纯文本粘贴命令（平台稳定 API + #417 规范键序）与平台粘贴冲突核对。
-- [new-line-below.md](new-line-below.md)——NewLineBelow 当前行下方新建行（工单 #13）：Mod+Enter 行尾插入 + 列表/引用前缀延续算法（列位置语义核对结论）、抢先层接管平台 defaultKeymap `insertBlankLine` 的仲裁核对、`newLineBelow` 设置门；严格换行（同票决策项）裁剪至 [ADR-0002](../adr/0002-strict-line-break-mapping.md)——已决策 C 先行（平台 vsidian#423 + 插件 #30 等待接线）。
+- [new-line-below.md](new-line-below.md)——NewLineBelow 当前行下方新建行（工单 #13）：Mod+Enter 行尾插入 + 列表/引用前缀延续算法（列位置语义核对结论）、抢先层接管平台 defaultKeymap `insertBlankLine` 的仲裁核对、`newLineBelow` 设置门；严格换行分支已随 #30 落地（见 strict-enter.md）。
 - [fold-enter.md](fold-enter.md)——折叠标题处 Enter 新建同级标题（工单 #18）：折叠态判定消费 experimental.headingFold.folds()、Enter 抢先层（Prec.high）仲裁、折叠保持验证与平台 headingFold 首消费反馈。
+- [strict-enter.md](strict-enter.md)——严格换行三模式补偿（工单 #30）：上游 enterStrictLineBreak 的 Enter 三模式 + goNewLineAfterCurLine 严格分支（Mod+Enter）移植、双门控（strictModeEnter × experimental.hostSettings 的 editor.readingBreaks 严格渲染判定）、边界门槛（空白行/行首/段中/列表落穿/callout 自判落穿/顶格代码块闭栏特例）与键位仲裁（同层注册序在 #18 折叠之后）。
 - [protected-zones.md](protected-zones.md)——自定义正则保护区（工单 #27）：多行正则解析（`|++`/`|--` 旗标语义）与默认模板、格式化管线注入缝消费、「用户规则尊重保护区」双开开关与规则管线接入、#5 树版换传后 code/formula 分区与保护区剪除语义（升级点已实施）。
 - [auto-format.md](auto-format.md)——自动格式化（工单 #26）：语言对间距/前缀词典/自动大写/软空格符号的行级算法（上游差异化验证矩阵）、onInput 管线（格式化当前行口径、#27 保护区注入缝、作用域文本降级）与 06-autoformat 行为族（input-rules 独占组链序、#12 粘贴联动）。
 - [comment-toggle.md](comment-toggle.md)——注释切换命令（工单 #2）：语言注释符表（上游 26 键逐条）与行/块切换、Markdown `%%` 切换、围栏语言感知树版判定（#5 换传，降级口径收敛记录）、平台键位冲突核对（与内建 htmlComment 同弦并存）与视图登记表共享决策（供 #28 对照）。

@@ -40,8 +40,8 @@
 | UserDefinedRegExp | `userDefinedRegExp` | string | 上游多行正则串（见 `defaults.ts`） | 多行字符串原样保留（每行一条 + 行尾空格策略符号） |
 | UserRulesRespectUserDefinedRegexBlocks | `userRulesRespectUserDefinedRegexBlocks` | boolean | `false` | 直映 |
 | debug | `debug` | boolean | `false` | 本票接入日志门控（`src/logging.ts`） |
-| StrictModeEnter | `strictModeEnter` | boolean | `false` | 直映 |
-| StrictLineMode | `strictLineMode` | string enum | `'enter_twice'` | 上游已是字符串枚举（`enter_twice`/`two_space`/`mix_mode`），原值直映 |
+| StrictModeEnter | `strictModeEnter` | boolean | `false` | 直映；生效逻辑已随 #30 落地（双门控见 [strict-enter.md](strict-enter.md)） |
+| StrictLineMode | `strictLineMode` | string enum | `'enter_twice'` | 上游已是字符串枚举（`enter_twice`/`two_space`/`mix_mode`），原值直映；消费见 #30 |
 | EnhanceModA | `enhanceModA` | boolean | `false` | 直映 |
 | CollapsePersistentEnter | `collapsePersistentEnter` | boolean | `false` | 设置数据链本票交付；生效逻辑已随 #18 落地（消费 `experimental.headingFold.folds()`，见 [fold-enter.md](fold-enter.md)） |
 | ——（无上游字段） | `newLineBelow` | boolean | `true` | **#13 本仓新增门控键**：上游 Mod+Enter 命令（`goNewLineAfterCurLine`）恒可用、无设置门，但 Obsidian 侧用户可解绑热键；实验层 keymap 不进平台统一快捷键管理（#402 契约，用户无法解绑），按「组件内功能粒度开关由插件设置承担」补此键。默认 `true` = 上游「命令恒可用」的等价默认；关闭时透传回平台内建 Mod+Enter（defaultKeymap `insertBlankLine`，仅插入空行不带前缀延续）。生效逻辑见 [new-line-below.md](new-line-below.md) |

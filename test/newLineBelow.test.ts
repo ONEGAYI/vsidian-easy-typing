@@ -323,3 +323,128 @@ describe('设置门 createNewLineBelowGate：newLineBelow 生效值缓存', () =
     expect(seen).toEqual([SETTINGS_TOPIC.get])
   })
 })
+
+// ============================================================
+// Mod+Enter 严格改写注入（工单 #30：上游 goNewLineAfterCurLine 严格分支）
+// ============================================================
+
+describe('createNewLineBelowCommand 严格注入：双门开时改写插入串', () => {
+  interface DispatchSpec {
+    changes?: Array<{ from: number; to: number; insert: string }>
+    selection?: { anchor: number; head: number }
+  }
+
+  function fakeView(state: EditorState): { view: EditorView; calls: DispatchSpec[] } {
+    const calls: DispatchSpec[] = []
+    const view = {
+      state,
+      compositionStarted: false,
+      dispatch: (spec: DispatchSpec) => {
+        calls.push(spec)
+      },
+    }
+    return { view: view as unknown as EditorView, calls }
+  }
+
+  /** 严格上下文注入形态（装配侧：strictModeEnter × 宿主严格渲染 合成 enabled） */
+  function strictDeps(enabled: boolean, mode: string, kind: string | null) {
+    return {
+      enabled: () => enabled,
+      mode: () => mode as 'enter_twice' | 'two_space' | 'mix_mode',
+      lineKindOf: () => kind as never,
+    }
+  }
+
+  it('正文行 + enter_twice：行尾插 \n\n（无前缀），光标 pos+2', () => {
+    const { view, calls } = fakeView(stateAt('para one', 4))
+    const command = createNewLineBelowCommand({
+      isEnabled: () => true,
+      strict: strictDeps(true, 'enter_twice', 'text'),
+    })
+    expect(command(view)).toBe(true)
+    expect(calls[0]!.changes).toEqual({ from: 8, to: 8, insert: '\n\n' })
+    expect(calls[0]!.selection).toEqual({ anchor: 10, head: 10 })
+  })
+
+  it('引用行 + enter_twice：双行引用（前缀延续两次）', () => {
+    const { view, calls } = fakeView(stateAt('> quote', 3))
+    const command = createNewLineBelowCommand({
+      isEnabled: () => true,
+      strict: strictDeps(true, 'enter_twice', 'quote'),
+    })
+    expect(command(view)).toBe(true)
+    expect(calls[0]!.changes).toEqual({ from: 7, to: 7, insert: '\n> \n> ' })
+    expect(calls[0]!.selection).toEqual({ anchor: 13, head: 13 })
+  })
+
+  it('引用行 + two_space：两空格 + 前缀；整行已两空格不重复', () => {
+    const { view: v1, calls: c1 } = fakeView(stateAt('> quote', 3))
+    expect(
+      createNewLineBelowCommand({ isEnabled: () => true, strict: strictDeps(true, 'two_space', 'quote') })(v1),
+    ).toBe(true)
+    expect(c1[0]!.changes).toEqual({ from: 7, to: 7, insert: '  \n> ' })
+
+    const { view: v2, calls: c2 } = fakeView(stateAt('> quote  ', 3))
+    expect(
+      createNewLineBelowCommand({ isEnabled: () => true, strict: strictDeps(true, 'two_space', 'quote') })(v2),
+    ).toBe(true)
+    expect(c2[0]!.changes).toEqual({ from: 9, to: 9, insert: '\n> ' })
+  })
+
+  it("列表行严格上下文不改写（所有模式换行加前缀——上游 listMatch 分支）", () => {
+    const { view, calls } = fakeView(stateAt('- item', 3))
+    const command = createNewLineBelowCommand({
+      isEnabled: () => true,
+      strict: strictDeps(true, 'two_space', 'list'),
+    })
+    expect(command(view)).toBe(true)
+    expect(calls[0]!.changes).toEqual({ from: 6, to: 6, insert: '\n- ' })
+  })
+
+  it('代码/公式行不改写（上游排除 codeblock/formula）', () => {
+    const { view, calls } = fakeView(stateAt('code line', 4))
+    const command = createNewLineBelowCommand({
+      isEnabled: () => true,
+      strict: strictDeps(true, 'enter_twice', 'code'),
+    })
+    expect(command(view)).toBe(true)
+    expect(calls[0]!.changes).toEqual({ from: 9, to: 9, insert: '\n' })
+  })
+
+  it('空白行不参与严格改写（上游空白行分支先 return——普通 \n）', () => {
+    const { view, calls } = fakeView(stateAt('   ', 2))
+    const command = createNewLineBelowCommand({
+      isEnabled: () => true,
+      strict: strictDeps(true, 'two_space', 'empty'),
+    })
+    expect(command(view)).toBe(true)
+    expect(calls[0]!.changes).toEqual({ from: 3, to: 3, insert: '\n' })
+  })
+
+  it('严格门关（组件设置关或宿主宽松渲染）→ 原行为不改写', () => {
+    const { view, calls } = fakeView(stateAt('para one', 4))
+    const command = createNewLineBelowCommand({
+      isEnabled: () => true,
+      strict: strictDeps(false, 'enter_twice', 'text'),
+    })
+    expect(command(view)).toBe(true)
+    expect(calls[0]!.changes).toEqual({ from: 8, to: 8, insert: '\n' })
+  })
+
+  it('树判定不可得（lineKindOf null——查询拒绝/反查失败）→ 原行为不改写', () => {
+    const { view, calls } = fakeView(stateAt('para one', 4))
+    const command = createNewLineBelowCommand({
+      isEnabled: () => true,
+      strict: strictDeps(true, 'enter_twice', null),
+    })
+    expect(command(view)).toBe(true)
+    expect(calls[0]!.changes).toEqual({ from: 8, to: 8, insert: '\n' })
+  })
+
+  it('不注入 strict 依赖（宿主无 hostSettings 面的装配）→ 原行为（零回归面）', () => {
+    const { view, calls } = fakeView(stateAt('para one', 4))
+    const command = createNewLineBelowCommand({ isEnabled: () => true })
+    expect(command(view)).toBe(true)
+    expect(calls[0]!.changes).toEqual({ from: 8, to: 8, insert: '\n' })
+  })
+})
