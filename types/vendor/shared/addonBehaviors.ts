@@ -1,4 +1,4 @@
-// vendored from ONEGAYI/vsidian@9f2d292753291db5fa5c45cc3f6dcbbd71c2e37c — src/shared/addonBehaviors.ts
+// vendored from ONEGAYI/vsidian@9cd04d1c8223b39df0969c48d578bad969448da1 — src/shared/addonBehaviors.ts
 // 类型快照：由 scripts/vendorSdkTypes.mjs 自动生成——仅保留类型声明与被
 // 类型引用的常量，值级导出（校验函数、运行时数据）已剥离。不要手改；
 // re-vendor：npm run vendor:sdk（升级锚定提交改脚本 DEFAULT_COMMIT 后重跑）。
@@ -54,8 +54,11 @@ export interface AddonBehaviorInputPlan {
 export interface AddonBehaviorRegistration {
   /** 稳定局部 ID（组件内唯一；持久身份的一半） */
   readonly id: string
-  /** 必填的用户可读名称（ADR Q27：注册行为时名称必填） */
-  readonly name: string
+  /** 必填的用户可读名称（ADR Q27：注册行为时名称必填）。单语言字符串
+   *  （历史兼容，不随语言切换）或多语言映射（按页面语言选值——消费端
+   *  渲染时经 resolveAddonBehaviorName 求值，注册/上报/目录全链路透传，
+   *  #464） */
+  readonly name: AddonBehaviorName
   /** 可选简短说明（推荐提供，不作接入强制条件） */
   readonly description?: string
   /** 可选例子（推荐提供；至多 8 项） */
@@ -70,11 +73,17 @@ export interface AddonBehaviorRegistration {
   readonly onInput: (context: AddonInputContext) => AddonBehaviorInputPlan | null
 }
 
+/** 行为显示名：单语言字符串（历史兼容，不随语言切换）或「语言键 → 名称」
+ *  映射（按页面语言选值——键规整 trim+小写，候选链见
+ *  resolveAddonBehaviorName；映射全链路透传不预解析，#464） */
+export type AddonBehaviorName = string | { readonly [locale: string]: string }
+
 /** 注册结果的观测面（不含回调；诊断与 T08 管理查询的序列化形态） */
 export interface AddonBehaviorInfo {
   addonId: string
   id: string
-  name: string
+  /** 与注册面同形态（string 或多语言映射）——渲染时由消费端选值 */
+  name: AddonBehaviorName
   description?: string
   examples?: readonly string[]
   exclusiveGroup?: string
