@@ -262,6 +262,9 @@ describe('注册形状契约（AddonBehaviorRegistration）', () => {
   it('注册名为双语映射：en 页面语言下不换名', () => {
     const { registrations } = registerAll('en-US')
     const m = pickMessages('en-US')
+    for (const r of registrations) {
+      expect(Object.keys(r.name as Record<string, string>).sort()).toEqual(['en', 'zh-cn'])
+    }
     expect(
       registrations.some((r) => (r.name as Record<string, string>).en === m.ruleFamilies.autopair.name),
     ).toBe(true)
@@ -507,6 +510,9 @@ describe('#9 注册形状与 onInput 全链', () => {
   it('注册名为双语映射：en 页面语言下不换名', () => {
     const { registrations } = registerTriggerAll('en-US')
     const m = pickMessages('en-US')
+    for (const r of registrations) {
+      expect(Object.keys(r.name as Record<string, string>).sort()).toEqual(['en', 'zh-cn'])
+    }
     expect(
       registrations.some((r) => (r.name as Record<string, string>).en === m.ruleFamilies.deletePair.name),
     ).toBe(true)
