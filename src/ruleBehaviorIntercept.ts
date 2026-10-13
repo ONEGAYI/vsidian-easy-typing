@@ -43,7 +43,7 @@ import type {
 } from '../types/vendor/shared/addonBehaviors'
 import { RuleEngine, RuleType, type SimpleRule } from './rules/rule-engine'
 import { DEFAULT_BUILTIN_RULES } from './rules/default-rules'
-import { pickMessages, type Messages } from './i18n'
+import { pickMessages, ruleFamilyNameMap, type Messages } from './i18n'
 import { debugLog } from './logging'
 import { DEFAULT_EFFECTIVE_SETTINGS } from './settings/defaults'
 import { RULE_ERROR_TOPIC, SETTINGS_TOPIC } from './settings/store'
@@ -419,7 +419,7 @@ export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): Rul
     const i18n = messages.ruleFamilies[family.i18nKey]
     const result = deps.behaviors.register({
       id: family.localId,
-      name: i18n.name,
+      name: ruleFamilyNameMap(family.i18nKey),
       description: i18n.desc,
       examples: [...i18n.examples],
       exclusiveGroup: INPUT_RULE_EXCLUSIVE_GROUP,
@@ -554,7 +554,7 @@ export function registerRuleDeleteSelectKeyBehaviors(deps: RegisterRuleBehaviors
     const i18n = messages.ruleFamilies[family.i18nKey]
     const result = deps.behaviors.register({
       id: family.localId,
-      name: i18n.name,
+      name: ruleFamilyNameMap(family.i18nKey),
       description: i18n.desc,
       examples: [...i18n.examples],
       exclusiveGroup: INPUT_RULE_EXCLUSIVE_GROUP,

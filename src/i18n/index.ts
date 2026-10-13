@@ -8,6 +8,9 @@
 // - builtinRuleDescriptions（#19）：内置规则描述按规则 id 的本地化映射，
 //   消费点在规则管理页列表预览（previewRuleText 查表优先），数据态
 //   description 不随语言改写存储。
+// - ruleFamilyNameMap（#45）：规则族注册名构造为「语言键 → 名称」双语
+//   映射（zh-cn/en 两键），供行为注册点使用——注册名不再随页面语言变化，
+//   由消费端（vsidian）渲染时按语言选值；desc/examples 维持单选。
 //
 // 【多语言扩展预留】7 语言全量复刻不在 #19 范围（上游 locale 有
 // en/ja/ko/ru/zh-CN/zh-TW 六语言包），但结构已为此设计——新增语言 =
@@ -24,6 +27,14 @@ export type Messages = typeof zhMessages
 /** 按语言标签取字典（大小写不敏感；zh* → 中文，其余 → 英文） */
 export function pickMessages(language: string): Messages {
   return language.toLowerCase().startsWith('zh') ? zhMessages : enMessages
+}
+
+/** 规则族注册名的双语映射（#45）：键形对齐 vsidian resolveAddonBehaviorName
+ *  候选链——键规整 trim+小写，zh 系页面语言依次试 'zh-cn'→'zh'→'en'，
+ *  非 zh 只试 'en'，故 'zh-cn' 与 'en' 两键即可全场景命中；返回形态结构化
+ *  兼容 SDK AddonBehaviorName 的映射分支（消费端渲染时选值，注册不预解析） */
+export function ruleFamilyNameMap(key: keyof Messages['ruleFamilies']): Record<'zh-cn' | 'en', string> {
+  return { 'zh-cn': zhMessages.ruleFamilies[key].name, en: enMessages.ruleFamilies[key].name }
 }
 
 export { zhMessages, enMessages }

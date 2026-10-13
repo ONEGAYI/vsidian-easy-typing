@@ -1,10 +1,12 @@
-// vendored from ONEGAYI/vsidian@9f2d292753291db5fa5c45cc3f6dcbbd71c2e37c — src/shared/addonStorage.ts
+// vendored from ONEGAYI/vsidian@9cd04d1c8223b39df0969c48d578bad969448da1 — src/shared/addonStorage.ts
 // 类型快照：由 scripts/vendorSdkTypes.mjs 自动生成——仅保留类型声明与被
 // 类型引用的常量，值级导出（校验函数、运行时数据）已剥离。不要手改；
 // re-vendor：npm run vendor:sdk（升级锚定提交改脚本 DEFAULT_COMMIT 后重跑）。
 
 /** 拒绝码：invalid-path = 越界/非法相对路径；too-large = 单文件超限；
- * error = IO 失败（不存在/权限等，detail 归因） */
+ * error = IO 失败（权限等，detail 归因）。例外：list 的目标目录不存在
+ * （含存储根未建）不算 error——未建目录 = 空存储，返回空清单（#461）；
+ * readFile 的文件不存在仍为 error（读不到内容无从正常化）。 */
 export type AddonStorageRejection = 'invalid-path' | 'too-large' | 'error'
 
 export type AddonStorageResult<T> =
@@ -35,7 +37,8 @@ export interface AddonStorageFacet {
   readFile(relativePath: string): Promise<AddonStorageResult<string>>
   /** 覆盖写 UTF-8 文本文件（父目录按需创建；content 超单文件上限拒绝） */
   writeFile(relativePath: string, content: string): Promise<AddonStorageResult<null>>
-  /** 列目录（相对路径缺省根；recursive 缺省 false 只列一层） */
+  /** 列目录（相对路径缺省根；recursive 缺省 false 只列一层；目标目录不
+   * 存在——含根目录未建——返回空清单：未建目录 = 空存储，#461） */
   list(relativePath?: string, recursive?: boolean): Promise<AddonStorageListResult>
   /** 删文件（不删目录——目录生命周期归卸载策略） */
   deleteFile(relativePath: string): Promise<AddonStorageResult<null>>
