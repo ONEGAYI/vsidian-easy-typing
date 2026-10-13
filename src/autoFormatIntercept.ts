@@ -32,7 +32,7 @@ import {
   SPACE_MODE_VALUES,
   type SpaceMode,
 } from './settings/defaults'
-import { pickMessages } from './i18n'
+import { pickMessages, ruleFamilyNameMap } from './i18n'
 import { debugLog } from './logging'
 import { SETTINGS_TOPIC } from './settings/store'
 import {
@@ -236,7 +236,7 @@ export function registerAutoFormatBehavior(deps: RegisterAutoFormatDeps): RuleBe
 
   const result = deps.behaviors.register({
     id: AUTO_FORMAT_LOCAL_ID,
-    name: i18n.name,
+    name: ruleFamilyNameMap('autoFormat'),
     description: i18n.desc,
     examples: [...i18n.examples],
     exclusiveGroup: INPUT_RULE_EXCLUSIVE_GROUP,

@@ -85,15 +85,21 @@ describe('注册形状契约', () => {
     expect(AUTO_FORMAT_LOCAL_ID).toBe('06-autoformat')
     expect(reg.exclusiveGroup).toBe(INPUT_RULE_EXCLUSIVE_GROUP)
     expect(reg.history).toBe('atomic')
-    expect(reg.name).toBe(pickMessages('zh-CN').ruleFamilies.autoFormat.name)
+    expect(reg.name).toEqual({
+      'zh-cn': pickMessages('zh-CN').ruleFamilies.autoFormat.name,
+      en: pickMessages('en-US').ruleFamilies.autoFormat.name,
+    })
     expect(reg.description).toBeDefined()
     expect((reg.examples ?? []).length).toBeGreaterThan(0)
     expect(typeof reg.onInput).toBe('function')
   })
 
-  it('英文语言标签取英文字典名称', () => {
+  it('注册名为双语映射：en 页面语言下不换名（语言仅影响 desc/examples）', () => {
     const { registrations } = registerAll({ language: 'en-US' })
-    expect(registrations[0]!.name).toBe(pickMessages('en-US').ruleFamilies.autoFormat.name)
+    expect(registrations[0]!.name).toEqual({
+      'zh-cn': pickMessages('zh-CN').ruleFamilies.autoFormat.name,
+      en: pickMessages('en-US').ruleFamilies.autoFormat.name,
+    })
   })
 
   it('注册拒绝（duplicate-id）不是故障：结果记录 ok:false', () => {

@@ -141,7 +141,10 @@ describe('注册形状契约（AddonBehaviorRegistration）', () => {
     const m = pickMessages('zh-CN')
     for (const reg of registrations) {
       expect(reg.id).toMatch(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
-      expect(reg.name.length).toBeGreaterThan(0)
+      const nameMap = reg.name as Record<string, string>
+      expect(Object.keys(nameMap).sort()).toEqual(['en', 'zh-cn'])
+      expect(nameMap['zh-cn'].length).toBeGreaterThan(0)
+      expect(nameMap.en.length).toBeGreaterThan(0)
       expect(reg.description).toBeDefined()
       expect((reg.examples ?? []).length).toBeGreaterThan(0)
       expect((reg.examples ?? []).length).toBeLessThanOrEqual(8)
@@ -149,7 +152,11 @@ describe('注册形状契约（AddonBehaviorRegistration）', () => {
       expect(reg.exclusiveGroup).toBe(INPUT_RULE_EXCLUSIVE_GROUP)
       expect(typeof reg.onInput).toBe('function')
     }
-    expect(registrations.some((r) => r.name === m.ruleFamilies.autopair.name)).toBe(true)
+    expect(
+      registrations.some(
+        (r) => (r.name as Record<string, string>)['zh-cn'] === m.ruleFamilies.autopair.name,
+      ),
+    ).toBe(true)
   })
 
   it('onInput 全链：括号补全场景经注册回调产出计划；delete 事件返回 null', () => {
@@ -252,10 +259,12 @@ describe('注册形状契约（AddonBehaviorRegistration）', () => {
     expect(outcomes.every((r) => !r.ok)).toBe(true)
   })
 
-  it('英文语言标签取英文字典名称', () => {
+  it('注册名为双语映射：en 页面语言下不换名', () => {
     const { registrations } = registerAll('en-US')
     const m = pickMessages('en-US')
-    expect(registrations.some((r) => r.name === m.ruleFamilies.autopair.name)).toBe(true)
+    expect(
+      registrations.some((r) => (r.name as Record<string, string>).en === m.ruleFamilies.autopair.name),
+    ).toBe(true)
   })
 
   it('设置门：装载时与每次 onChanged 拉取 effective（#3 门面通道）', () => {
@@ -408,14 +417,25 @@ describe('#9 注册形状与 onInput 全链', () => {
     const m = pickMessages('zh-CN')
     for (const reg of registrations) {
       expect(reg.id).toMatch(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
-      expect(reg.name.length).toBeGreaterThan(0)
+      const nameMap = reg.name as Record<string, string>
+      expect(Object.keys(nameMap).sort()).toEqual(['en', 'zh-cn'])
+      expect(nameMap['zh-cn'].length).toBeGreaterThan(0)
+      expect(nameMap.en.length).toBeGreaterThan(0)
       expect(reg.description).toBeDefined()
       expect((reg.examples ?? []).length).toBeGreaterThan(0)
       expect(reg.history).toBe('atomic')
       expect(reg.exclusiveGroup).toBe(INPUT_RULE_EXCLUSIVE_GROUP)
     }
-    expect(registrations.some((r) => r.name === m.ruleFamilies.deletePair.name)).toBe(true)
-    expect(registrations.some((r) => r.name === m.ruleFamilies.selectKeyWrap.name)).toBe(true)
+    expect(
+      registrations.some(
+        (r) => (r.name as Record<string, string>)['zh-cn'] === m.ruleFamilies.deletePair.name,
+      ),
+    ).toBe(true)
+    expect(
+      registrations.some(
+        (r) => (r.name as Record<string, string>)['zh-cn'] === m.ruleFamilies.selectKeyWrap.name,
+      ),
+    ).toBe(true)
   })
 
   it('Delete 族 onInput：【|】 退格产出联动删除计划；input 事件返回 null', () => {
@@ -484,11 +504,15 @@ describe('#9 注册形状与 onInput 全链', () => {
     expect(runtime.consumePendingTabstops(docOf('`hello`'))).toEqual([])
   })
 
-  it('英文语言标签取英文字典名称', () => {
+  it('注册名为双语映射：en 页面语言下不换名', () => {
     const { registrations } = registerTriggerAll('en-US')
     const m = pickMessages('en-US')
-    expect(registrations.some((r) => r.name === m.ruleFamilies.deletePair.name)).toBe(true)
-    expect(registrations.some((r) => r.name === m.ruleFamilies.selectKeyWrap.name)).toBe(true)
+    expect(
+      registrations.some((r) => (r.name as Record<string, string>).en === m.ruleFamilies.deletePair.name),
+    ).toBe(true)
+    expect(
+      registrations.some((r) => (r.name as Record<string, string>).en === m.ruleFamilies.selectKeyWrap.name),
+    ).toBe(true)
   })
 })
 
