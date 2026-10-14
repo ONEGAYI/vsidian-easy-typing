@@ -1,4 +1,4 @@
-// vendored from ONEGAYI/vsidian@9cd04d1c8223b39df0969c48d578bad969448da1 — src/shared/addonIdentity.ts
+// vendored from ONEGAYI/vsidian@1c7c5283665f5a0b5934478d8d7e3638afab9753 — src/shared/addonIdentity.ts
 // 类型快照：由 scripts/vendorSdkTypes.mjs 自动生成——仅保留类型声明与被
 // 类型引用的常量，值级导出（校验函数、运行时数据）已剥离。不要手改；
 // re-vendor：npm run vendor:sdk（升级锚定提交改脚本 DEFAULT_COMMIT 后重跑）。
@@ -102,4 +102,7 @@ export interface AddonStatusEntry {
   /** #353 T04 已注册设置定义（「基础设置」入口可见性；故障暂停时定义
    *  保留——入口仍在，平台基础控件可用） */
   hasSettingsDefinitions?: boolean
+  /** #472 定义搜索摘要（全局搜索索引数据源——定义 title/description 与组
+   *  声明随 addons.state 既有链路推送；仅已注册有定义组件附带） */
+  settingsSearchIndex?: import('./addonSettings').AddonSettingsSearchIndex
 }

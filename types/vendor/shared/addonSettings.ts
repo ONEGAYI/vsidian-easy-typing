@@ -1,33 +1,16 @@
-// vendored from ONEGAYI/vsidian@9cd04d1c8223b39df0969c48d578bad969448da1 — src/shared/addonSettings.ts
+// vendored from ONEGAYI/vsidian@1c7c5283665f5a0b5934478d8d7e3638afab9753 — src/shared/addonSettings.ts
 // 类型快照：由 scripts/vendorSdkTypes.mjs 自动生成——仅保留类型声明与被
 // 类型引用的常量，值级导出（校验函数、运行时数据）已剥离。不要手改；
 // re-vendor：npm run vendor:sdk（升级锚定提交改脚本 DEFAULT_COMMIT 后重跑）。
 
-// #353 T04 附加组件复杂设置——定义形状、值校验、作用范围解析与存储结构
-// 的两端共享单一事实源（纯逻辑，不依赖 vscode/DOM）。
-//
-// 形状来源：ADR-0012「设置界面与作用范围」（Q21–Q23）、规格 5.4/6.2、
-// 技术方案 5.5。仍是草案：字段名随公开声明冻结，不冒充已发布稳定 API。
-//
-// 设计决策（票面钉住）：
-// - 定义**可序列化**：普通值（boolean/number/string）、有限数（min/max
-//   可省略，值恒须有限）、数组项与对象字段由定义描述约束——不存在函数
-//   校验器形态（消息桥传函数在宿主侧另有结构化克隆防线）。
-// - **一层结构**：数组项与对象字段都是标量，不允许嵌套数组/对象。复杂
-//   值走本模块独立类型命名空间（AddonSettingValue），与内置标量设置模型
-//  （shared/settings.ts 的 SettingsPayloadValue）分离——内置标量类型不
-//   能靠类型断言伪装成已支持复杂值。
-// - 作用范围：工作区显式 > 用户默认显式 > 出厂默认；显式值非法（定义
-//   升级后存量漂移）视为该层未设置，跳过继续下层，不从存储删除。
-// - 存储结构冻结 version 1：`{ version, values: { [addonId]: { [key]: value } } }`。
-//   解析 fail-safe：version 未知或形态不符整层回 null（宁回默认值，不写
-//   回、不删除用户数据）；未来结构变更时按 version 逐版迁移入口在此扩展。
-// - 跨窗口边界（1.82.3 API 面核实：Memento 无变更事件）：同窗口以宿主
-//   内存为权威并主动推送；跨窗口不做实时推送，读取以新构造（重开/重启）
-//   对账，并发写按最后落盘胜出——详见 addonSettingsService.ts 头注。
+import type { LocalizedText } from './localizedText'
 
 /** 组件设置标量值（普通值三型） */
 export type AddonSettingScalarValue = boolean | number | string
+
+/** 枚举档位显示标签的多语言形态（#473）：直值或「语言代码→文本」映射，
+ *  选值语义见 localizedText.ts（与 #464 行为名多语言惯例同构） */
+export type AddonLocalizedText = LocalizedText
 
 /** 组件设置值：标量 / 标量数组 / 字段为标量的对象（一层结构硬边界） */
 export type AddonSettingValue =
@@ -44,11 +27,52 @@ export type AddonScalarItemSpec =
   | { kind: 'number'; min?: number; max?: number }
   | { kind: 'string'; maxLength?: number; enum?: readonly string[] }
 
+/**
+ * 设置分组声明（#472 引用式分组）：组元数据随注册载荷声明一次，定义以
+ * `group` 组键引用。组序 = 声明序；组键组件内唯一；title/description
+ * 直值或多语言映射（AddonLocalizedText，与 #464/#473 惯例同构）。
+ */
+export interface AddonSettingGroup {
+  /** 组键（组件内唯一、非空；定义 group 字段引用此键） */
+  key: string
+  /** 组标题 */
+  title: AddonLocalizedText
+  /** 可选组说明（组卡片内首行说明色呈现） */
+  description?: AddonLocalizedText
+}
+
+/** 分组声明的搜索摘要条目（#472 定义级：进全局搜索索引的轻量形状） */
+export interface AddonSettingSearchEntry {
+  key: string
+  title: string
+  description?: string
+}
+
+/** 全组件设置搜索索引（#472：addons.state 携带，webview 据此建全局搜索条目） */
+export interface AddonSettingsSearchIndex {
+  /** 定义摘要（注册序；object 字段级不进——定义级即止） */
+  definitions: readonly AddonSettingSearchEntry[]
+  /** 组声明（声明序；搜索只匹配组标题，description 仅随载荷透传） */
+  groups?: readonly AddonSettingGroup[]
+}
+
 /** 组件设置定义（settings.registerDefinitions 的元素形状） */
 export type AddonSettingDefinition =
   | (AddonSettingDefinitionBase & { type: 'boolean'; default: boolean })
   | (AddonSettingDefinitionBase & { type: 'number'; min?: number; max?: number; default: number })
-  | (AddonSettingDefinitionBase & { type: 'string'; maxLength?: number; enum?: readonly string[]; default: string })
+  | (AddonSettingDefinitionBase & {
+    type: 'string'
+    maxLength?: number
+    enum?: readonly string[]
+    /** 枚举档位显示标签（#473，仅呈现层）：键 = enum 值、值 = 直值或多语言
+     *  映射；缺失键/缺失整个字段回退渲染枚举值本身。不参与值校验 */
+    enumLabels?: Readonly<Record<string, AddonLocalizedText>>
+    /** 多行形态声明（#475，仅呈现层）：true 时设置页渲染 textarea，换行符
+     *  参与持久化值；缺省/false 保持单行。仅自由文本适用——enum 定义
+     *  （档位下拉）拒绝与本声明组合（形状自洽，拼错早失败）。不引入内容校验 */
+    multiline?: boolean
+    default: string
+  })
   | (AddonSettingDefinitionBase & {
     type: 'array'
     /** 重复项约束（一层：只描述标量） */
@@ -79,6 +103,9 @@ interface AddonSettingDefinitionBase {
   title: string
   /** 可选说明 */
   description?: string
+  /** #472 所属分组（组键引用——必须已在 registerDefinitions 载荷的 groups
+   *  中声明；引用合法性由注册批校验，本守卫只校验字符串形状） */
+  group?: string
 }
 
 // ---- 存储结构（version 1 冻结） ----
