@@ -1,4 +1,4 @@
-// vendored from ONEGAYI/vsidian@1c7c5283665f5a0b5934478d8d7e3638afab9753 — src/shared/addonBehaviors.ts
+// vendored from ONEGAYI/vsidian@56e03882135dda7caf05da1e82dc5557718a837c — src/shared/addonBehaviors.ts
 // 类型快照：由 scripts/vendorSdkTypes.mjs 自动生成——仅保留类型声明与被
 // 类型引用的常量，值级导出（校验函数、运行时数据）已剥离。不要手改；
 // re-vendor：npm run vendor:sdk（升级锚定提交改脚本 DEFAULT_COMMIT 后重跑）。
@@ -46,8 +46,11 @@ export interface AddonReplacedRange {
 export interface AddonBehaviorInputPlan {
   /** LF 坐标变更列表（相对 context.snapshot） */
   readonly changes: SerChange[]
-  /** 提交后选区（可选；缺省保持实例现有选区重定位） */
-  readonly selection?: AddonSelectionRange
+  /** 提交后选区（可选；缺省保持实例现有选区重定位）。双形态与
+   *  applyEdits 请求同源（#498）：单对象 = 单选区；数组 = 多光标回设
+   *  （多 ranges 随文本事务同笔生效）——逐 range 评估类行为（如连续
+   *  标点规则）回设多光标的通道前提 */
+  readonly selection?: AddonSelectionRange | AddonSelectionRange[]
 }
 
 /** behaviors.register 的注册载荷（作者提供） */

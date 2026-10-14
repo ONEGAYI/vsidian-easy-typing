@@ -376,6 +376,11 @@ interface PendingTabstopEntry {
  *（不激活导航态；下次输入恢复，不视为故障）。校验通过的语义等价于
  * 「本组件计划已确实应用」：计划被拒（stale-snapshot/conflict）或被
  * 无关事务抢先消费时，文档不会呈现该形态。
+ *
+ * 坐标基准（#52 多命中修复）：changes 暂存的是**快照坐标**，校验打在
+ * **应用后**文档上——第 i 条变更的应用后位置 = 快照 offset 加前方变更
+ * 长度差累计（多光标 per-range 计划的合成口径，与 synthesizeTabstops
+ * 平移同源）；单条变更（#25 以来形态）前方 delta 恒 0，行为不变。
  */
 function consumePendingEntry(
   state: { pending: PendingTabstopEntry | null },
@@ -385,9 +390,16 @@ function consumePendingEntry(
   state.pending = null
   if (entry === null) return []
   // 空文本变更（纯删除计划）区间恒零宽，sliceString(x, x) === '' 天然通过
-  const applied = entry.changes.every(
-    (c) => doc.sliceString(c.offset, c.offset + c.text.length) === c.text,
-  )
+  let precedingDelta = 0
+  let applied = true
+  for (const c of entry.changes) {
+    const at = c.offset + precedingDelta
+    if (doc.sliceString(at, at + c.text.length) !== c.text) {
+      applied = false
+      break
+    }
+    precedingDelta += c.text.length - c.length
+  }
   return applied ? entry.tabstops : []
 }
 

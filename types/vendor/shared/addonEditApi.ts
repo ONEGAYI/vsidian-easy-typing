@@ -1,4 +1,4 @@
-// vendored from ONEGAYI/vsidian@1c7c5283665f5a0b5934478d8d7e3638afab9753 — src/shared/addonEditApi.ts
+// vendored from ONEGAYI/vsidian@56e03882135dda7caf05da1e82dc5557718a837c — src/shared/addonEditApi.ts
 // 类型快照：由 scripts/vendorSdkTypes.mjs 自动生成——仅保留类型声明与被
 // 类型引用的常量，值级导出（校验函数、运行时数据）已剥离。不要手改；
 // re-vendor：npm run vendor:sdk（升级锚定提交改脚本 DEFAULT_COMMIT 后重跑）。
@@ -55,8 +55,11 @@ export interface AddonApplyEditsRequest {
   revision: number
   /** 变更列表（LF 坐标，多范围 = 一笔修饰操作，Q29：不按底层变更拆分） */
   changes: SerChange[]
-  /** 提交后选区（随同一事务原子应用；缺省保持实例现有选区重定位） */
-  selection?: AddonSelectionRange
+  /** 提交后选区（随同一事务原子应用；缺省保持实例现有选区重定位）。
+   *  单对象 = 单选区（旧形态，既有组件零迁移）；数组 = 多选区回设（#498：
+   *  多 ranges 随文本事务同笔生效，mainIndex 恒 0——对齐 setSelection；
+   *  空数组拒绝） */
+  selection?: AddonSelectionRange | AddonSelectionRange[]
   /** 撤回边界声明；缺省 atomic */
   history?: AddonEditHistory
 }

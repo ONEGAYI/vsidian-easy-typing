@@ -1203,6 +1203,54 @@ describe('tabstop 消费一致性校验（B-F2）', () => {
     expect(runtime.consumePendingTabstops(docOf('（）'))).toEqual([{ number: 0, from: 1, to: 1 }])
   })
 
+  it('#52 多命中：双光标 autopair 计划应用后 → 第二条 change 按前方 delta 平移校验，两组 $0 均激活', () => {
+    const { registrations, runtime } = registerInputForAutopair()
+    const autopair = registrations.find((r) => r.id === '02-autopair')!
+    autopair.onInput({
+      userEvent: 'input.type',
+      inputText: '（',
+      replaced: null,
+      docUri: 'file:///a.md',
+      snapshot: {
+        text: '（\n（',
+        selections: [
+          { anchor: 1, head: 1 },
+          { anchor: 3, head: 3 },
+        ],
+        version: 1,
+        revision: 1,
+      },
+    })
+    // 应用后文档 （）\n（）：第二条 change 快照 offset 2 → 应用后 2+1=3 处
+    // 应为 （）——修复前按快照坐标查 [2,4) = \n（ 恒失配，tabstop 全丢弃
+    expect(runtime.consumePendingTabstops(docOf('（）\n（）'))).toEqual([
+      { number: 0, from: 1, to: 1 },
+      { number: 0, from: 4, to: 4 },
+    ])
+  })
+
+  it('#52 多命中：应用后文档失配（只应用了第一条）→ 丢弃', () => {
+    const { registrations, runtime } = registerInputForAutopair()
+    const autopair = registrations.find((r) => r.id === '02-autopair')!
+    autopair.onInput({
+      userEvent: 'input.type',
+      inputText: '（',
+      replaced: null,
+      docUri: 'file:///a.md',
+      snapshot: {
+        text: '（\n（',
+        selections: [
+          { anchor: 1, head: 1 },
+          { anchor: 3, head: 3 },
+        ],
+        version: 1,
+        revision: 1,
+      },
+    })
+    // 第二处未应用（如 stale-snapshot 部分拒绝）→ 第二条校验失配 → 丢弃
+    expect(runtime.consumePendingTabstops(docOf('（）\n（'))).toEqual([])
+  })
+
   it('#9 SelectKey：包裹计划失配文档 → 丢弃', () => {
     const registrations: RuleBehaviorRegistrationSubset[] = []
     const runtime = registerRuleDeleteSelectKeyBehaviors({

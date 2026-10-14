@@ -112,12 +112,15 @@
 
 **与上游撤回体验的固有差异**：上游依赖 CM6 时间窗分组，键入 `（` + 自动补全 `（）` 一次 Ctrl+Z 整体回退；平台模型下为两步（先撤修饰、再撤键入）。此为平台撤销管线结构性边界，非本票可修复项，#21 人工验证时按两步口径核对。
 
-### 多选区语义（票面 open question 的规格化结论）
+### 多选区语义（#47 B 方向：per-range 评估）
 
-- **平台侧**（vsidian `liveInstance.applyAddonEdit` 核实）：计划 `selection` 以 `EditorSelection.single` 应用——**坍缩全部光标为单一选区**；不携带 `selection` 则既有选区经变更映射保留。
-- **快照限制**：`AddonEditorSnapshot.selections` 不携带主选区标记（mainIndex），管线取**首个（最左）选区**处理；上游取 `asSingle().main`——单光标（主流形态）两者一致，多光标下处理位置可能不同。
-- **管线结论**（`planInputRuleModification`，与上游 dispatch 单选区行为等价）：仅处理首个选区；其余选区不触发规则；首个选区命中 → 计划携带单一 `selection`（其余光标坍缩）；不命中 → 返回 null（多光标原样保留）。首个选区非塌缩（选区替换形态）不处理（上游 `notSelected` 同口径，包裹类归 #9 SelectKey）。
-- **#21 验证点**：真实 webview 多光标键入 `。`（两个光标各击一次全角句号），核对仅一处转换 + 光标坍缩；以及单光标场景的坍缩无感知。
+- **平台侧**（vsidian `liveInstance.applyAddonEdit`，锚定 56e03882）：计划 `selection` 双形态——单对象按 `EditorSelection.single` 应用（旧形态，既有组件零迁移）；数组经 `EditorSelection.create(ranges)` 多选区回设（#498：随文本事务同笔生效，mainIndex 恒 0，空数组拒绝）。不携带 `selection` 则既有选区经变更映射保留。
+- **快照限制**：`AddonEditorSnapshot.selections` 不携带主选区标记（mainIndex），平台按升序提供——本管线按序处理，回设数组首元素即主选区（与平台 mainIndex 恒 0 对齐）。
+- **管线结论**（`planInputRuleModification`，#47 B 方向裁决落地）：对**每个塌缩 range 分别**构造 TxContext 跑引擎（作用域、保护区逐 range 判定），逐 range 独立命中/不命中。合成计划：`changes` 每命中 range 一条（快照坐标、升序，同基准多条语义）；`selection` 按快照选区数取形态——单选区 → 单对象（等价 #25 时代行为），多选区 → 数组逐 range 回设：命中 range 为引擎 cursor（本 change 替换后形态）加前方 changes 长度差平移，未命中与非塌缩 range 为快照选区经全部 changes 映射。全部 range 未命中 → null（多光标原样保留，链照常）。
+- **上游对照**：上游为单选区设计（`asSingle().main`），per-range 语义不再追随（B2 声明修订，见人工清单 A5/B2 节）。
+- **边界**：两类放弃修饰的防御——①紧邻光标的 change 区间重叠（后 range 的 matchRange 与前 change 重叠，ChangeSet 不允许重叠区间）；②吞并（matchRange 严格覆盖其他 range 的光标/选区——CM6 选区不重叠只约束 ranges 彼此、不约束 change 区间，长回退规则可吞前方光标，映射夹取会产生乱序 selection，端点接触不触发）；被放弃的 range 按未命中处理（光标经映射保留）。任一选区坐标越界或乱序（快照自相矛盾的防御态）整体不接管；非塌缩 range 不评估（包裹归 #9 SelectKey，选区保留）。tabstop 组按 range 平移拼接（同号并组即多光标同步编辑单元，`tabstopGroup` 既有语义），显式 range 归属标记不需要——归属编码在平移后坐标中。
+- **Delete/SelectKey 管线不演进**：多选区门（`selections.length !== 1` → null）保留——`AddonReplacedRange` 为多区间最小包围 + 按序拼接语义，按 range 重建事务前状态需平台把 replaced 按 range 分组（新平台需求，如需覆盖另开票，不捆绑 #52）。
+- **#21 验证点**：真实 webview 多光标连续 IME 键入 `。`（两个光标各击全角句号），第二次起每处光标随输入前进（依赖 vsidian#495 错位补偿）、`。。`→`.` 各自转换、多光标存续；以及单光标场景行为无回归。
 
 ### compose 事务与 #6/#26 挂接面
 
@@ -175,7 +178,7 @@
 
 - **Delete**：`pipelineConsumesDeleteEvent` 白名单五类 `delete.backward / forward / selection / cut / line`（与平台 `liveInstance.ts` 的 `ADDON_BEHAVIOR_DELETE_USER_EVENTS` 同集；`delete.dedent` 属缩进命令族不纳入）+ `inputText === ''`（平台契约：delete 事务净插入为空串）+ `replaced` 非空区间。
 - **SelectKey**：`userEvent === 'input.type'` + `replaced` 非空（键入替换选区；`input.type.compose` 的 IME 定稿补驱动 replaced 恒 null——平台 #399 边界，compose 天然不进 SelectKey，测试钉住）。上游的 `fromB+1===toB` 单字符门（——/…… 例外）**不设**：引擎 triggerKeys 经 `parseSelectKeyRuleTriggerKeys` 逐字符解析、恒单字符，多字符键必然不中任何规则——与上游门控结果等价，少一道任意性更强的门。
-- **多选区一律不进**（两管线同门）：多区间时平台 replaced 是**最小包围 + 按区间顺序拼接**（`AddonReplacedRange` 契约），事务前重建无法精确还原；且单条计划的 changes 无法忠实表达多区间替换。以「快照选区数 = 1」为代理判定（多区间删除/替换后残留多光标），返回 null 落原生。与 #25「仅处理首个选区、其余不触发」口径一致。
+- **多选区一律不进**（两管线同门）：多区间时平台 replaced 是**最小包围 + 按区间顺序拼接**（`AddonReplacedRange` 契约），事务前重建无法精确还原；且单条计划的 changes 无法忠实表达多区间替换。以「快照选区数 = 1」为代理判定（多区间删除/替换后残留多光标），返回 null 落原生。Input 管线已演进 per-range 评估（#47 B 方向，见「多选区语义」节），两管线维持此门——按 range 重建事务前状态需平台把 replaced 按 range 分组，属新平台需求另票跟踪。
 
 ### 事务前重建与坐标换算（核心设计）
 
