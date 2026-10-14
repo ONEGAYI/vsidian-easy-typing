@@ -357,14 +357,14 @@ describe('per-range 评估：非塌缩与防御边界', () => {
     // 快照：。。|。（range1 光标 2、range2 光标 3 紧邻）。range1 命中
     // [0,2)；range2 左文末尾 。。 跨越 range1 光标（[1,3)）与前 change
     // 重叠——后者放弃，避免 ChangeSet 重叠
-    const plan = planInputRuleModification(
+    const withTabstops = planInputRuleWithTabstops(
       engine,
       inputCtx('。。。', 2, 'input.type', '。', [
         { anchor: 2, head: 2 },
         { anchor: 3, head: 3 },
       ]),
     )
-    expect(plan).toEqual({
+    expect(withTabstops?.plan).toEqual({
       changes: [{ offset: 0, length: 2, text: '.' }],
       // range2 光标 3 ≥ 2 → 3 + (1-2) = 2
       selection: [
@@ -372,6 +372,8 @@ describe('per-range 评估：非塌缩与防御边界', () => {
         { anchor: 2, head: 2 },
       ],
     })
+    // 放弃的 range2 不携带 tabstop（只有命中 range1 的 $0）
+    expect(withTabstops?.tabstops).toEqual([{ number: 0, from: 1, to: 1 }])
   })
 })
 
@@ -432,6 +434,158 @@ describe('per-range 评估：tabstop 组按 range 平移拼接', () => {
       { number: 1, from: 1, to: 1 },
       { number: 1, from: 4, to: 4 },
     ])
+  })
+})
+
+describe('per-range 评估：三光标与多级平移', () => {
+  const engine = engineOf(['builtin-fw2hw-double'])
+
+  it('三光标全命中 → 两条 delta 累计平移（恰好不多不少）', () => {
+    // 快照：三行各 。。，光标 [2, 5, 8]
+    const withTabstops = planInputRuleWithTabstops(
+      engine,
+      inputCtx('。。\n。。\n。。', 2, 'input.type', '。', [
+        { anchor: 2, head: 2 },
+        { anchor: 5, head: 5 },
+        { anchor: 8, head: 8 },
+      ]),
+    )
+    expect(withTabstops?.plan).toEqual({
+      changes: [
+        { offset: 0, length: 2, text: '.' },
+        { offset: 3, length: 2, text: '.' },
+        { offset: 6, length: 2, text: '.' },
+      ],
+      // 逐条平移 -1 累计：cursor 1 / 4-1 / 7-2
+      selection: [
+        { anchor: 1, head: 1 },
+        { anchor: 3, head: 3 },
+        { anchor: 5, head: 5 },
+      ],
+    })
+    // tabstops 三组拼接同平移口径（$0：4-1 / 7-2）
+    expect(withTabstops?.tabstops).toEqual([
+      { number: 0, from: 1, to: 1 },
+      { number: 0, from: 3, to: 3 },
+      { number: 0, from: 5, to: 5 },
+    ])
+  })
+
+  it('中间 range 未命中（位于两条 change 之间）→ 只受前方 delta 影响', () => {
+    // 快照：。。\nx。\n。。：range2 左文 x。 不命中，光标 5 ∈ 两条 change 之间
+    const plan = planInputRuleModification(
+      engine,
+      inputCtx('。。\nx。\n。。', 2, 'input.type', '。', [
+        { anchor: 2, head: 2 },
+        { anchor: 5, head: 5 },
+        { anchor: 8, head: 8 },
+      ]),
+    )
+    expect(plan?.changes).toHaveLength(2)
+    expect(plan?.selection).toEqual([
+      { anchor: 1, head: 1 },
+      // range2 光标 5：change1 [0,2) 后方 → 5-1 = 4；change2 [6,8) 前方（5 ≤ 6 不再影响）
+      { anchor: 4, head: 4 },
+      { anchor: 6, head: 6 },
+    ])
+  })
+
+  it('非塌缩反向选区（anchor > head）映射后反向形态保持', () => {
+    // 快照：。。\nyzz：range2 反向选区 head 4 ← anchor 5，映射 [3,4)
+    const plan = planInputRuleModification(
+      engine,
+      inputCtx('。。\nyzz', 2, 'input.type', '。', [
+        { anchor: 2, head: 2 },
+        { anchor: 5, head: 4 },
+      ]),
+    )
+    expect(plan?.selection).toEqual([
+      { anchor: 1, head: 1 },
+      { anchor: 4, head: 3 },
+    ])
+  })
+
+  it('未命中光标恰在 change 起点（端点接触）→ 不吞不夹、位置不变', () => {
+    // 快照 x。？。\n？？（长 7）：range2 命中 [5,7)；range1 光标 5 ==
+    // matchFrom（端点接触，非严格内部）→ 正常收录，range1 光标不变
+    const plan = planInputRuleModification(
+      engine,
+      inputCtx('x。？。\n？？', 5, 'input.type', '？', [
+        { anchor: 5, head: 5 },
+        { anchor: 7, head: 7 },
+      ]),
+    )
+    expect(plan?.changes).toEqual([{ offset: 5, length: 2, text: '?' }])
+    expect(plan?.selection).toEqual([
+      { anchor: 5, head: 5 },
+      { anchor: 6, head: 6 },
+    ])
+  })
+})
+
+describe('per-range 评估：吞并与重叠防御（审查 A-F1/B-F2 修复）', () => {
+  it('长回退匹配吞掉前方未命中光标 → 该命中放弃（不产出乱序 selection）', () => {
+    // 用户规则 trigger qqq：range2 的 matchRange [2,5) 严格包含 range1
+    // 光标 3——修复前 selection [{4,4},{3,3}] 降序（CM6 create 抛错）
+    const engine = new RuleEngine()
+    engine.addSimpleRule({ trigger: 'qqq', replacement: 'X$0Y', options: 'r' } satisfies SimpleRule)
+    const plan = planInputRuleModification(
+      engine,
+      inputCtx('aqqqq', 3, 'input.type', 'q', [
+        { anchor: 3, head: 3 },
+        { anchor: 5, head: 5 },
+      ]),
+    )
+    expect(plan).toBeNull()
+  })
+
+  it('吞并判定不含端点接触：matchRange 端点恰为其他光标 → 正常收录', () => {
+    // 快照 。。。。：range1 命中 [0,2)；range2 光标 2 不命中（左文 。。。 末尾
+    // 。。 是 [1,3)——吞 range1 光标 2 被防御挡）；range3 光标 4 命中 [2,4)，
+    // 端点恰为 range1 光标 2（不吞）但严格包含 range2 光标 3 → 放弃
+    const engine = engineOf(['builtin-fw2hw-double'])
+    const plan = planInputRuleModification(
+      engine,
+      inputCtx('。。。。', 2, 'input.type', '。', [
+        { anchor: 2, head: 2 },
+        { anchor: 3, head: 3 },
+        { anchor: 4, head: 4 },
+      ]),
+    )
+    expect(plan).toEqual({
+      changes: [{ offset: 0, length: 2, text: '.' }],
+      selection: [
+        { anchor: 1, head: 1 },
+        { anchor: 2, head: 2 },
+        { anchor: 3, head: 3 },
+      ],
+    })
+  })
+
+  it('吞并防御覆盖非塌缩选区：matchRange 严格相交前选区区间 → 放弃', () => {
+    const engine = engineOf(['builtin-fw2hw-double'])
+    // 快照 。？？（长 3）：range2 命中 [1,3)（末尾 ？？）；range1 非塌缩
+    // 选中 [1,2)——严格相交（1 < 2 && 1 < 3）→ range2 放弃 → 无命中
+    const plan = planInputRuleModification(
+      engine,
+      inputCtx('。？？', 3, 'input.type', '？', [
+        { anchor: 1, head: 2 },
+        { anchor: 3, head: 3 },
+      ]),
+    )
+    expect(plan).toBeNull()
+  })
+
+  it('乱序快照（防御）→ 整体不接管返回 null', () => {
+    expect(
+      planInputRuleModification(
+        engineOf(['builtin-fw2hw-double']),
+        inputCtx('。。\n。。', 2, 'input.type', '。', [
+          { anchor: 5, head: 5 },
+          { anchor: 2, head: 2 },
+        ]),
+      ),
+    ).toBeNull()
   })
 })
 

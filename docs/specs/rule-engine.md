@@ -118,7 +118,7 @@
 - **快照限制**：`AddonEditorSnapshot.selections` 不携带主选区标记（mainIndex），平台按升序提供——本管线按序处理，回设数组首元素即主选区（与平台 mainIndex 恒 0 对齐）。
 - **管线结论**（`planInputRuleModification`，#47 B 方向裁决落地）：对**每个塌缩 range 分别**构造 TxContext 跑引擎（作用域、保护区逐 range 判定），逐 range 独立命中/不命中。合成计划：`changes` 每命中 range 一条（快照坐标、升序，同基准多条语义）；`selection` 按快照选区数取形态——单选区 → 单对象（等价 #25 时代行为），多选区 → 数组逐 range 回设：命中 range 为引擎 cursor（本 change 替换后形态）加前方 changes 长度差平移，未命中与非塌缩 range 为快照选区经全部 changes 映射。全部 range 未命中 → null（多光标原样保留，链照常）。
 - **上游对照**：上游为单选区设计（`asSingle().main`），per-range 语义不再追随（B2 声明修订，见人工清单 A5/B2 节）。
-- **边界**：紧邻光标的匹配区间重叠（后 range 的 matchRange 跨越前 range 光标）时后 range 放弃修饰——ChangeSet 不允许重叠区间，后者按未命中处理（光标经映射保留）；任一选区坐标越界（快照自相矛盾的防御态）整体不接管；非塌缩 range 不评估（包裹归 #9 SelectKey，选区保留）。tabstop 组按 range 平移拼接（同号并组即多光标同步编辑单元，`tabstopGroup` 既有语义），显式 range 归属标记不需要——归属编码在平移后坐标中。
+- **边界**：两类放弃修饰的防御——①紧邻光标的 change 区间重叠（后 range 的 matchRange 与前 change 重叠，ChangeSet 不允许重叠区间）；②吞并（matchRange 严格覆盖其他 range 的光标/选区——CM6 选区不重叠只约束 ranges 彼此、不约束 change 区间，长回退规则可吞前方光标，映射夹取会产生乱序 selection，端点接触不触发）；被放弃的 range 按未命中处理（光标经映射保留）。任一选区坐标越界或乱序（快照自相矛盾的防御态）整体不接管；非塌缩 range 不评估（包裹归 #9 SelectKey，选区保留）。tabstop 组按 range 平移拼接（同号并组即多光标同步编辑单元，`tabstopGroup` 既有语义），显式 range 归属标记不需要——归属编码在平移后坐标中。
 - **Delete/SelectKey 管线不演进**：多选区门（`selections.length !== 1` → null）保留——`AddonReplacedRange` 为多区间最小包围 + 按序拼接语义，按 range 重建事务前状态需平台把 replaced 按 range 分组（新平台需求，如需覆盖另开票，不捆绑 #52）。
 - **#21 验证点**：真实 webview 多光标连续 IME 键入 `。`（两个光标各击全角句号），第二次起每处光标随输入前进（依赖 vsidian#495 错位补偿）、`。。`→`.` 各自转换、多光标存续；以及单光标场景行为无回归。
 

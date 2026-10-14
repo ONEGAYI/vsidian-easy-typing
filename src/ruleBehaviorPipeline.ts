@@ -229,6 +229,13 @@ export function planInputRuleWithTabstops(
   for (const sel of selections) {
     if (Math.max(sel.anchor, sel.head) > ctx.snapshot.text.length) return null
   }
+  // 防御（审查 A-F3）：快照选区须按位置升序（平台契约）——乱序快照下
+  // change 升序与 selection 对位双双失效，与越界同口径整体不接管。
+  for (let i = 1; i < selections.length; i++) {
+    const prev = selections[i - 1]!
+    const cur = selections[i]!
+    if (Math.min(cur.anchor, cur.head) < Math.max(prev.anchor, prev.head)) return null
+  }
 
   // per-range 评估（#47 B 方向）：每个塌缩 range 独立构造 TxContext 跑
   // 引擎；非塌缩 range 跳过（Input 类只处理塌缩选区，包裹归 SelectKey），
@@ -260,11 +267,30 @@ export function planInputRuleWithTabstops(
     }
     const result = engine.process(tx)
     if (result === null) continue // 该 range 未命中：无 change，光标映射保留
-    // 重叠防御：per-range 引擎在各自 leftDoc 上匹配，紧邻光标下后 range
-    // 的 matchRange 可跨越前 range 光标（与前 change 重叠）——ChangeSet
-    // 不允许重叠区间，后者放弃修饰（按未命中处理，光标经映射保留）。
+    // change 区间重叠防御：per-range 引擎在各自 leftDoc 上匹配，紧邻光标
+    // 下后 range 的 matchRange 可与前 change 重叠——ChangeSet 不允许重叠
+    // 区间，后者放弃修饰（按未命中处理，光标经映射保留）。matchRange 含
+    // 右侧匹配延伸（trigger_right），与前一命中比 changeEnd 而非光标。
     const prev = hits[hits.length - 1]
     if (prev !== undefined && result.matchRange.from < prev.changeEnd) continue
+    // 吞并防御（审查 A-F1/B-F2 修复）：matchRange 不允许吞掉**其他 range**
+    // 的光标/选区——CM6 选区不重叠只约束 ranges 彼此，不约束 change 区
+    // 间；长回退规则（用户多字符 trigger）可把前方未命中光标吞进替换区
+    // 间，映射夹取会产生乱序 selection（EditorSelection.create 要求升
+    // 序，违反即平台事务整体失败）。端点接触（range 恰在 matchRange 端
+    // 点）不触发：正常映射分支保持有序。零宽塌缩光标即「严格内部」。
+    let swallowsOtherRange = false
+    for (let other = 0; other < selections.length; other++) {
+      if (other === rangeIndex) continue
+      const o = selections[other]!
+      const oFrom = Math.min(o.anchor, o.head)
+      const oTo = Math.max(o.anchor, o.head)
+      if (result.matchRange.from < oTo && oFrom < result.matchRange.to) {
+        swallowsOtherRange = true
+        break
+      }
+    }
+    if (swallowsOtherRange) continue
     hits.push({
       rangeIndex,
       cursor: result.cursor,
@@ -305,8 +331,11 @@ function shiftByPreceding(pos: number, hits: readonly PerRangeHit[], ownIndex: n
 }
 
 /** 未命中/非塌缩 range 的选区坐标经**全部** changes 映射：p ≤ change 起点
- * 不变、p ≥ 末端平移、区间内（选区与命中区间不重叠，理论不可达）按
- * 替换后末端防御夹取。changes 按 offset 升序，可线性累计。 */
+ * 不变、p ≥ 末端平移、区间内按替换后末端防御夹取。区间内分支正常不可
+ * 达——前提是吞并防御（收集阶段保证 change 不覆盖其他 range 的选区，
+ * CM6 选区不重叠只约束 ranges 彼此、不约束 change 区间，须显式防御）；
+ * 保留夹取作为该防御失效时的兜底（宁选区错位不产出越界坐标）。changes
+ * 按 offset 升序，可线性累计。 */
 function mapPosThroughChanges(pos: number, hits: readonly PerRangeHit[]): number {
   let mapped = pos
   for (const hit of hits) {
