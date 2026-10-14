@@ -975,6 +975,96 @@ describe('语言间空格策略（#49）', () => {
     expect(status.getAttribute('data-vet-status')).toBe('failed')
   })
 
+  it('行编辑后立即点添加：两个编辑都落盘（blur→change→click 事件序竞态，审查轮 1 P1 回归）', async () => {
+    const { mock, request } = assemble({
+      'rule-state.json': JSON.stringify({
+        deletedBuiltinRuleIds: [],
+        languagePairs: [],
+        customScriptCategories: [{ name: 'greek', pattern: 'Α-Ωα-ω' }],
+      }),
+      'builtin-rules.json': JSON.stringify([]),
+    })
+    const { root } = await mountView(request)
+
+    // 改名 greek → greek2 后不等待写后刷新，立即点「添加」新条目——
+    // 真实浏览器事件序（mousedown→blur→change→click）下添加按钮读到的
+    // 基面必须含改名结果
+    const nameInput = q<HTMLInputElement>(root, '[data-vet-category="greek"] [data-vet-input="category-name"]')
+    typeInto(nameInput, 'greek2')
+    nameInput.dispatchEvent(new Event('change', { bubbles: true }))
+    typeInto(q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]'), 'extra')
+    typeInto(q<HTMLInputElement>(root, '[data-vet-input="new-category-pattern"]'), 'x-y')
+    q<HTMLButtonElement>(root, `${act('add-category')}`).click()
+    await flush(3)
+
+    expect(stateOf(mock).customScriptCategories).toEqual([
+      { name: 'greek2', pattern: 'Α-Ωα-ω' },
+      { name: 'extra', pattern: 'x-y' },
+    ])
+  })
+
+  it('词典编辑焦点在途时其他分区的写后刷新不重建 spacing（未提交输入保留，审查轮 1 P2 回归）', async () => {
+    const seed = [{ id: 'u1', trigger: 'a', replacement: 'A' }]
+    const { request } = assemble({ 'user-rules.json': JSON.stringify(seed) })
+    const { root } = await mountView(request)
+
+    const nameInput = q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]')
+    nameInput.focus()
+    typeInto(nameInput, 'draft')
+
+    // 其他分区的写（用户规则开关）触发写后刷新 → render() 全量入口
+    const toggle = q<HTMLInputElement>(q(root, '[data-vet-user-list]').children[0]!, `${act('toggle')}`)
+    toggle.checked = false
+    toggle.dispatchEvent(new Event('change', { bubbles: true }))
+    await flush()
+
+    // spacing 分区未被重建：草稿输入与焦点保留
+    expect(q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]').value).toBe('draft')
+    expect(q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]')).toBe(document.activeElement)
+    // 用户规则分区照常刷新（开关状态对账）
+    expect(q(root, '[data-vet-user-list]').children[0]!.classList.contains('vsidian-easy-typing-rule-disabled')).toBe(true)
+  })
+
+  it('重名条目提交被 UI 预检拦截（状态行报错、不落盘，审查轮 1 P2 回归）', async () => {
+    const { mock, request } = assemble({
+      'rule-state.json': JSON.stringify({
+        deletedBuiltinRuleIds: [],
+        languagePairs: [],
+        customScriptCategories: [{ name: 'greek', pattern: 'Α-Ωα-ω' }],
+      }),
+      'builtin-rules.json': JSON.stringify([]),
+    })
+    const { root } = await mountView(request)
+
+    // 改第二条与第一条同名（先加第二条再改名）
+    typeInto(q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]'), 'latin')
+    typeInto(q<HTMLInputElement>(root, '[data-vet-input="new-category-pattern"]'), 'a-z')
+    q<HTMLButtonElement>(root, `${act('add-category')}`).click()
+    await flush()
+    const latinName = q<HTMLInputElement>(root, '[data-vet-category="latin"] [data-vet-input="category-name"]')
+    typeInto(latinName, 'greek')
+    latinName.dispatchEvent(new Event('change', { bubbles: true }))
+    await flush()
+
+    const status = q(root, '[data-vet-status]')
+    expect(status.getAttribute('data-vet-status')).toBe('failed')
+    // 落盘仍是一次成功写的结果（latin 未被覆盖为重名表）
+    const persisted = stateOf(mock).customScriptCategories
+    expect(persisted).toHaveLength(2)
+    expect(persisted.map((c: { name: string }) => c.name)).toContain('latin')
+  })
+
+  it('与内置类同名的词典条目在添加时即拦截', async () => {
+    const { request } = assemble()
+    const { root } = await mountView(request)
+    typeInto(q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]'), 'chinese')
+    typeInto(q<HTMLInputElement>(root, '[data-vet-input="new-category-pattern"]'), 'a-z')
+    q<HTMLButtonElement>(root, `${act('add-category')}`).click()
+    await flush()
+    const status = q(root, '[data-vet-status]')
+    expect(status.getAttribute('data-vet-status')).toBe('failed')
+  })
+
   it('重开回显：语言对与词典从宿主存储读回', async () => {
     const { request } = assemble()
     const first = await mountView(request)

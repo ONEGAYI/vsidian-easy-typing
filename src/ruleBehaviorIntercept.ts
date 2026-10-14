@@ -78,19 +78,19 @@ interface RuleFamilySeed {
   readonly userRuleType: RuleType
 }
 
-/** 五 Input 族 i18n 键（与 RULE_INPUT_FAMILY_SEEDS 同序；数量一致性由
- * test/rule-family-ids.test.ts 钉住） */
-const INPUT_FAMILY_I18N_KEYS: readonly RuleFamilyI18nKey[] = [
-  'punctCollapse',
-  'autopair',
-  'symbolConvert',
-  'punctExpand',
-  'quote',
-]
+/** 五 Input 族 i18n 键（localId → 键映射，显式对应优于按下标配对——漏键
+ *  时注册名缺失被平台拒绝，测试断言映射键集与种子 localId 集一致） */
+export const INPUT_FAMILY_I18N_KEY_BY_LOCAL_ID: Readonly<Record<string, RuleFamilyI18nKey>> = {
+  '01-punct-collapse': 'punctCollapse',
+  '02-autopair': 'autopair',
+  '03-symbol-convert': 'symbolConvert',
+  '04-punct-expand': 'punctExpand',
+  '05-quote': 'quote',
+}
 
-const RULE_FAMILY_SEEDS: readonly RuleFamilySeed[] = RULE_INPUT_FAMILY_SEEDS.map((data, index) => ({
+const RULE_FAMILY_SEEDS: readonly RuleFamilySeed[] = RULE_INPUT_FAMILY_SEEDS.map((data) => ({
   ...data,
-  i18nKey: INPUT_FAMILY_I18N_KEYS[index]!,
+  i18nKey: INPUT_FAMILY_I18N_KEY_BY_LOCAL_ID[data.localId]!,
 }))
 
 /** 族定义（种子 + 解析出的规则数据；rules 含按触发类归入的用户规则） */
@@ -487,15 +487,18 @@ export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): Rul
 // 一次输入至多一族命中）；页面装配层以独立 docChanged 监听消费，读即
 // 消费语义与 #25 通道一致。
 
-/** #9 Delete/SelectKey 族 i18n 键（与 RULE_DELETE_SELECTKEY_FAMILY_SEEDS 同序） */
-const DELETE_SELECTKEY_I18N_KEYS: readonly RuleFamilyI18nKey[] = ['deletePair', 'selectKeyWrap']
+/** #9 Delete/SelectKey 族 i18n 键（同上 localId 映射形态） */
+export const DELETE_SELECTKEY_I18N_KEY_BY_LOCAL_ID: Readonly<Record<string, RuleFamilyI18nKey>> = {
+  '06-delete-rules': 'deletePair',
+  '07-selectkey-rules': 'selectKeyWrap',
+}
 
 /** #9 族种子（数据面同上单一事实源；上游优先级 10 配对删除 + 30 联动删除
  *  的 Delete 族与上游优先级 40 选中替换的 SelectKey 族） */
 const DELETE_SELECTKEY_FAMILY_SEEDS: readonly RuleFamilySeed[] =
-  RULE_DELETE_SELECTKEY_FAMILY_SEEDS.map((data, index) => ({
+  RULE_DELETE_SELECTKEY_FAMILY_SEEDS.map((data) => ({
     ...data,
-    i18nKey: DELETE_SELECTKEY_I18N_KEYS[index]!,
+    i18nKey: DELETE_SELECTKEY_I18N_KEY_BY_LOCAL_ID[data.localId]!,
   }))
 
 /** #9 功能族清单（默认实例；测试可注入替代数据源） */

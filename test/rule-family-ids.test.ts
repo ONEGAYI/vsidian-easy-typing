@@ -10,6 +10,10 @@ import {
 } from '../src/rules/rule-family-ids'
 import { DEFAULT_BUILTIN_RULES } from '../src/rules/default-rules'
 import type { SimpleRule } from '../src/rules/rule-engine'
+import {
+  DELETE_SELECTKEY_I18N_KEY_BY_LOCAL_ID,
+  INPUT_FAMILY_I18N_KEY_BY_LOCAL_ID,
+} from '../src/ruleBehaviorIntercept'
 
 function mkRule(partial: Partial<SimpleRule>): SimpleRule {
   return { trigger: 'x', replacement: 'y', ...partial }
@@ -62,6 +66,15 @@ describe('coveringBehaviorLocalIds（规则 → 覆盖行为族）', () => {
     expect(localIds).toHaveLength(7)
     expect(RULE_INPUT_FAMILY_SEEDS).toHaveLength(5)
     expect(RULE_DELETE_SELECTKEY_FAMILY_SEEDS).toHaveLength(2)
+  })
+
+  it('注册侧 i18n 键映射与种子 localId 集一致（漏键即红，防按下标配对越界）', () => {
+    expect(Object.keys(INPUT_FAMILY_I18N_KEY_BY_LOCAL_ID).sort()).toEqual(
+      RULE_INPUT_FAMILY_SEEDS.map((s) => s.localId).sort(),
+    )
+    expect(Object.keys(DELETE_SELECTKEY_I18N_KEY_BY_LOCAL_ID).sort()).toEqual(
+      RULE_DELETE_SELECTKEY_FAMILY_SEEDS.map((s) => s.localId).sort(),
+    )
   })
 
   it('种子 ruleIds 并集恰为出厂内置规则全集（两侧互证无孤儿）', () => {

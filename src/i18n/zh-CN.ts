@@ -307,6 +307,7 @@ const zhMessages = {
       categoryAdd: '添加',
       categoryRemove: '删除该条目',
       categoryInvalid: '名称与字符/模式都不能为空',
+      categoryConflict: '名称与现有词典条目或内置脚本类重复，请换一个名称',
       empty: '暂无',
     },
     scriptNames: {

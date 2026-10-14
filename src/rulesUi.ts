@@ -179,6 +179,15 @@ export function mountRulesSettingsView(
     showStatus('failed', `${t.status.actionFailed}：${reason}`)
   }
 
+  /** mutate 失败处理：状态行报错 + 补一次整拉对账（写后刷新只在成功路径
+   *  发生，失败时控件态与存储失配——审查轮 1 P2；对账刷新把控件拉回存储
+   *  真值，load 失败时保持现状，通道故障已有其他提示面） */
+  function handleActionOutcome(outcome: { ok: boolean; reason?: string }): void {
+    if (outcome.ok) return
+    actionFailed(outcome.reason ?? 'io-failed')
+    void client.load()
+  }
+
   // ===== 规则条目渲染 =====
 
   function typeMeta(rule: SimpleRule): { label: string; cls: string } {
@@ -263,9 +272,7 @@ export function mountRulesSettingsView(
     toggle.setAttribute('data-vet-action', 'toggle')
     toggle.setAttribute('aria-label', t.ruleItem.enable)
     toggle.addEventListener('change', () => {
-      void client.toggleUserRuleEnabled(rule.id ?? '', toggle.checked).then((outcome) => {
-        if (!outcome.ok) actionFailed(outcome.reason)
-      })
+      void client.toggleUserRuleEnabled(rule.id ?? '', toggle.checked).then(handleActionOutcome)
     })
     toggleLabel.append(toggle)
     item.append(toggleLabel)
@@ -282,9 +289,7 @@ export function mountRulesSettingsView(
     removeBtn.setAttribute('data-vet-action', 'delete')
     removeBtn.setAttribute('aria-label', t.ruleItem.remove)
     removeBtn.addEventListener('click', () => {
-      void client.deleteUserRule(rule.id ?? '').then((outcome) => {
-        if (!outcome.ok) actionFailed(outcome.reason)
-      })
+      void client.deleteUserRule(rule.id ?? '').then(handleActionOutcome)
     })
     item.append(removeBtn)
 
@@ -340,9 +345,7 @@ export function mountRulesSettingsView(
           : client.toggleBuiltinRuleEnabled(id, true)
         : // 关闭：组件层停用（deleteBuiltinRule → deletedBuiltinRuleIds）
           client.disableBuiltinRule(id)
-      void outcome.then((result) => {
-        if (!result.ok) actionFailed(result.reason)
-      })
+      void outcome.then(handleActionOutcome)
     })
     toggleLabel.append(toggle)
     return toggleLabel
@@ -509,7 +512,12 @@ export function mountRulesSettingsView(
     if (toIndex < 0 || toIndex >= rules.length) return
     pendingScrollToSelected = true
     void client.reorderUserRule(index, toIndex).then((outcome) => {
-      if (!outcome.ok) actionFailed(outcome.reason)
+      if (!outcome.ok) {
+        // 失败时复位滚动意图，防下一次无关渲染意外滚动（审查轮 1 P2）
+        pendingScrollToSelected = false
+        actionFailed(outcome.reason)
+        void client.load()
+      }
     })
   }
 
@@ -524,7 +532,7 @@ export function mountRulesSettingsView(
     resetBtn.addEventListener('click', () => {
       void client.resetAllBuiltinRules().then((outcome) => {
         if (outcome.ok) showStatus('success', t.status.resetSuccess)
-        else actionFailed(outcome.reason)
+        else handleActionOutcome(outcome)
       })
     })
     actions.append(resetBtn)
@@ -601,21 +609,70 @@ export function mountRulesSettingsView(
     return select
   }
 
-  /** 词典条目当前 DOM 值整表收集（change 提交的读面） */
-  function collectCategoriesFromDom(): Array<{ name: string; pattern: string }> {
+  /** 词典条目当前 DOM 值整表收集（change/add 提交的读面——DOM 含未提交
+   *  编辑，比 client.state 新鲜；exclude 为按**节点身份**排除的行——改名后
+   *  按旧名匹配会漏删，审查轮 1 P2） */
+  function collectCategoriesFromDom(exclude?: Element | null): Array<{ name: string; pattern: string }> {
     const list = spacingSection.querySelector('[data-vet-category-list]')
     if (!list) return []
-    return [...list.querySelectorAll<HTMLElement>('[data-vet-category]')].map((row) => {
-      const name = row.querySelector<HTMLInputElement>('[data-vet-input="category-name"]')
-      const pattern = row.querySelector<HTMLInputElement>('[data-vet-input="category-pattern"]')
-      return { name: name?.value ?? '', pattern: pattern?.value ?? '' }
-    })
+    return [...list.querySelectorAll<HTMLElement>('[data-vet-category]')]
+      .filter((row) => row !== exclude)
+      .map((row) => {
+        const name = row.querySelector<HTMLInputElement>('[data-vet-input="category-name"]')
+        const pattern = row.querySelector<HTMLInputElement>('[data-vet-input="category-pattern"]')
+        return { name: name?.value ?? '', pattern: pattern?.value ?? '' }
+      })
+  }
+
+  /**
+   * spacing 分区整表写串行队列（审查轮 1 P1）：浏览器事件序
+   * mousedown→blur→change→click 下，行编辑的 change 写 R1 与随后的按钮
+   * click 写 R2 并发——R2 以尚未刷新的 client.state 为基面会静默覆盖 R1
+   * （整表替换、最后落盘胜出）。队列化后每笔写（含写后刷新）落地，下一笔
+   * 才取基面；词典侧基面另取 DOM 读面（最新鲜）。
+   */
+  let spacingWriteQueue: Promise<unknown> = Promise.resolve()
+  function enqueueSpacingWrite(task: () => Promise<{ ok: boolean; reason?: string }>): void {
+    spacingWriteQueue = spacingWriteQueue
+      .then(task)
+      .then((outcome) => {
+        if (!outcome.ok) {
+          actionFailed(outcome.reason ?? 'io-failed')
+          // 失败对账（审查轮 1 P2）：写后刷新只在成功路径发生，失败时控件
+          // 态与存储失配——补一次整拉让视图回到存储真值
+          void client.load()
+        }
+      })
+      .catch(() => {
+        /* 队列只保顺序不传播失败 */
+      })
+  }
+
+  /** 词典整表提交前预检（审查轮 1 P2）：重名/空值/与内置类同名在 UI 拦截
+   *  并提示，不交给存储清洗静默吞掉（吞掉 = 写后刷新后行直接消失） */
+  function validateCategoriesForSubmit(
+    categories: Array<{ name: string; pattern: string }>,
+  ): boolean {
+    const sp = t.spacing
+    const seen = new Set<string>(BUILTIN_CATEGORIES as readonly string[])
+    for (const category of categories) {
+      const name = category.name.trim()
+      if (!name || !category.pattern.trim()) {
+        showStatus('failed', sp.categoryInvalid)
+        return false
+      }
+      if (seen.has(name)) {
+        showStatus('failed', sp.categoryConflict)
+        return false
+      }
+      seen.add(name)
+    }
+    return true
   }
 
   function submitCategories(categories: Array<{ name: string; pattern: string }>): void {
-    void client.setCustomScriptCategories(categories).then((outcome) => {
-      if (!outcome.ok) actionFailed(outcome.reason)
-    })
+    if (!validateCategoriesForSubmit(categories)) return
+    enqueueSpacingWrite(() => client.setCustomScriptCategories(categories))
   }
 
   function renderSpacingSection(): void {
@@ -643,10 +700,11 @@ export function mountRulesSettingsView(
       remove.setAttribute('aria-label', sp.pairRemove)
       remove.title = sp.pairRemove
       remove.addEventListener('click', () => {
-        const next = client.state.languagePairs.filter((p) => pairKey(p) !== pairKey(pair))
-        void client.setLanguagePairs(next).then((outcome) => {
-          if (!outcome.ok) actionFailed(outcome.reason)
-        })
+        enqueueSpacingWrite(() =>
+          client.setLanguagePairs(
+            client.state.languagePairs.filter((p) => pairKey(p) !== pairKey(pair)),
+          ),
+        )
       })
       chip.append(remove)
       chips.append(chip)
@@ -666,10 +724,12 @@ export function mountRulesSettingsView(
         showStatus('failed', sp.pairInvalid)
         return
       }
-      const next = [...client.state.languagePairs.map((p) => ({ ...p })), { a: selA.value, b: selB.value }]
-      void client.setLanguagePairs(next).then((outcome) => {
-        if (!outcome.ok) actionFailed(outcome.reason)
-      })
+      enqueueSpacingWrite(() =>
+        client.setLanguagePairs([
+          ...client.state.languagePairs.map((p) => ({ ...p })),
+          { a: selA.value, b: selB.value },
+        ]),
+      )
     })
     addPairRow.append(selA, selB, addPairBtn)
     pairsGroup.append(addPairRow)
@@ -699,7 +759,7 @@ export function mountRulesSettingsView(
       patternInput.value = custom.pattern
       patternInput.setAttribute('data-vet-input', 'category-pattern')
       patternInput.setAttribute('aria-label', sp.categoryPattern)
-      // 失焦（change）提交整表：条目值即所存
+      // 失焦（change）提交整表：条目值即所存（DOM 读面 + 串行队列）
       const submitRow = () => submitCategories(collectCategoriesFromDom())
       nameInput.addEventListener('change', submitRow)
       patternInput.addEventListener('change', submitRow)
@@ -708,8 +768,9 @@ export function mountRulesSettingsView(
       removeBtn.setAttribute('data-vet-action', 'remove-category')
       removeBtn.setAttribute('aria-label', sp.categoryRemove)
       removeBtn.addEventListener('click', () => {
-        const next = collectCategoriesFromDom().filter((c) => c.name !== custom.name)
-        submitCategories(next)
+        // 按行节点身份排除（闭包里的 custom.name 是渲染期旧名——行已改名时
+        // 按旧名匹配会漏删，审查轮 1 P2）
+        submitCategories(collectCategoriesFromDom(row))
       })
       row.append(nameInput, patternInput, removeBtn)
       categoryList.append(row)
@@ -739,13 +800,9 @@ export function mountRulesSettingsView(
         showStatus('failed', sp.categoryInvalid)
         return
       }
-      const next = [
-        ...client.state.customScriptCategories.map((c) => ({ ...c })),
-        { name, pattern },
-      ]
-      void client.setCustomScriptCategories(next).then((outcome) => {
-        if (!outcome.ok) actionFailed(outcome.reason)
-      })
+      // 基面取 DOM 读面（含未刷新的行编辑——click 前的 blur/change 写在途，
+      // client.state 是旧的，审查轮 1 P1）
+      submitCategories([...collectCategoriesFromDom(), { name, pattern }])
     })
     addCatRow.append(newName, newPattern, addCatBtn)
     dictGroup.append(addCatRow)
@@ -771,10 +828,24 @@ export function mountRulesSettingsView(
     })
   }
 
+  /** spacing 分区是否有编辑中的控件（焦点在输入/下拉上）：写后刷新全量重建
+   *  会丢弃未提交输入与焦点（审查轮 1 P2）——编辑进行时跳过本分区重建，
+   *  无焦点冲突的下一次渲染再补齐。 */
+  function spacingEditingInFlight(): boolean {
+    const active = doc.activeElement
+    if (active === null || !spacingSection.contains(active)) return false
+    return (
+      (active instanceof HTMLInputElement || active instanceof HTMLSelectElement) &&
+      // 静默保护仅限真编辑面；新增行的两个输入以 placeholder 呈现空值，
+      // 焦点在其中同样视为编辑中
+      true
+    )
+  }
+
   function render(): void {
     renderUserSection()
     renderBuiltinSection()
-    renderSpacingSection()
+    if (!spacingEditingInFlight()) renderSpacingSection()
     renderStorageSection()
   }
 

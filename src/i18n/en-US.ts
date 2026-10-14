@@ -307,6 +307,7 @@ export const enMessages: Messages = {
       categoryAdd: 'Add',
       categoryRemove: 'Remove this entry',
       categoryInvalid: 'Both name and chars/pattern are required',
+      categoryConflict: 'The name duplicates an existing dictionary entry or a built-in script category; please pick another name',
       empty: 'None',
     },
     scriptNames: {
