@@ -375,6 +375,28 @@ describe('per-range 评估：非塌缩与防御边界', () => {
     // 放弃的 range2 不携带 tabstop（只有命中 range1 的 $0）
     expect(withTabstops?.tabstops).toEqual([{ number: 0, from: 1, to: 1 }])
   })
+
+  it('trigger_right 右延伸使前 change 越过光标 → 后命中按 changeEnd（非光标）拦下', () => {
+    // 快照 。。》》双光标 [2, 4]：range1 命中 [0,2) + 右侧配对端 》 右延伸
+    // → matchRange [0,3)（changeEnd 越过 range2 光标前一个字符）；range2
+    // 命中 [2,4) 与之重叠（2 < 3）→ 放弃。防御若误比光标（2 < 2 false）
+    // 会漏放，本用例钉住 changeEnd 口径
+    const plan = planInputRuleModification(
+      engine,
+      inputCtx('。。》》', 2, 'input.type', '》', [
+        { anchor: 2, head: 2 },
+        { anchor: 4, head: 4 },
+      ]),
+    )
+    expect(plan).toEqual({
+      changes: [{ offset: 0, length: 3, text: '.' }],
+      // range2 光标 4 ≥ 3 → 4 + (1-3) = 2
+      selection: [
+        { anchor: 1, head: 1 },
+        { anchor: 2, head: 2 },
+      ],
+    })
+  })
 })
 
 describe('per-range 评估：作用域与保护区逐 range 判定', () => {
@@ -540,9 +562,10 @@ describe('per-range 评估：吞并与重叠防御（审查 A-F1/B-F2 修复）'
   })
 
   it('吞并判定不含端点接触：matchRange 端点恰为其他光标 → 正常收录', () => {
-    // 快照 。。。。：range1 命中 [0,2)；range2 光标 2 不命中（左文 。。。 末尾
-    // 。。 是 [1,3)——吞 range1 光标 2 被防御挡）；range3 光标 4 命中 [2,4)，
-    // 端点恰为 range1 光标 2（不吞）但严格包含 range2 光标 3 → 放弃
+    // 快照 。。。。：range1 命中 [0,2)；range2 光标 3 命中 [1,3)——由
+    // change 区间重叠防御先拦（matchFrom 1 < prev.changeEnd 2）；range3
+    // 光标 4 命中 [2,4)：与 range1 的 change 端点相邻（2 == 2）不重叠、
+    // 与 range1 光标 2 端点接触不吞，但严格包含 range2 光标 3 → 吞并放弃
     const engine = engineOf(['builtin-fw2hw-double'])
     const plan = planInputRuleModification(
       engine,

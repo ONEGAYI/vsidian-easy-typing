@@ -230,7 +230,9 @@ export function planInputRuleWithTabstops(
     if (Math.max(sel.anchor, sel.head) > ctx.snapshot.text.length) return null
   }
   // 防御（审查 A-F3）：快照选区须按位置升序（平台契约）——乱序快照下
-  // change 升序与 selection 对位双双失效，与越界同口径整体不接管。
+  // change 升序与 selection 对位双双失效，与越界同口径整体不接管。同位
+  // 重复零宽光标（接触放行）双双命中零宽匹配时可产出同 offset 零宽
+  // change——平台正常操作不产出重复光标，不构成可达路径，不另设门。
   for (let i = 1; i < selections.length; i++) {
     const prev = selections[i - 1]!
     const cur = selections[i]!
