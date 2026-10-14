@@ -15,6 +15,7 @@
 // 自定义走组件化 fork，提示文案引导）。
 import type { Messages } from './i18n'
 import { RuleEngine, RuleScope, RuleTriggerMode, RuleType, type SimpleRule } from './rules/rule-engine'
+import { coveringBehaviorLocalIds } from './rules/rule-family-ids'
 import { DEFAULT_BUILTIN_RULES } from './rules/default-rules'
 import { FUNCTION_TABLE_BY_REF, signatureKindForRuleType, type FunctionTableEntry } from './rules/function-table'
 import { RulesSettingsClient } from './rules/rules-settings-client'
@@ -44,6 +45,19 @@ export interface RulesSettingsViewOptions {
   /** 计时器注入（状态行自动清除；缺省全局 setTimeout/clearTimeout） */
   setTimeout?: (fn: () => void, ms: number) => unknown
   clearTimeout?: (handle: unknown) => void
+  /** 宿主行为禁用态只读面（#50 灰态；结构对齐 vendor AddonBehaviorStateFacet，
+   *  入口注入便于测试。undefined = 面缺席（旧平台），不灰显） */
+  behaviorState?: RulesBehaviorStateLike
+}
+
+/** 行为禁用态只读面的消费形状（#50；与 vendor AddonBehaviorStateFacet
+ *  同构的本地结构——视图层保持零 SDK 依赖，入口负责把 sdk.behaviorState
+ *  传入，jsdom 测试注入 mock） */
+export interface RulesBehaviorStateLike {
+  enabledState(): { addonRunState: string; disabled: readonly string[] }
+  onEnabledChange(
+    callback: (state: { addonRunState: string; disabled: readonly string[] }) => void,
+  ): () => void
 }
 
 export interface RulesSettingsViewHandle {
@@ -78,6 +92,35 @@ export function mountRulesSettingsView(
   let selectedUserRuleId: string | null = null
   /** 移动动作后置位：下次渲染时把选中行滚入视野（一次性消费） */
   let pendingScrollToSelected = false
+  /** 宿主层禁用态视图（#50 两层口径的呈现输入；behaviorState 缺席时恒空） */
+  let hostDisabledBehaviors = new Set<string>()
+  let hostAddonDisabled = false
+
+  /** 宿主层灰态判定（ADR-0016：灰态只归宿主层——组件停用或覆盖族全部被
+   *  单项禁用；返回 tooltip 文案，null = 不灰） */
+  function hostDisabledTooltipFor(rule: SimpleRule, isBuiltin: boolean): string | null {
+    if (!options.behaviorState) return null
+    if (hostAddonDisabled) return t.hostDisabled.addonDisabledTooltip
+    const covering = coveringBehaviorLocalIds(rule, isBuiltin)
+    if (covering.length > 0 && covering.every((id) => hostDisabledBehaviors.has(id))) {
+      return t.hostDisabled.behaviorDisabledTooltip
+    }
+    return null
+  }
+
+  /** 条目应用宿主层灰态（data 标记 + tooltip；组件层开关不受影响——两层独立） */
+  function applyHostDisabled(item: HTMLElement, rule: SimpleRule, isBuiltin: boolean): void {
+    const tooltip = hostDisabledTooltipFor(rule, isBuiltin)
+    if (tooltip === null) {
+      item.removeAttribute('data-vet-host-disabled')
+      item.removeAttribute('title')
+      item.classList.remove(`${CLS}-rule-host-disabled`)
+      return
+    }
+    item.classList.add(`${CLS}-rule-host-disabled`)
+    item.setAttribute('data-vet-host-disabled', hostAddonDisabled ? 'addon' : 'behavior')
+    item.title = tooltip
+  }
 
   /** DOM 构造糖 */
   function el<K extends keyof HTMLElementTagNameMap>(
@@ -241,11 +284,15 @@ export function mountRulesSettingsView(
     })
     item.append(removeBtn)
 
+    applyHostDisabled(item, rule, false)
     attachDragHandlers(item)
     return item
   }
 
-  /** 内置规则条目：只读展示 + 停用按钮（逐条开关走平台行为冲突管理） */
+  /** 内置规则条目（#50 回归逐条开关）：开关 = 组件层停用语义——
+   *  关 → deleteBuiltinRule（移出规则表 + deletedBuiltinRuleIds 记账），
+   *  在场但 enabled=false 的存量态打开 → toggleRuleEnabled 启用；
+   *  宿主层禁用另呈灰态（两层独立，ADR-0016） */
   function buildBuiltinRuleItem(rule: SimpleRule): HTMLElement {
     const item = el('div', `${CLS}-rule-item`)
     item.setAttribute('data-vet-rule-id', rule.id ?? '')
@@ -253,20 +300,12 @@ export function mountRulesSettingsView(
     const main = el('div', `${CLS}-rule-main`)
     main.append(buildTagRow(rule))
     item.append(main)
-    const disableBtn = el('button', `${CLS}-icon-btn ${CLS}-danger`, t.builtinRules.disable)
-    disableBtn.type = 'button'
-    disableBtn.setAttribute('data-vet-action', 'disable-builtin')
-    disableBtn.setAttribute('aria-label', t.builtinRules.disable)
-    disableBtn.addEventListener('click', () => {
-      void client.disableBuiltinRule(rule.id ?? '').then((outcome) => {
-        if (!outcome.ok) actionFailed(outcome.reason)
-      })
-    })
-    item.append(disableBtn)
+    item.append(buildBuiltinToggle(rule.id ?? '', rule.enabled !== false))
+    applyHostDisabled(item, rule, true)
     return item
   }
 
-  /** 已停用内置规则条目：出厂数据预览 + 恢复按钮 */
+  /** 已停用内置规则条目：出厂数据预览 + 开关（打开 = 恢复） */
   function buildDeletedRuleItem(id: string): HTMLElement | null {
     const defaultRule = findDefaultBuiltinRule(id)
     if (!defaultRule) return null
@@ -275,17 +314,34 @@ export function mountRulesSettingsView(
     const main = el('div', `${CLS}-rule-main`)
     main.append(buildTagRow(defaultRule))
     item.append(main)
-    const restoreBtn = el('button', `${CLS}-icon-btn`, t.deletedRules.restore)
-    restoreBtn.type = 'button'
-    restoreBtn.setAttribute('data-vet-action', 'restore')
-    restoreBtn.setAttribute('aria-label', t.deletedRules.restore)
-    restoreBtn.addEventListener('click', () => {
-      void client.restoreBuiltinRule(id).then((outcome) => {
-        if (!outcome.ok) actionFailed(outcome.reason)
+    item.append(buildBuiltinToggle(id, false))
+    applyHostDisabled(item, defaultRule, true)
+    return item
+  }
+
+  /** 内置规则开关（主列表与已停用折叠区共用形态；id 由调用方给出——
+   *  折叠区条目的预览规则来自出厂数据，条目身份是 state 里的 id） */
+  function buildBuiltinToggle(id: string, enabled: boolean): HTMLElement {
+    const toggleLabel = el('label', `${CLS}-toggle`)
+    const toggle = el('input') as HTMLInputElement
+    toggle.type = 'checkbox'
+    toggle.checked = enabled
+    toggle.setAttribute('data-vet-action', 'toggle-builtin')
+    toggle.setAttribute('aria-label', t.builtinRules.enable)
+    toggle.addEventListener('change', () => {
+      const outcome = toggle.checked
+        ? // 打开：在场（罕见 enabled=false 存量）走启用通道；已停用走恢复
+          client.state.deletedBuiltinRuleIds.includes(id)
+          ? client.restoreBuiltinRule(id)
+          : client.toggleBuiltinRuleEnabled(id, true)
+        : // 关闭：组件层停用（deleteBuiltinRule → deletedBuiltinRuleIds）
+          client.disableBuiltinRule(id)
+      void outcome.then((result) => {
+        if (!result.ok) actionFailed(result.reason)
       })
     })
-    item.append(restoreBtn)
-    return item
+    toggleLabel.append(toggle)
+    return toggleLabel
   }
 
   /** 出厂内置规则查找（已停用条目的预览来源；查不到返回 null 跳过渲染） */
@@ -471,7 +527,7 @@ export function mountRulesSettingsView(
     header.append(actions)
     builtinSection.append(header)
 
-    const hint = el('p', `${CLS}-section-desc`, t.builtinRules.platformToggleHint)
+    const hint = el('p', `${CLS}-section-desc`, t.builtinRules.layerHint)
     builtinSection.append(hint)
 
     const list = el('div', `${CLS}-rule-list`)
@@ -1175,6 +1231,18 @@ export function mountRulesSettingsView(
   const unsubscribe = client.onStateChange(() => {
     if (!disposed) render()
   })
+
+  // 宿主层禁用态订阅（#50）：初值快照 + onEnabledChange 推送更新灰态输入
+  // 并重渲染（宿主行为管理/组件启停落库后即时同步）
+  const syncHostDisabledState = (state: { addonRunState: string; disabled: readonly string[] }) => {
+    hostAddonDisabled = state.addonRunState === 'user-disabled'
+    hostDisabledBehaviors = new Set(state.disabled)
+    if (!disposed) render()
+  }
+  if (options.behaviorState) {
+    syncHostDisabledState(options.behaviorState.enabledState())
+  }
+  const unsubscribeBehaviorState = options.behaviorState?.onEnabledChange(syncHostDisabledState) ?? null
   render()
 
   async function reload(): Promise<void> {
@@ -1192,6 +1260,7 @@ export function mountRulesSettingsView(
       statusTimer = null
       closeModal()
       unsubscribe()
+      unsubscribeBehaviorState?.()
       root.textContent = ''
       root.classList.remove(`${CLS}-root`)
       root.removeAttribute('data-vet-page')

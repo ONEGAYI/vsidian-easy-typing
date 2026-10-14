@@ -41,6 +41,8 @@ defineAddonPage(ADDON_ID, (sdk: VsidianAddonPageSdk) => {
   const view = mountRulesSettingsView(root, {
     client,
     messages: pickMessages(navigator.language),
+    // #50 宿主行为禁用态只读面（设置页可用；旧平台 undefined → 不灰显）
+    behaviorState: sdk.behaviorState,
   })
   sdk.onDispose(() => view.dispose())
 })

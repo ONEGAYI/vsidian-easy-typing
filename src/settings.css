@@ -175,6 +175,12 @@
   opacity: 0.5;
 }
 
+/* 宿主层禁用灰态（#50 两层口径：宿主行为管理禁用或组件停用；
+ * 组件层开关不受影响，悬停 title 给出原因） */
+.vsidian-easy-typing-rule-host-disabled {
+  opacity: 0.5;
+}
+
 .vsidian-easy-typing-rule-main {
   flex: 1;
   min-width: 0;

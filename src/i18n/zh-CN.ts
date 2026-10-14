@@ -200,13 +200,17 @@ const zhMessages = {
     builtinRules: {
       title: '内置规则',
       resetAll: '重置内置规则',
-      disable: '停用',
-      platformToggleHint: '内置规则的逐条启用开关由 Vsidian 平台的「行为冲突管理」统一管理，不在此页；此处提供停用（移出规则表）与恢复入口。',
+      enable: '启用/停用内置规则',
+      layerHint: '内置规则在此页逐条启停；Vsidian 行为管理中的禁用与本页开关是两层独立设置，两者都开启才会生效。被宿主禁用的条目呈灰态，悬停可查看原因。',
     },
     deletedRules: {
       title: '已停用的内置规则',
-      restore: '恢复',
       empty: '没有已停用的内置规则',
+    },
+    hostDisabled: {
+      behaviorDisabledTooltip:
+        '已在插件行为管理中被禁用：此处开关仍可调整，但需在 Vsidian 的行为管理中重新启用后才会生效',
+      addonDisabledTooltip: '组件已停用：所有规则不会生效，请在 Vsidian 的组件管理中启用本组件',
     },
     ruleItem: {
       edit: '编辑规则',

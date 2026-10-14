@@ -89,8 +89,14 @@ async function flush(times = 1): Promise<void> {
   }
 }
 
-/** 挂载视图（装载链冲刷后返回） */
-async function mountView(request: RulesChannelLike['request']): Promise<{
+/** 挂载视图（装载链冲刷后返回；behaviorState 为 #50 灰态面的注入位） */
+async function mountView(
+  request: RulesChannelLike['request'],
+  behaviorState?: {
+    enabledState(): { addonRunState: string; disabled: readonly string[] }
+    onEnabledChange(callback: (state: { addonRunState: string; disabled: readonly string[] }) => void): () => void
+  },
+): Promise<{
   view: RulesSettingsViewHandle
   root: HTMLElement
   client: RulesSettingsClient
@@ -104,9 +110,31 @@ async function mountView(request: RulesChannelLike['request']): Promise<{
     doc: document,
     setTimeout: () => 0, // 状态行自动清除不真正计时（测试内常显）
     clearTimeout: () => {},
+    behaviorState,
   })
   await flush()
   return { view, root, client }
+}
+
+/** mock 行为禁用态只读面（#50；形状对齐 vendor AddonBehaviorStateFacet） */
+function mockBehaviorState(
+  initial: { addonRunState?: 'enabled' | 'user-disabled'; disabled?: readonly string[] } = {},
+) {
+  const state = { addonRunState: initial.addonRunState ?? 'enabled', disabled: [...(initial.disabled ?? [])] }
+  const listeners: Array<(s: typeof state) => void> = []
+  return {
+    facet: {
+      enabledState: () => ({ addonRunState: state.addonRunState, disabled: [...state.disabled] }),
+      onEnabledChange: (cb: (s: typeof state) => void) => {
+        listeners.push(cb)
+        return () => {}
+      },
+    },
+    set(next: Partial<typeof state>) {
+      Object.assign(state, next)
+      for (const cb of [...listeners]) cb({ addonRunState: state.addonRunState, disabled: [...state.disabled] })
+    },
+  }
 }
 
 function q<T extends Element>(root: ParentNode, selector: string): T {
@@ -138,8 +166,8 @@ describe('设置页装载与分组渲染', () => {
     expect(q(root, '[data-vet-user-list]').textContent).toContain(zhMessages.rulesPage.userRules.empty)
     expect(q(root, '[data-vet-deleted-rules] summary').textContent).toContain('(0)')
     expect(q(root, '[data-vet-storage-uri]').textContent).toContain('globalStorage')
-    // 平台引导文案在场（内置逐条开关去行为冲突管理，#1/#3 口径）
-    expect(q(root, '[data-vet-section="builtin"]').textContent).toContain('行为冲突管理')
+    // 两层口径引导文案在场（#50：逐条开关回归本页 + 宿主禁用灰态说明）
+    expect(q(root, '[data-vet-section="builtin"]').textContent).toContain('两层独立设置')
   })
 
   it('装载失败 → 状态行 loadFailed', async () => {
@@ -288,13 +316,20 @@ describe('用户规则全生命周期（建/改/启停/删）', () => {
 
 // ===== 内置规则：停用 / 恢复 / 全部重置 =====
 
+/** 内置开关驱动（#50：checkbox change 事件；row 为规则条目元素） */
+function setBuiltinToggle(row: Element, checked: boolean): void {
+  const toggle = q<HTMLInputElement>(row, `${act('toggle-builtin')}`)
+  toggle.checked = checked
+  toggle.dispatchEvent(new Event('change', { bubbles: true }))
+}
+
 describe('内置规则停用/恢复/重置（deletedBuiltinRuleIds 语义）', () => {
   it('停用 → 已停用组计数与恢复；全部重置清停用清单', async () => {
     const { mock, request } = assemble()
     const { root } = await mountView(request)
     const firstId = DEFAULT_BUILTIN_RULES[0]!.id
 
-    q<HTMLButtonElement>(q(root, `[data-vet-rule-id="${firstId}"]`), `${act('disable-builtin')}`).click()
+    setBuiltinToggle(q(root, `[data-vet-rule-id="${firstId}"]`), false)
     await flush()
     expect(q(root, '[data-vet-builtin-list]').children).toHaveLength(DEFAULT_BUILTIN_RULES.length - 1)
     const details = q(root, '[data-vet-deleted-rules]')
@@ -303,15 +338,15 @@ describe('内置规则停用/恢复/重置（deletedBuiltinRuleIds 语义）', (
     expect(q(details, `[data-vet-rule-id="${firstId}"]`)).toBeTruthy()
     expect(mock.files.get('rule-state.json')).toContain(firstId)
 
-    // 恢复单条
-    q<HTMLButtonElement>(details, `${act('restore')}`).click()
+    // 恢复单条（折叠区条目开关打开）
+    setBuiltinToggle(q(details, `[data-vet-rule-id="${firstId}"]`), true)
     await flush()
     expect(q(root, '[data-vet-builtin-list]').children).toHaveLength(DEFAULT_BUILTIN_RULES.length)
     expect(q(root, '[data-vet-deleted-rules] summary').textContent).toContain('(0)')
 
     // 停用两条后全部重置
     for (const rule of DEFAULT_BUILTIN_RULES.slice(0, 2)) {
-      q<HTMLButtonElement>(q(root, `[data-vet-rule-id="${rule.id}"]`), `${act('disable-builtin')}`).click()
+      setBuiltinToggle(q(root, `[data-vet-rule-id="${rule.id}"]`), false)
       await flush()
     }
     expect(q(root, '[data-vet-builtin-list]').children).toHaveLength(DEFAULT_BUILTIN_RULES.length - 2)
@@ -552,6 +587,135 @@ describe('上移/下移按钮', () => {
   })
 })
 
+// ===== 内置规则逐条开关与宿主禁用态灰显（#50 / ADR-0016 两层口径） =====
+
+describe('内置规则逐条开关（组件层，deletedBuiltinRuleIds 载体）', () => {
+  it('内置条目带开关：关闭 → 移出主列表、rule-state 记 id、折叠区可见', async () => {
+    const { mock, request } = assemble()
+    const { root } = await mountView(request)
+    const firstRow = q(root, '[data-vet-builtin-list]').children[0]! as HTMLElement
+    const targetId = firstRow.getAttribute('data-vet-rule-id')!
+    const toggle = q<HTMLInputElement>(firstRow, `${act('toggle-builtin')}`)
+    expect(toggle.checked).toBe(true)
+
+    toggle.checked = false
+    toggle.dispatchEvent(new Event('change', { bubbles: true }))
+    await flush()
+
+    expect(q(root, '[data-vet-builtin-list]').children).toHaveLength(DEFAULT_BUILTIN_RULES.length - 1)
+    expect(JSON.parse(mock.files.get('rule-state.json')!).deletedBuiltinRuleIds).toEqual([targetId])
+    const deleted = q(root, '[data-vet-deleted-rules]')
+    expect(deleted.querySelectorAll('[data-vet-rule-id]')).toHaveLength(1)
+    expect(deleted.getAttribute('data-vet-rule-id') ?? deleted.querySelector('[data-vet-rule-id]')!.getAttribute('data-vet-rule-id')).toBe(targetId)
+  })
+
+  it('折叠区条目开关打开 → 恢复主列表（同一开关语义双向）', async () => {
+    // 种子按真实停用终态（停用写路径同时移除 builtin 条目并记账 state）
+    const builtin = DEFAULT_BUILTIN_RULES.filter((r) => r.id !== 'builtin-conv-hw2fw')
+    const { request } = assemble({
+      'rule-state.json': JSON.stringify({ deletedBuiltinRuleIds: ['builtin-conv-hw2fw'] }),
+      'builtin-rules.json': JSON.stringify(builtin),
+    })
+    const { root } = await mountView(request)
+    expect(q(root, '[data-vet-builtin-list]').children).toHaveLength(DEFAULT_BUILTIN_RULES.length - 1)
+
+    const deletedRow = q(root, '[data-vet-deleted-rules] [data-vet-rule-id="builtin-conv-hw2fw"]')
+    const toggle = q<HTMLInputElement>(deletedRow, `${act('toggle-builtin')}`)
+    expect(toggle.checked).toBe(false)
+    toggle.checked = true
+    toggle.dispatchEvent(new Event('change', { bubbles: true }))
+    await flush()
+
+    expect(q(root, '[data-vet-builtin-list]').children).toHaveLength(DEFAULT_BUILTIN_RULES.length)
+    expect(q(root, '[data-vet-deleted-rules] summary').textContent).toContain('(0)')
+  })
+
+  it('在场但 enabled=false 的内置条目呈关态，打开走启用通道', async () => {
+    const builtin = DEFAULT_BUILTIN_RULES.map((r) =>
+      r.id === 'builtin-fw2hw-double' ? { ...r, enabled: false } : r,
+    )
+    const { mock, request } = assemble({ 'builtin-rules.json': JSON.stringify(builtin) })
+    const { root } = await mountView(request)
+    const row = q(root, '[data-vet-builtin-list] [data-vet-rule-id="builtin-fw2hw-double"]')
+    const toggle = q<HTMLInputElement>(row, `${act('toggle-builtin')}`)
+    expect(toggle.checked).toBe(false)
+
+    toggle.checked = true
+    toggle.dispatchEvent(new Event('change', { bubbles: true }))
+    await flush()
+
+    const persisted = JSON.parse(mock.files.get('builtin-rules.json')!).find(
+      (r: { id: string }) => r.id === 'builtin-fw2hw-double',
+    )
+    expect(persisted.enabled).not.toBe(false)
+    expect(q<HTMLInputElement>(root, '[data-vet-builtin-list] [data-vet-rule-id="builtin-fw2hw-double"] input[type="checkbox"]')).toBeTruthy()
+  })
+})
+
+describe('宿主禁用态灰显（两层口径呈现，ADR-0016）', () => {
+  it('单项禁用：覆盖族被禁的内置条目灰态 + tooltip；其余条目不灰', async () => {
+    const bs = mockBehaviorState({ disabled: ['01-punct-collapse'] })
+    const { request } = assemble()
+    const { root } = await mountView(request, bs.facet)
+
+    const row = q(root, '[data-vet-builtin-list] [data-vet-rule-id="builtin-fw2hw-double"]')
+    expect(row.getAttribute('data-vet-host-disabled')).toBe('behavior')
+    expect(row.getAttribute('title')).toContain('已在插件行为管理中被禁用')
+
+    const other = q(root, '[data-vet-builtin-list] [data-vet-rule-id="builtin-autopair-jump"]')
+    expect(other.hasAttribute('data-vet-host-disabled')).toBe(false)
+  })
+
+  it('Input 用户规则覆盖五族：部分禁用不灰、全禁才灰（多对多归族语义）', async () => {
+    const seed = [{ id: 'u1', trigger: 'a', replacement: 'A' }]
+    const bs = mockBehaviorState({ disabled: ['01-punct-collapse', '02-autopair'] })
+    const { request } = assemble({ 'user-rules.json': JSON.stringify(seed) })
+    const { root } = await mountView(request, bs.facet)
+
+    expect(
+      q(root, '[data-vet-user-list] [data-vet-rule-id="u1"]').hasAttribute('data-vet-host-disabled'),
+    ).toBe(false)
+
+    // 宿主落库推送（onEnabledChange）→ 写后重渲染同步灰态（旧 DOM 引用失效，重查）
+    bs.set({
+      disabled: ['01-punct-collapse', '02-autopair', '03-symbol-convert', '04-punct-expand', '05-quote'],
+    })
+    expect(
+      q(root, '[data-vet-user-list] [data-vet-rule-id="u1"]').getAttribute('data-vet-host-disabled'),
+    ).toBe('behavior')
+  })
+
+  it('Delete 类用户规则：06 族被禁即灰（单覆盖族）', async () => {
+    const seed = [{ id: 'ud', trigger: 'a', replacement: 'A', options: 'd' }]
+    const bs = mockBehaviorState({ disabled: ['06-delete-rules'] })
+    const { request } = assemble({ 'user-rules.json': JSON.stringify(seed) })
+    const { root } = await mountView(request, bs.facet)
+    expect(
+      q(root, '[data-vet-user-list] [data-vet-rule-id="ud"]').getAttribute('data-vet-host-disabled'),
+    ).toBe('behavior')
+  })
+
+  it('组件停用：全部条目灰态 + tooltip「组件已停用」', async () => {
+    const bs = mockBehaviorState({ addonRunState: 'user-disabled' })
+    const { request } = assemble()
+    const { root } = await mountView(request, bs.facet)
+
+    const builtinRow = q(root, '[data-vet-builtin-list]').children[0]! as HTMLElement
+    expect(builtinRow.getAttribute('data-vet-host-disabled')).toBe('addon')
+    expect(builtinRow.getAttribute('title')).toContain('组件已停用')
+    const toggle = q<HTMLInputElement>(builtinRow, `${act('toggle-builtin')}`)
+    expect(toggle.disabled).toBe(false) // 两层独立：组件层开关仍可操作
+  })
+
+  it('behaviorState 未注入（旧平台兼容）：无灰态、开关照常', async () => {
+    const { request } = assemble()
+    const { root } = await mountView(request)
+    for (const row of [...q(root, '[data-vet-builtin-list]').children]) {
+      expect((row as HTMLElement).hasAttribute('data-vet-host-disabled')).toBe(false)
+    }
+  })
+})
+
 // ===== 导入导出 =====
 
 describe('JSON 导入导出', () => {
@@ -689,10 +853,7 @@ describe('设置页重开回显', () => {
     toggle.dispatchEvent(new Event('change', { bubbles: true }))
     await flush()
     const firstBuiltinId = DEFAULT_BUILTIN_RULES[0]!.id
-    q<HTMLButtonElement>(
-      q(first.root, `[data-vet-rule-id="${firstBuiltinId}"]`),
-      `${act('disable-builtin')}`,
-    ).click()
+    setBuiltinToggle(q(first.root, `[data-vet-rule-id="${firstBuiltinId}"]`), false)
     await flush()
     first.view.dispose()
     expect(first.root.childElementCount).toBe(0)

@@ -145,9 +145,15 @@ export class RulesSettingsClient {
     return this.mutate({ op: 'deleteUserRule', id })
   }
 
-  /** 用户规则启用开关（内置规则逐条开关不在此页，口径 #1/#3） */
+  /** 用户规则启用开关 */
   toggleUserRuleEnabled(id: string, enabled: boolean): Promise<RulesActionResult> {
     return this.mutate({ op: 'toggleRuleEnabled', id, isBuiltin: false, enabled })
+  }
+
+  /** 内置规则启用开关（#50：在场但 enabled=false 的存量态打开通道——
+   *  常规启停走 disable/restore 的 deletedBuiltinRuleIds 语义） */
+  toggleBuiltinRuleEnabled(id: string, enabled: boolean): Promise<RulesActionResult> {
+    return this.mutate({ op: 'toggleRuleEnabled', id, isBuiltin: true, enabled })
   }
 
   /** 内置规则停用 = deleteBuiltinRule（deletedBuiltinRuleIds 语义） */

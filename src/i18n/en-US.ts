@@ -201,13 +201,18 @@ export const enMessages: Messages = {
     builtinRules: {
       title: 'Built-in Rules',
       resetAll: 'Reset all built-in rules',
-      disable: 'Disable',
-      platformToggleHint: 'Per-rule enable switches for built-in rules are managed by Vsidian\'s behavior conflict management, not on this page. This page offers disable (remove from the rule set) and restore entries.',
+      enable: 'Enable/Disable built-in rule',
+      layerHint: 'Built-in rules are toggled per-rule on this page. Disables in Vsidian\'s behavior management and the switches here are two independent layers; a rule only takes effect when both layers are on. Entries disabled by the host appear grayed out; hover for the reason.',
     },
     deletedRules: {
       title: 'Disabled Built-in Rules',
-      restore: 'Restore',
       empty: 'No disabled built-in rules',
+    },
+    hostDisabled: {
+      behaviorDisabledTooltip:
+        'Disabled in the plugin\'s behavior management: the switch here still works, but the rule only takes effect after re-enabling it in Vsidian\'s behavior management',
+      addonDisabledTooltip:
+        'The add-on is disabled: no rules take effect. Enable this add-on in Vsidian\'s add-on management',
     },
     ruleItem: {
       edit: 'Edit rule',

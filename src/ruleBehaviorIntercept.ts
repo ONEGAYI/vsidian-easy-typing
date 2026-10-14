@@ -42,6 +42,7 @@ import type {
   AddonInputContext,
 } from '../types/vendor/shared/addonBehaviors'
 import { RuleEngine, RuleType, type SimpleRule } from './rules/rule-engine'
+import { RULE_DELETE_SELECTKEY_FAMILY_SEEDS, RULE_INPUT_FAMILY_SEEDS } from './rules/rule-family-ids'
 import { DEFAULT_BUILTIN_RULES } from './rules/default-rules'
 import { pickMessages, ruleFamilyNameMap, type Messages } from './i18n'
 import { debugLog } from './logging'
@@ -67,7 +68,9 @@ export type RuleFamilyI18nKey = keyof Messages['ruleFamilies']
 
 /** 族种子：localId（数值前缀编码默认链序）+ i18n 键 + 规则 id 集 + 归入
  * 本族的用户规则触发类（Input 族收 Input 类用户规则、06 收 Delete、07 收
- * SelectKey——见 resolveRuleFamilies 归族说明） */
+ * SelectKey——见 resolveRuleFamilies 归族说明）。数据面（localId/ruleIds/
+ * userRuleType）自 src/rules/rule-family-ids.ts 单一事实源（#50 抽取，与
+ * 规则页灰态判定共用），本侧只附加 i18n 键。 */
 interface RuleFamilySeed {
   readonly localId: string
   readonly i18nKey: RuleFamilyI18nKey
@@ -75,23 +78,20 @@ interface RuleFamilySeed {
   readonly userRuleType: RuleType
 }
 
-const RULE_FAMILY_SEEDS: readonly RuleFamilySeed[] = [
-  // 上游优先级 3：连续全角标点转半角
-  { localId: '01-punct-collapse', i18nKey: 'punctCollapse', ruleIds: ['builtin-fw2hw-double'], userRuleType: RuleType.Input },
-  // 上游优先级 5 + 10：配对跳过 + 配对补全（同族：同一触发域，族内按引擎优先级）
-  { localId: '02-autopair', i18nKey: 'autopair', ruleIds: ['builtin-autopair-jump', 'builtin-autopair-input'], userRuleType: RuleType.Input },
-  // 上游优先级 10：·· 转行内代码 / `· 升级代码块 / ￥$ 转公式 / 行首 》、 转换
-  {
-    localId: '03-symbol-convert',
-    i18nKey: 'symbolConvert',
-    ruleIds: ['builtin-conv-backtick', 'builtin-conv-codeblock', 'builtin-conv-formula', 'builtin-conv-linestart'],
-    userRuleType: RuleType.Input,
-  },
-  // 上游优先级 15：CJK 后半角标点转全角（上游数据默认关——enabled 字段留引擎数据态）
-  { localId: '04-punct-expand', i18nKey: 'punctExpand', ruleIds: ['builtin-conv-hw2fw'], userRuleType: RuleType.Input },
-  // 上游优先级 50：引用标记转换与补空格
-  { localId: '05-quote', i18nKey: 'quote', ruleIds: ['builtin-quote-convert', 'builtin-quote-space'], userRuleType: RuleType.Input },
+/** 五 Input 族 i18n 键（与 RULE_INPUT_FAMILY_SEEDS 同序；数量一致性由
+ * test/rule-family-ids.test.ts 钉住） */
+const INPUT_FAMILY_I18N_KEYS: readonly RuleFamilyI18nKey[] = [
+  'punctCollapse',
+  'autopair',
+  'symbolConvert',
+  'punctExpand',
+  'quote',
 ]
+
+const RULE_FAMILY_SEEDS: readonly RuleFamilySeed[] = RULE_INPUT_FAMILY_SEEDS.map((data, index) => ({
+  ...data,
+  i18nKey: INPUT_FAMILY_I18N_KEYS[index]!,
+}))
 
 /** 族定义（种子 + 解析出的规则数据；rules 含按触发类归入的用户规则） */
 export interface RuleFamilyDefinition {
@@ -487,36 +487,16 @@ export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): Rul
 // 一次输入至多一族命中）；页面装配层以独立 docChanged 监听消费，读即
 // 消费语义与 #25 通道一致。
 
-/** #9 族种子：Delete 族（上游优先级 10 配对删除 + 30 联动删除）与
- * SelectKey 族（上游优先级 40 选中替换） */
-const DELETE_SELECTKEY_FAMILY_SEEDS: readonly RuleFamilySeed[] = [
-  // 上游优先级 10（autopair-delete）+ 30（五条联动删除）：删除成对结构一端时联动删除
-  {
-    localId: '06-delete-rules',
-    i18nKey: 'deletePair',
-    ruleIds: [
-      'builtin-autopair-delete',
-      'builtin-del-inline-formula',
-      'builtin-del-highlight',
-      'builtin-del-block-formula',
-      'builtin-del-codeblock',
-      'builtin-del-wikilink',
-    ],
-    userRuleType: RuleType.Delete,
-  },
-  // 上游优先级 40：选中文本后按键包裹
-  {
-    localId: '07-selectkey-rules',
-    i18nKey: 'selectKeyWrap',
-    ruleIds: [
-      'builtin-sel-wrap-backtick',
-      'builtin-sel-wrap-symbols',
-      'builtin-sel-wrap-quotes',
-      'builtin-sel-wrap-cjk-brackets',
-    ],
-    userRuleType: RuleType.SelectKey,
-  },
-]
+/** #9 Delete/SelectKey 族 i18n 键（与 RULE_DELETE_SELECTKEY_FAMILY_SEEDS 同序） */
+const DELETE_SELECTKEY_I18N_KEYS: readonly RuleFamilyI18nKey[] = ['deletePair', 'selectKeyWrap']
+
+/** #9 族种子（数据面同上单一事实源；上游优先级 10 配对删除 + 30 联动删除
+ *  的 Delete 族与上游优先级 40 选中替换的 SelectKey 族） */
+const DELETE_SELECTKEY_FAMILY_SEEDS: readonly RuleFamilySeed[] =
+  RULE_DELETE_SELECTKEY_FAMILY_SEEDS.map((data, index) => ({
+    ...data,
+    i18nKey: DELETE_SELECTKEY_I18N_KEYS[index]!,
+  }))
 
 /** #9 功能族清单（默认实例；测试可注入替代数据源） */
 export const DELETE_SELECTKEY_RULE_FAMILIES: readonly RuleFamilyDefinition[] =
