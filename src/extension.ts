@@ -12,7 +12,7 @@ import type { AddonDefinition, AddonSetupContext } from '../types/vendor/host/ad
 import type { VsidianHostExports } from './host-api'
 import { pickMessages } from './i18n'
 import { attachSettings, NOTICE_TOPIC, RULE_ERROR_TOPIC, SETTINGS_TOPIC, type EasyTypingSettingsFacade } from './settings/store'
-import { buildSettingDefinitions } from './settings/definitions'
+import { buildSettingDefinitions, buildSettingGroups } from './settings/definitions'
 import { HostRulesService, registerRulesChannels } from './rulesHost'
 import { debugLog, setDebugEnabled } from './logging'
 import { CLIPBOARD_READ_TEXT_TOPIC } from './plainPasteCommand'
@@ -98,7 +98,8 @@ function attachSettingsLink(setupCtx: AddonSetupContext): void {
   // 不依赖平台「组件设置生命周期」兜底清理旧订阅）
   settingsFacade?.dispose()
   const messages = pickMessages(vscode.env.language)
-  setupCtx.settings.registerDefinitions(buildSettingDefinitions(messages))
+  // #477：分组元数据随注册载荷声明（组序即呈现序；定义 group 字段引用组键）
+  setupCtx.settings.registerDefinitions(buildSettingDefinitions(messages), buildSettingGroups())
   const facade = attachSettings(setupCtx.settings)
   settingsFacade = facade
   // debug 开关接入日志通道（设置驱动的门控，onChanged 实时生效）

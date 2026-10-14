@@ -1,4 +1,4 @@
-// vendored from ONEGAYI/vsidian@9cd04d1c8223b39df0969c48d578bad969448da1 — src/host/addons/addonRegistry.ts
+// vendored from ONEGAYI/vsidian@1c7c5283665f5a0b5934478d8d7e3638afab9753 — src/host/addons/addonRegistry.ts
 // 类型快照：由 scripts/vendorSdkTypes.mjs 自动生成——仅保留类型声明与被
 // 类型引用的常量，值级导出（校验函数、运行时数据）已剥离。不要手改；
 // re-vendor：npm run vendor:sdk（升级锚定提交改脚本 DEFAULT_COMMIT 后重跑）。
@@ -45,8 +45,10 @@ export interface AddonSettingsChangeEventData {
 export interface AddonSettingsContextApi {
   /** 设置页入口登记（自身安装目录内的相对路径；越界拒绝） */
   registerPage(entry: AddonPageEntryInput): AddonRegistrationHandle
-  /** 设置定义收集（可序列化定义；形状校验矩阵见 shared/addonSettings） */
-  registerDefinitions(defs: readonly unknown[]): AddonRegistrationHandle
+  /** 设置定义收集（可序列化定义；形状校验矩阵见 shared/addonSettings）。
+   *  #472 分组：第二参为可选组声明批（声明序即呈现序），定义的 group 字段
+   *  引用其组键——引用未声明组键或组键重复整批拒绝 */
+  registerDefinitions(defs: readonly unknown[], groups?: readonly unknown[]): AddonRegistrationHandle
   /** 生效值与来源快照（工作区显式 > 用户默认 > 出厂默认） */
   get(): AddonSettingsGetSnapshot
   /** 单键来源（未定义键为 undefined） */

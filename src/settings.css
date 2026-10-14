@@ -88,6 +88,11 @@
   background: var(--vscode-button-secondaryHoverBackground, #45494e);
 }
 
+.vsidian-easy-typing-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .vsidian-easy-typing-btn-primary {
   background: var(--vscode-button-background, #0e639c);
   color: var(--vscode-button-foreground, #ffffff);
@@ -158,7 +163,21 @@
   border-radius: 5px;
 }
 
+.vsidian-easy-typing-rule-selected {
+  border-color: var(--vscode-focusBorder, #007fd4);
+}
+
+.vsidian-easy-typing-rule-selectable {
+  cursor: pointer;
+}
+
 .vsidian-easy-typing-rule-disabled {
+  opacity: 0.5;
+}
+
+/* 宿主层禁用灰态（#50 两层口径：宿主行为管理禁用或组件停用；
+ * 组件层开关不受影响，悬停 title 给出原因） */
+.vsidian-easy-typing-rule-host-disabled {
   opacity: 0.5;
 }
 
@@ -534,5 +553,42 @@
 
 .vsidian-easy-typing-test-output[data-vet-test-state='hit'] .vsidian-easy-typing-test-state {
   color: var(--vscode-charts-green, #89d185);
+  font-size: 12px;
+}
+
+/* 语言间空格策略分区（#49） */
+.vsidian-easy-typing-pair-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vsidian-easy-typing-pair-chip .vsidian-easy-typing-icon-btn {
+  padding: 0 4px;
+}
+
+.vsidian-easy-typing-pair-add-row {
+  align-items: center;
+  margin-top: 8px;
+}
+
+.vsidian-easy-typing-category-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vsidian-easy-typing-category-row {
+  align-items: center;
+}
+
+.vsidian-easy-typing-input {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 8px;
+  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.35));
+  border-radius: 4px;
+  background: var(--vscode-input-background, #3c3c3c);
+  color: var(--vscode-input-foreground, #cccccc);
   font-size: 12px;
 }

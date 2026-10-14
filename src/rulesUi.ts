@@ -15,7 +15,10 @@
 // 自定义走组件化 fork，提示文案引导）。
 import type { Messages } from './i18n'
 import { RuleEngine, RuleScope, RuleTriggerMode, RuleType, type SimpleRule } from './rules/rule-engine'
+import { coveringBehaviorLocalIds } from './rules/rule-family-ids'
 import { DEFAULT_BUILTIN_RULES } from './rules/default-rules'
+import type { StoredLanguagePair } from './rules/rule-store'
+import { BUILTIN_CATEGORIES } from './formatting/scriptCategory'
 import { FUNCTION_TABLE_BY_REF, signatureKindForRuleType, type FunctionTableEntry } from './rules/function-table'
 import { RulesSettingsClient } from './rules/rules-settings-client'
 import {
@@ -44,6 +47,19 @@ export interface RulesSettingsViewOptions {
   /** 计时器注入（状态行自动清除；缺省全局 setTimeout/clearTimeout） */
   setTimeout?: (fn: () => void, ms: number) => unknown
   clearTimeout?: (handle: unknown) => void
+  /** 宿主行为禁用态只读面（#50 灰态；结构对齐 vendor AddonBehaviorStateFacet，
+   *  入口注入便于测试。undefined = 面缺席（旧平台），不灰显） */
+  behaviorState?: RulesBehaviorStateLike
+}
+
+/** 行为禁用态只读面的消费形状（#50；与 vendor AddonBehaviorStateFacet
+ *  同构的本地结构——视图层保持零 SDK 依赖，入口负责把 sdk.behaviorState
+ *  传入，jsdom 测试注入 mock） */
+export interface RulesBehaviorStateLike {
+  enabledState(): { addonRunState: string; disabled: readonly string[] }
+  onEnabledChange(
+    callback: (state: { addonRunState: string; disabled: readonly string[] }) => void,
+  ): () => void
 }
 
 export interface RulesSettingsViewHandle {
@@ -74,6 +90,39 @@ export function mountRulesSettingsView(
   let statusTimer: unknown = null
   let dragSourceIndex: number | null = null
   let cachedMidY = 0
+  /** 用户规则选中行 id（#48 头部上移/下移的操作目标；写后刷新跨渲染保持） */
+  let selectedUserRuleId: string | null = null
+  /** 移动动作后置位：下次渲染时把选中行滚入视野（一次性消费） */
+  let pendingScrollToSelected = false
+  /** 宿主层禁用态视图（#50 两层口径的呈现输入；behaviorState 缺席时恒空） */
+  let hostDisabledBehaviors = new Set<string>()
+  let hostAddonDisabled = false
+
+  /** 宿主层灰态判定（ADR-0016：灰态只归宿主层——组件停用或覆盖族全部被
+   *  单项禁用；返回 tooltip 文案，null = 不灰） */
+  function hostDisabledTooltipFor(rule: SimpleRule, isBuiltin: boolean): string | null {
+    if (!options.behaviorState) return null
+    if (hostAddonDisabled) return t.hostDisabled.addonDisabledTooltip
+    const covering = coveringBehaviorLocalIds(rule, isBuiltin)
+    if (covering.length > 0 && covering.every((id) => hostDisabledBehaviors.has(id))) {
+      return t.hostDisabled.behaviorDisabledTooltip
+    }
+    return null
+  }
+
+  /** 条目应用宿主层灰态（data 标记 + tooltip；组件层开关不受影响——两层独立） */
+  function applyHostDisabled(item: HTMLElement, rule: SimpleRule, isBuiltin: boolean): void {
+    const tooltip = hostDisabledTooltipFor(rule, isBuiltin)
+    if (tooltip === null) {
+      item.removeAttribute('data-vet-host-disabled')
+      item.removeAttribute('title')
+      item.classList.remove(`${CLS}-rule-host-disabled`)
+      return
+    }
+    item.classList.add(`${CLS}-rule-host-disabled`)
+    item.setAttribute('data-vet-host-disabled', hostAddonDisabled ? 'addon' : 'behavior')
+    item.title = tooltip
+  }
 
   /** DOM 构造糖 */
   function el<K extends keyof HTMLElementTagNameMap>(
@@ -102,9 +151,11 @@ export function mountRulesSettingsView(
   userSection.setAttribute('data-vet-section', 'user')
   const builtinSection = el('section', `${CLS}-section`)
   builtinSection.setAttribute('data-vet-section', 'builtin')
+  const spacingSection = el('section', `${CLS}-section`)
+  spacingSection.setAttribute('data-vet-section', 'spacing')
   const storageSection = el('section', `${CLS}-section ${CLS}-storage`)
   storageSection.setAttribute('data-vet-section', 'storage')
-  root.append(title, intro, status, userSection, builtinSection, storageSection)
+  root.append(title, intro, status, userSection, builtinSection, spacingSection, storageSection)
 
   /** 模态浮层容器（编辑表单；常驻 root 末位，hidden 切换） */
   const overlay = el('div', classes(`${CLS}-modal`, `${CLS}-hidden`))
@@ -126,6 +177,15 @@ export function mountRulesSettingsView(
 
   function actionFailed(reason: string): void {
     showStatus('failed', `${t.status.actionFailed}：${reason}`)
+  }
+
+  /** mutate 失败处理：状态行报错 + 补一次整拉对账（写后刷新只在成功路径
+   *  发生，失败时控件态与存储失配——审查轮 1 P2；对账刷新把控件拉回存储
+   *  真值，load 失败时保持现状，通道故障已有其他提示面） */
+  function handleActionOutcome(outcome: { ok: boolean; reason?: string }): void {
+    if (outcome.ok) return
+    actionFailed(outcome.reason ?? 'io-failed')
+    void client.load()
   }
 
   // ===== 规则条目渲染 =====
@@ -176,10 +236,20 @@ export function mountRulesSettingsView(
     item.setAttribute('data-vet-rule-id', rule.id ?? '')
     item.setAttribute('data-vet-rule-index', String(index))
     if (rule.enabled === false) item.classList.add(`${CLS}-rule-disabled`)
+    if (selectedUserRuleId !== null && selectedUserRuleId === rule.id) {
+      item.classList.add(`${CLS}-rule-selected`)
+      item.setAttribute('data-vet-selected', 'true')
+    }
 
     item.append(buildDragHandle())
 
     const main = el('div', `${CLS}-rule-main`)
+    // 点击行主体选中（#48 上移/下移的操作目标；按钮/开关区不触发）
+    main.classList.add(`${CLS}-rule-selectable`)
+    main.addEventListener('click', () => {
+      selectedUserRuleId = rule.id ?? null
+      refreshSelectionUi()
+    })
     main.append(buildTagRow(rule))
     const meta = el('div', `${CLS}-rule-meta`)
     if (RuleEngine.parseOptions(rule.options).type === RuleType.Input) {
@@ -202,9 +272,7 @@ export function mountRulesSettingsView(
     toggle.setAttribute('data-vet-action', 'toggle')
     toggle.setAttribute('aria-label', t.ruleItem.enable)
     toggle.addEventListener('change', () => {
-      void client.toggleUserRuleEnabled(rule.id ?? '', toggle.checked).then((outcome) => {
-        if (!outcome.ok) actionFailed(outcome.reason)
-      })
+      void client.toggleUserRuleEnabled(rule.id ?? '', toggle.checked).then(handleActionOutcome)
     })
     toggleLabel.append(toggle)
     item.append(toggleLabel)
@@ -221,17 +289,19 @@ export function mountRulesSettingsView(
     removeBtn.setAttribute('data-vet-action', 'delete')
     removeBtn.setAttribute('aria-label', t.ruleItem.remove)
     removeBtn.addEventListener('click', () => {
-      void client.deleteUserRule(rule.id ?? '').then((outcome) => {
-        if (!outcome.ok) actionFailed(outcome.reason)
-      })
+      void client.deleteUserRule(rule.id ?? '').then(handleActionOutcome)
     })
     item.append(removeBtn)
 
+    applyHostDisabled(item, rule, false)
     attachDragHandlers(item)
     return item
   }
 
-  /** 内置规则条目：只读展示 + 停用按钮（逐条开关走平台行为冲突管理） */
+  /** 内置规则条目（#50 回归逐条开关）：开关 = 组件层停用语义——
+   *  关 → deleteBuiltinRule（移出规则表 + deletedBuiltinRuleIds 记账），
+   *  在场但 enabled=false 的存量态打开 → toggleRuleEnabled 启用；
+   *  宿主层禁用另呈灰态（两层独立，ADR-0016） */
   function buildBuiltinRuleItem(rule: SimpleRule): HTMLElement {
     const item = el('div', `${CLS}-rule-item`)
     item.setAttribute('data-vet-rule-id', rule.id ?? '')
@@ -239,20 +309,12 @@ export function mountRulesSettingsView(
     const main = el('div', `${CLS}-rule-main`)
     main.append(buildTagRow(rule))
     item.append(main)
-    const disableBtn = el('button', `${CLS}-icon-btn ${CLS}-danger`, t.builtinRules.disable)
-    disableBtn.type = 'button'
-    disableBtn.setAttribute('data-vet-action', 'disable-builtin')
-    disableBtn.setAttribute('aria-label', t.builtinRules.disable)
-    disableBtn.addEventListener('click', () => {
-      void client.disableBuiltinRule(rule.id ?? '').then((outcome) => {
-        if (!outcome.ok) actionFailed(outcome.reason)
-      })
-    })
-    item.append(disableBtn)
+    item.append(buildBuiltinToggle(rule.id ?? '', rule.enabled !== false))
+    applyHostDisabled(item, rule, true)
     return item
   }
 
-  /** 已停用内置规则条目：出厂数据预览 + 恢复按钮 */
+  /** 已停用内置规则条目：出厂数据预览 + 开关（打开 = 恢复） */
   function buildDeletedRuleItem(id: string): HTMLElement | null {
     const defaultRule = findDefaultBuiltinRule(id)
     if (!defaultRule) return null
@@ -261,17 +323,32 @@ export function mountRulesSettingsView(
     const main = el('div', `${CLS}-rule-main`)
     main.append(buildTagRow(defaultRule))
     item.append(main)
-    const restoreBtn = el('button', `${CLS}-icon-btn`, t.deletedRules.restore)
-    restoreBtn.type = 'button'
-    restoreBtn.setAttribute('data-vet-action', 'restore')
-    restoreBtn.setAttribute('aria-label', t.deletedRules.restore)
-    restoreBtn.addEventListener('click', () => {
-      void client.restoreBuiltinRule(id).then((outcome) => {
-        if (!outcome.ok) actionFailed(outcome.reason)
-      })
-    })
-    item.append(restoreBtn)
+    item.append(buildBuiltinToggle(id, false))
+    applyHostDisabled(item, defaultRule, true)
     return item
+  }
+
+  /** 内置规则开关（主列表与已停用折叠区共用形态；id 由调用方给出——
+   *  折叠区条目的预览规则来自出厂数据，条目身份是 state 里的 id） */
+  function buildBuiltinToggle(id: string, enabled: boolean): HTMLElement {
+    const toggleLabel = el('label', `${CLS}-toggle`)
+    const toggle = el('input') as HTMLInputElement
+    toggle.type = 'checkbox'
+    toggle.checked = enabled
+    toggle.setAttribute('data-vet-action', 'toggle-builtin')
+    toggle.setAttribute('aria-label', t.builtinRules.enable)
+    toggle.addEventListener('change', () => {
+      const outcome = toggle.checked
+        ? // 打开：在场（罕见 enabled=false 存量）走启用通道；已停用走恢复
+          client.state.deletedBuiltinRuleIds.includes(id)
+          ? client.restoreBuiltinRule(id)
+          : client.toggleBuiltinRuleEnabled(id, true)
+        : // 关闭：组件层停用（deleteBuiltinRule → deletedBuiltinRuleIds）
+          client.disableBuiltinRule(id)
+      void outcome.then(handleActionOutcome)
+    })
+    toggleLabel.append(toggle)
+    return toggleLabel
   }
 
   /** 出厂内置规则查找（已停用条目的预览来源；查不到返回 null 跳过渲染） */
@@ -352,6 +429,24 @@ export function mountRulesSettingsView(
     addBtn.addEventListener('click', () => openCreateForm())
     actions.append(addBtn)
 
+    // #48 上移/下移（与新增同排，上游 ↑/↓ 语义）：移动当前选中的用户规则，
+    // 同一 reorderUserRule 通道做相邻交换；禁用态见 refreshSelectionUi
+    const moveUpBtn = el('button', `${CLS}-btn`, '↑')
+    moveUpBtn.type = 'button'
+    moveUpBtn.setAttribute('data-vet-action', 'move-up')
+    moveUpBtn.setAttribute('aria-label', t.userRules.moveUp)
+    moveUpBtn.title = t.userRules.moveUp
+    moveUpBtn.addEventListener('click', () => moveSelectedUserRule(-1))
+    actions.append(moveUpBtn)
+
+    const moveDownBtn = el('button', `${CLS}-btn`, '↓')
+    moveDownBtn.type = 'button'
+    moveDownBtn.setAttribute('data-vet-action', 'move-down')
+    moveDownBtn.setAttribute('aria-label', t.userRules.moveDown)
+    moveDownBtn.title = t.userRules.moveDown
+    moveDownBtn.addEventListener('click', () => moveSelectedUserRule(1))
+    actions.append(moveDownBtn)
+
     const importBtn = el('button', `${CLS}-btn`, t.userRules.import)
     importBtn.type = 'button'
     importBtn.setAttribute('data-vet-action', 'import')
@@ -377,6 +472,53 @@ export function mountRulesSettingsView(
       client.state.user.forEach((rule, index) => list.append(buildUserRuleItem(rule, index)))
     }
     userSection.append(list)
+    refreshSelectionUi()
+    if (pendingScrollToSelected) {
+      // 移动后的滚动跟随（真实浏览器生效；jsdom 无实现，可选调用防御）
+      pendingScrollToSelected = false
+      userSection
+        .querySelector<HTMLElement>('[data-vet-selected="true"]')
+        ?.scrollIntoView?.({ block: 'nearest' })
+    }
+  }
+
+  /** 选中态同步（#48）：行标记 + 头部按钮禁用（首行上移 / 末行下移置灰；
+   * 选中 id 失效（规则被删/导入去重）时两钮自愈回禁用） */
+  function refreshSelectionUi(): void {
+    const rules = client.state.user
+    const selectedIndex =
+      selectedUserRuleId === null ? -1 : rules.findIndex((r) => r.id === selectedUserRuleId)
+    userSection.querySelectorAll<HTMLElement>('[data-vet-rule-id]').forEach((row) => {
+      const selected =
+        selectedIndex !== -1 && row.getAttribute('data-vet-rule-id') === selectedUserRuleId
+      row.classList.toggle(`${CLS}-rule-selected`, selected)
+      if (selected) row.setAttribute('data-vet-selected', 'true')
+      else row.removeAttribute('data-vet-selected')
+    })
+    const upBtn = userSection.querySelector<HTMLButtonElement>('[data-vet-action="move-up"]')
+    const downBtn = userSection.querySelector<HTMLButtonElement>('[data-vet-action="move-down"]')
+    if (upBtn) upBtn.disabled = selectedIndex <= 0
+    if (downBtn) downBtn.disabled = selectedIndex === -1 || selectedIndex >= rules.length - 1
+  }
+
+  /** #48 相邻移动选中行（与拖拽同一 reorderUserRule 通道；写后刷新保持
+   * 选中并滚动跟随——交互后行为与列表既有惯例一致） */
+  function moveSelectedUserRule(direction: -1 | 1): void {
+    const rules = client.state.user
+    const index =
+      selectedUserRuleId === null ? -1 : rules.findIndex((r) => r.id === selectedUserRuleId)
+    if (index === -1) return
+    const toIndex = index + direction
+    if (toIndex < 0 || toIndex >= rules.length) return
+    pendingScrollToSelected = true
+    void client.reorderUserRule(index, toIndex).then((outcome) => {
+      if (!outcome.ok) {
+        // 失败时复位滚动意图，防下一次无关渲染意外滚动（审查轮 1 P2）
+        pendingScrollToSelected = false
+        actionFailed(outcome.reason)
+        void client.load()
+      }
+    })
   }
 
   function renderBuiltinSection(): void {
@@ -390,14 +532,14 @@ export function mountRulesSettingsView(
     resetBtn.addEventListener('click', () => {
       void client.resetAllBuiltinRules().then((outcome) => {
         if (outcome.ok) showStatus('success', t.status.resetSuccess)
-        else actionFailed(outcome.reason)
+        else handleActionOutcome(outcome)
       })
     })
     actions.append(resetBtn)
     header.append(actions)
     builtinSection.append(header)
 
-    const hint = el('p', `${CLS}-section-desc`, t.builtinRules.platformToggleHint)
+    const hint = el('p', `${CLS}-section-desc`, t.builtinRules.layerHint)
     builtinSection.append(hint)
 
     const list = el('div', `${CLS}-rule-list`)
@@ -425,6 +567,282 @@ export function mountRulesSettingsView(
     builtinSection.append(details)
   }
 
+
+  // ===== 语言间空格策略（#49：语言对 + 自定义词典，整表提交） =====
+
+  /** 语言对 chip 键（无序：与存储去重口径一致） */
+  function pairKey(pair: StoredLanguagePair): string {
+    return [pair.a, pair.b].sort().join('\u2194')
+  }
+
+  /** 语言对显示名（内置类经 i18n 显示名，自定义类名原样） */
+  function pairLabel(pair: StoredLanguagePair): string {
+    const nameOf = (raw: string): string =>
+      (t.scriptNames as Record<string, string | undefined>)[raw] ?? raw
+    return `${nameOf(pair.a)} \u2194 ${nameOf(pair.b)}`
+  }
+
+  /** 下拉选项集：内置脚本类（显示名）+ 现有自定义类名 */
+  function categoryOptions(): Array<{ value: string; label: string }> {
+    const options: Array<{ value: string; label: string }> = BUILTIN_CATEGORIES.map((c) => ({
+      value: c,
+      label: (t.scriptNames as Record<string, string | undefined>)[c] ?? c,
+    }))
+    for (const custom of client.state.customScriptCategories) {
+      options.push({ value: custom.name, label: custom.name })
+    }
+    return options
+  }
+
+  function buildCategorySelect(
+    attr: string,
+    options: Array<{ value: string; label: string }>,
+  ): HTMLSelectElement {
+    const select = el('select') as HTMLSelectElement
+    select.className = `${CLS}-select`
+    select.setAttribute('data-vet-input', attr)
+    for (const opt of options) {
+      const option = el('option', undefined, opt.label)
+      option.value = opt.value
+      select.append(option)
+    }
+    return select
+  }
+
+  /** 词典条目当前 DOM 值整表收集（change/add 提交的读面——DOM 含未提交
+   *  编辑，比 client.state 新鲜；exclude 为按**节点身份**排除的行——改名后
+   *  按旧名匹配会漏删，审查轮 1 P2） */
+  function collectCategoriesFromDom(exclude?: Element | null): Array<{ name: string; pattern: string }> {
+    const list = spacingSection.querySelector('[data-vet-category-list]')
+    if (!list) return []
+    return [...list.querySelectorAll<HTMLElement>('[data-vet-category]')]
+      .filter((row) => row !== exclude)
+      .map((row) => {
+        const name = row.querySelector<HTMLInputElement>('[data-vet-input="category-name"]')
+        const pattern = row.querySelector<HTMLInputElement>('[data-vet-input="category-pattern"]')
+        return { name: name?.value ?? '', pattern: pattern?.value ?? '' }
+      })
+  }
+
+  /**
+   * spacing 分区整表写串行队列（审查轮 1 P1）：浏览器事件序
+   * mousedown→blur→change→click 下，行编辑的 change 写 R1 与随后的按钮
+   * click 写 R2 并发——R2 以尚未刷新的 client.state 为基面会静默覆盖 R1
+   * （整表替换、最后落盘胜出）。队列化后每笔写（含写后刷新）落地，下一笔
+   * 才取基面；词典侧基面另取 DOM 读面（最新鲜）。
+   */
+  let spacingWriteQueue: Promise<unknown> = Promise.resolve()
+  function enqueueSpacingWrite(task: () => Promise<{ ok: boolean; reason?: string }>): void {
+    spacingWriteQueue = spacingWriteQueue
+      .then(() => {
+        // 写请求发出 = 输入面已消费：无论成败，新增行/下拉的草稿语义终结
+        //（成功走写后刷新重建、失败走对账重建——两者都不能被 dirty 挡住；
+        // 在任务体内 load 同步触发 render，须在此之前清位）
+        spacingDirty = false
+        return task()
+      })
+      .then((outcome) => {
+        if (!outcome.ok) {
+          actionFailed(outcome.reason ?? 'io-failed')
+          // 失败对账（审查轮 1 P2）：写后刷新只在成功路径发生，失败时控件
+          // 态与存储失配——补一次整拉让视图回到存储真值
+          void client.load()
+        }
+      })
+      .catch((err: unknown) => {
+        // 任务异常（通道 reject 等罕见形态）镜像失败路径，不做无反馈死按钮
+        //（审查轮 2 P2）；队列继续（fulfilled 链尾）
+        actionFailed(String(err))
+        void client.load()
+      })
+  }
+
+  /** spacing 分区草稿脏标记（审查轮 2 P1）：真实浏览器在 mousedown 即把
+   *  焦点移向被点控件——仅凭 activeElement 判编辑保护挡不住「草稿输入 →
+   *  点其他分区开关」的丢输入场景；新增行与双下拉的输入/选择置位，写请求
+   *  发出（队列消费）后清除 */
+  let spacingDirty = false
+
+  /** 词典整表提交前预检（审查轮 1 P2）：重名/空值/与内置类同名在 UI 拦截
+   *  并提示，不交给存储清洗静默吞掉（吞掉 = 写后刷新后行直接消失） */
+  function validateCategoriesForSubmit(
+    categories: Array<{ name: string; pattern: string }>,
+  ): boolean {
+    const sp = t.spacing
+    const seen = new Set<string>(BUILTIN_CATEGORIES as readonly string[])
+    for (const category of categories) {
+      const name = category.name.trim()
+      if (!name || !category.pattern.trim()) {
+        showStatus('failed', sp.categoryInvalid)
+        return false
+      }
+      if (seen.has(name)) {
+        showStatus('failed', sp.categoryConflict)
+        return false
+      }
+      seen.add(name)
+    }
+    return true
+  }
+
+  function submitCategories(rawCategories: Array<{ name: string; pattern: string }>): void {
+    // 入口先 trim（与存储清洗同口径）：预检校验 trim 值而提交原值时，编辑
+    // 保护跳过重建的窗口内 UI 显示 ` greek ` 而存储是 `greek`——失配无限
+    // 期持续到下一次渲染（审查轮 2 P2）
+    const categories = rawCategories.map((c) => ({ name: c.name.trim(), pattern: c.pattern.trim() }))
+    if (!validateCategoriesForSubmit(categories)) return
+    enqueueSpacingWrite(() => client.setCustomScriptCategories(categories))
+  }
+
+  function renderSpacingSection(): void {
+    const sp = t.spacing
+    spacingSection.textContent = ''
+    const header = el('div', `${CLS}-section-header`)
+    header.append(el('h3', `${CLS}-section-title`, sp.title))
+    spacingSection.append(header)
+    spacingSection.append(el('p', `${CLS}-section-desc`, sp.intro))
+
+    // -- 现役语言对 chips（可删）+ 双下拉添加 --
+    const pairsGroup = el('div', `${CLS}-form-group`)
+    pairsGroup.append(el('span', `${CLS}-form-name`, sp.pairsTitle))
+    const chips = el('div', `${CLS}-chip-options`)
+    chips.setAttribute('data-vet-pair-chips', '')
+    if (client.state.languagePairs.length === 0) {
+      chips.append(el('span', `${CLS}-empty`, sp.empty))
+    }
+    for (const pair of client.state.languagePairs) {
+      const chip = el('span', classes(`${CLS}-chip`, `${CLS}-pair-chip`), pairLabel(pair))
+      chip.setAttribute('data-vet-pair', pairKey(pair))
+      const remove = el('button', `${CLS}-icon-btn`, '×')
+      remove.type = 'button'
+      remove.setAttribute('data-vet-action', 'remove-pair')
+      remove.setAttribute('aria-label', sp.pairRemove)
+      remove.title = sp.pairRemove
+      remove.addEventListener('click', () => {
+        enqueueSpacingWrite(() =>
+          client.setLanguagePairs(
+            client.state.languagePairs.filter((p) => pairKey(p) !== pairKey(pair)),
+          ),
+        )
+      })
+      chip.append(remove)
+      chips.append(chip)
+    }
+    pairsGroup.append(chips)
+
+    const addPairRow = el('div', classes(`${CLS}-form-row`, `${CLS}-pair-add-row`))
+    const options = categoryOptions()
+    const selA = buildCategorySelect('pair-a', options)
+    const selB = buildCategorySelect('pair-b', options)
+    selB.selectedIndex = Math.min(1, options.length - 1)
+    // 下拉选择是未提交草稿：置脏标记（写后刷新重建会重置选项——审查轮 2 P1）
+    selA.addEventListener('change', () => {
+      spacingDirty = true
+    })
+    selB.addEventListener('change', () => {
+      spacingDirty = true
+    })
+    const addPairBtn = el('button', `${CLS}-btn`, sp.pairAdd)
+    addPairBtn.type = 'button'
+    addPairBtn.setAttribute('data-vet-action', 'add-pair')
+    addPairBtn.addEventListener('click', () => {
+      if (!selA.value || !selB.value || selA.value === selB.value) {
+        showStatus('failed', sp.pairInvalid)
+        return
+      }
+      // 入队时捕获选择值：前一笔写的写后刷新可能重建分区，执行时再读
+      // select 是 detached 节点（值虽保留但脆弱——审查轮 2 P2）
+      const pair = { a: selA.value, b: selB.value }
+      enqueueSpacingWrite(() =>
+        client.setLanguagePairs([...client.state.languagePairs.map((p) => ({ ...p })), pair]),
+      )
+    })
+    addPairRow.append(selA, selB, addPairBtn)
+    pairsGroup.append(addPairRow)
+    spacingSection.append(pairsGroup)
+
+    // -- 自定义语言/符号词典（成对编辑，增删改）--
+    const dictGroup = el('div', `${CLS}-form-group`)
+    dictGroup.append(el('span', `${CLS}-form-name`, sp.categoriesTitle))
+    dictGroup.append(el('span', `${CLS}-form-desc`, sp.categoryPatternHint))
+    const categoryList = el('div', `${CLS}-category-list`)
+    categoryList.setAttribute('data-vet-category-list', '')
+    if (client.state.customScriptCategories.length === 0) {
+      categoryList.append(el('div', `${CLS}-empty`, sp.empty))
+    }
+    for (const custom of client.state.customScriptCategories) {
+      const row = el('div', classes(`${CLS}-form-row`, `${CLS}-category-row`))
+      row.setAttribute('data-vet-category', custom.name)
+      const nameInput = el('input') as HTMLInputElement
+      nameInput.type = 'text'
+      nameInput.className = `${CLS}-input`
+      nameInput.value = custom.name
+      nameInput.setAttribute('data-vet-input', 'category-name')
+      nameInput.setAttribute('aria-label', sp.categoryName)
+      const patternInput = el('input') as HTMLInputElement
+      patternInput.type = 'text'
+      patternInput.className = `${CLS}-input`
+      patternInput.value = custom.pattern
+      patternInput.setAttribute('data-vet-input', 'category-pattern')
+      patternInput.setAttribute('aria-label', sp.categoryPattern)
+      // 失焦（change）提交整表：条目值即所存（DOM 读面 + 串行队列）
+      const submitRow = () => submitCategories(collectCategoriesFromDom())
+      nameInput.addEventListener('change', submitRow)
+      patternInput.addEventListener('change', submitRow)
+      const removeBtn = el('button', `${CLS}-icon-btn ${CLS}-danger`, t.ruleItem.remove)
+      removeBtn.type = 'button'
+      removeBtn.setAttribute('data-vet-action', 'remove-category')
+      removeBtn.setAttribute('aria-label', sp.categoryRemove)
+      removeBtn.addEventListener('click', () => {
+        // 按行节点身份排除（闭包里的 custom.name 是渲染期旧名——行已改名时
+        // 按旧名匹配会漏删，审查轮 1 P2）
+        submitCategories(collectCategoriesFromDom(row))
+      })
+      row.append(nameInput, patternInput, removeBtn)
+      categoryList.append(row)
+    }
+    dictGroup.append(categoryList)
+
+    const addCatRow = el('div', classes(`${CLS}-form-row`, `${CLS}-category-row`))
+    const newName = el('input') as HTMLInputElement
+    newName.type = 'text'
+    newName.className = `${CLS}-input`
+    newName.placeholder = sp.categoryName
+    newName.setAttribute('data-vet-input', 'new-category-name')
+    newName.setAttribute('aria-label', sp.categoryName)
+    newName.addEventListener('input', () => {
+      spacingDirty = true
+    })
+    const newPattern = el('input') as HTMLInputElement
+    newPattern.type = 'text'
+    newPattern.className = `${CLS}-input`
+    newPattern.placeholder = sp.categoryPattern
+    newPattern.setAttribute('data-vet-input', 'new-category-pattern')
+    newPattern.setAttribute('aria-label', sp.categoryPattern)
+    newPattern.addEventListener('input', () => {
+      spacingDirty = true
+    })
+    const addCatBtn = el('button', `${CLS}-btn`, sp.categoryAdd)
+    addCatBtn.type = 'button'
+    addCatBtn.setAttribute('data-vet-action', 'add-category')
+    addCatBtn.addEventListener('click', () => {
+      const name = newName.value.trim()
+      const pattern = newPattern.value.trim()
+      if (!name || !pattern) {
+        showStatus('failed', sp.categoryInvalid)
+        return
+      }
+      // 基面取 DOM 读面（含未刷新的行编辑——click 前的 blur/change 写在途，
+      // client.state 是旧的，审查轮 1 P1）
+      submitCategories([...collectCategoriesFromDom(), { name, pattern }])
+    })
+    addCatRow.append(newName, newPattern, addCatBtn)
+    dictGroup.append(addCatRow)
+    spacingSection.append(dictGroup)
+    // 重建值即存储基线：脏标记随重建归零（跳过重建的路径不清——草稿仍在）
+    spacingDirty = false
+  }
+
   function renderStorageSection(): void {
     storageSection.textContent = ''
     storageSection.append(el('h3', `${CLS}-section-title`, t.storage.dataDirLabel))
@@ -444,9 +862,21 @@ export function mountRulesSettingsView(
     })
   }
 
+  /** spacing 分区编辑保护（审查轮 1 P2 + 轮 2 P1）：焦点在输入/下拉上，
+   *  **或**存在未提交草稿（真实浏览器 mousedown 即移焦点，仅凭焦点挡不住
+   *  「草稿输入 → 点其他分区开关」的丢输入场景——脏标记补位）时跳过本
+   *  分区重建；无冲突的下一次渲染再补齐。 */
+  function spacingEditingInFlight(): boolean {
+    if (spacingDirty) return true
+    const active = doc.activeElement
+    if (active === null || !spacingSection.contains(active)) return false
+    return active instanceof HTMLInputElement || active instanceof HTMLSelectElement
+  }
+
   function render(): void {
     renderUserSection()
     renderBuiltinSection()
+    if (!spacingEditingInFlight()) renderSpacingSection()
     renderStorageSection()
   }
 
@@ -1101,6 +1531,18 @@ export function mountRulesSettingsView(
   const unsubscribe = client.onStateChange(() => {
     if (!disposed) render()
   })
+
+  // 宿主层禁用态订阅（#50）：初值快照 + onEnabledChange 推送更新灰态输入
+  // 并重渲染（宿主行为管理/组件启停落库后即时同步）
+  const syncHostDisabledState = (state: { addonRunState: string; disabled: readonly string[] }) => {
+    hostAddonDisabled = state.addonRunState === 'user-disabled'
+    hostDisabledBehaviors = new Set(state.disabled)
+    if (!disposed) render()
+  }
+  if (options.behaviorState) {
+    syncHostDisabledState(options.behaviorState.enabledState())
+  }
+  const unsubscribeBehaviorState = options.behaviorState?.onEnabledChange(syncHostDisabledState) ?? null
   render()
 
   async function reload(): Promise<void> {
@@ -1118,6 +1560,7 @@ export function mountRulesSettingsView(
       statusTimer = null
       closeModal()
       unsubscribe()
+      unsubscribeBehaviorState?.()
       root.textContent = ''
       root.classList.remove(`${CLS}-root`)
       root.removeAttribute('data-vet-page')

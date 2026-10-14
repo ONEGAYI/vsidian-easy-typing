@@ -84,38 +84,17 @@ export const DEFAULT_EFFECTIVE_SETTINGS: EffectiveEasyTypingSettings = {
   newLineBelow: true,
 }
 
-// ---- 归 #14 storage 的富结构出厂值（映射表 §三；本票只交付种子，不建持久化） ----
+// ---- 归 storage 的富结构出厂值（映射表 §三；#49 起随 rule-state.json 持久化） ----
 
 /** 全部设置键（顺序 = 映射表 §二 = 默认值对象插入序；新增字段改接口与默认值两处，并同步测试全量清单） */
 export const EFFECTIVE_SETTING_KEYS = Object.keys(
   DEFAULT_EFFECTIVE_SETTINGS,
 ) as readonly (keyof EffectiveEasyTypingSettings)[]
 
-/** 上游 LanguagePair 的字符串形态（ScriptCategory 枚举值或自定义类名） */
-export interface LanguagePairSeed {
-  a: string
-  b: string
-}
-
-/** 上游 CustomScriptDef 同形（{name, pattern}） */
-export interface CustomScriptCategorySeed {
-  name: string
-  pattern: string
-}
-
 /**
- * 富结构出厂值（#14 以此为缺省种子持久化用户编辑）：
- * - languagePairs：默认三组语言对（中英 / 中数 / 数英），值用上游
- *   ScriptCategory 枚举字符串（chinese/english/digit）；
- * - customScriptCategories：默认空；
- * - deletedBuiltinRuleIds：默认空（规则管理伴随状态，随规则文件存储）。
+ * 富结构出厂种子 re-export：单一事实源在存储层（src/rules/rule-store.ts
+ * 的 RICH_STRUCTURE_SEEDS——#49 迁入，存储/装载/引擎兜底同源）；本导出
+ * 保持既有消费面（autoFormatIntercept 引擎兜底、设置映射文档引用）稳定。
  */
-export const RICH_STRUCTURE_DEFAULTS = {
-  languagePairs: [
-    { a: 'chinese', b: 'english' },
-    { a: 'chinese', b: 'digit' },
-    { a: 'digit', b: 'english' },
-  ] as LanguagePairSeed[],
-  customScriptCategories: [] as CustomScriptCategorySeed[],
-  deletedBuiltinRuleIds: [] as string[],
-}
+export { RICH_STRUCTURE_SEEDS as RICH_STRUCTURE_DEFAULTS } from '../rules/rule-store'
+export type { StoredLanguagePair as LanguagePairSeed, StoredCustomCategory as CustomScriptCategorySeed } from '../rules/rule-store'

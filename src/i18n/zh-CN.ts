@@ -114,6 +114,22 @@ const zhMessages = {
       desc: '在当前行下方新建一行并延续列表或引用前缀（有序列表自动递增、任务项重置为未完成）；关闭时回退编辑器内建行为（仅插入空行）',
     },
   },
+  // 设置分组标题与枚举档位标签（#477：经宿主声明式表单呈现，标题用
+  // AddonLocalizedText 双语映射——键形同 #45/#464 的 zh-cn/en）
+  settingsGroups: {
+    editEnhance: '编辑增强',
+    autoFormat: '自动格式化',
+    general: '通用',
+    experimental: '实验功能',
+  },
+  enumLabels: {
+    spaceNone: '不要求空格',
+    spaceSoft: '软空格',
+    spaceStrict: '严格空格',
+    strictLineEnterTwice: '两次回车',
+    strictLineTwoSpace: '两个空格加回车',
+    strictLineMix: '混合模式',
+  },
   noHost: '当前扩展宿主中未找到 Vsidian（onegayi.vsidian）',
   // 「选择当前块」命令标题（工单 #11；文案对齐上游 locale commands.selectBlock）
   commandSelectBlock: '选择当前文本块',
@@ -194,17 +210,23 @@ const zhMessages = {
       import: '导入',
       export: '导出',
       empty: '暂无用户规则，点击「添加规则」创建第一条',
+      moveUp: '上移选中规则',
+      moveDown: '下移选中规则',
     },
     builtinRules: {
       title: '内置规则',
       resetAll: '重置内置规则',
-      disable: '停用',
-      platformToggleHint: '内置规则的逐条启用开关由 Vsidian 平台的「行为冲突管理」统一管理，不在此页；此处提供停用（移出规则表）与恢复入口。',
+      enable: '启用/停用内置规则',
+      layerHint: '内置规则在此页逐条启停；Vsidian 行为管理中的禁用与本页开关是两层独立设置，两者都开启才会生效。被宿主禁用的条目呈灰态，悬停可查看原因。',
     },
     deletedRules: {
       title: '已停用的内置规则',
-      restore: '恢复',
       empty: '没有已停用的内置规则',
+    },
+    hostDisabled: {
+      behaviorDisabledTooltip:
+        '已在插件行为管理中被禁用：此处开关仍可调整，但需在 Vsidian 的行为管理中重新启用后才会生效',
+      addonDisabledTooltip: '组件已停用：所有规则不会生效，请在 Vsidian 的组件管理中启用本组件',
     },
     ruleItem: {
       edit: '编辑规则',
@@ -270,6 +292,32 @@ const zhMessages = {
       outputLabel: '试运行结果',
       miss: '未命中：当前文本与光标位置不触发该规则',
       hit: '命中（{range} 为被替换区间，▏为替换后的光标位置）',
+    },
+    spacing: {
+      title: '语言间空格策略',
+      intro: '管理自动加空格的语言对与自定义语言/符号词典；变更即时保存并同步到打开的编辑器。',
+      pairsTitle: '现役语言对',
+      pairAdd: '添加语言对',
+      pairInvalid: '请选择两个不同的类别',
+      pairRemove: '删除该语言对',
+      categoriesTitle: '自定义语言/符号词典',
+      categoryName: '名称',
+      categoryPattern: '字符/模式',
+      categoryPatternHint: '字符类内部片段（如 Α-Ωα-ω，不含方括号）；匹配的字符与语言对参与自动加空格。',
+      categoryAdd: '添加',
+      categoryRemove: '删除该条目',
+      categoryInvalid: '名称与字符/模式都不能为空',
+      categoryConflict: '名称与现有词典条目或内置脚本类重复，请换一个名称',
+      empty: '暂无',
+    },
+    scriptNames: {
+      chinese: '中文',
+      japanese: '日文',
+      korean: '韩文',
+      cjk: '中日韩',
+      english: '英文',
+      digit: '数字',
+      russian: '俄文',
     },
     storage: {
       dataDirLabel: '规则数据目录',

@@ -89,8 +89,14 @@ async function flush(times = 1): Promise<void> {
   }
 }
 
-/** 挂载视图（装载链冲刷后返回） */
-async function mountView(request: RulesChannelLike['request']): Promise<{
+/** 挂载视图（装载链冲刷后返回；behaviorState 为 #50 灰态面的注入位） */
+async function mountView(
+  request: RulesChannelLike['request'],
+  behaviorState?: {
+    enabledState(): { addonRunState: string; disabled: readonly string[] }
+    onEnabledChange(callback: (state: { addonRunState: string; disabled: readonly string[] }) => void): () => void
+  },
+): Promise<{
   view: RulesSettingsViewHandle
   root: HTMLElement
   client: RulesSettingsClient
@@ -104,9 +110,31 @@ async function mountView(request: RulesChannelLike['request']): Promise<{
     doc: document,
     setTimeout: () => 0, // 状态行自动清除不真正计时（测试内常显）
     clearTimeout: () => {},
+    behaviorState,
   })
   await flush()
   return { view, root, client }
+}
+
+/** mock 行为禁用态只读面（#50；形状对齐 vendor AddonBehaviorStateFacet） */
+function mockBehaviorState(
+  initial: { addonRunState?: 'enabled' | 'user-disabled'; disabled?: readonly string[] } = {},
+) {
+  const state = { addonRunState: initial.addonRunState ?? 'enabled', disabled: [...(initial.disabled ?? [])] }
+  const listeners: Array<(s: typeof state) => void> = []
+  return {
+    facet: {
+      enabledState: () => ({ addonRunState: state.addonRunState, disabled: [...state.disabled] }),
+      onEnabledChange: (cb: (s: typeof state) => void) => {
+        listeners.push(cb)
+        return () => {}
+      },
+    },
+    set(next: Partial<typeof state>) {
+      Object.assign(state, next)
+      for (const cb of [...listeners]) cb({ addonRunState: state.addonRunState, disabled: [...state.disabled] })
+    },
+  }
 }
 
 function q<T extends Element>(root: ParentNode, selector: string): T {
@@ -138,8 +166,8 @@ describe('设置页装载与分组渲染', () => {
     expect(q(root, '[data-vet-user-list]').textContent).toContain(zhMessages.rulesPage.userRules.empty)
     expect(q(root, '[data-vet-deleted-rules] summary').textContent).toContain('(0)')
     expect(q(root, '[data-vet-storage-uri]').textContent).toContain('globalStorage')
-    // 平台引导文案在场（内置逐条开关去行为冲突管理，#1/#3 口径）
-    expect(q(root, '[data-vet-section="builtin"]').textContent).toContain('行为冲突管理')
+    // 两层口径引导文案在场（#50：逐条开关回归本页 + 宿主禁用灰态说明）
+    expect(q(root, '[data-vet-section="builtin"]').textContent).toContain('两层独立设置')
   })
 
   it('装载失败 → 状态行 loadFailed', async () => {
@@ -288,13 +316,20 @@ describe('用户规则全生命周期（建/改/启停/删）', () => {
 
 // ===== 内置规则：停用 / 恢复 / 全部重置 =====
 
+/** 内置开关驱动（#50：checkbox change 事件；row 为规则条目元素） */
+function setBuiltinToggle(row: Element, checked: boolean): void {
+  const toggle = q<HTMLInputElement>(row, `${act('toggle-builtin')}`)
+  toggle.checked = checked
+  toggle.dispatchEvent(new Event('change', { bubbles: true }))
+}
+
 describe('内置规则停用/恢复/重置（deletedBuiltinRuleIds 语义）', () => {
   it('停用 → 已停用组计数与恢复；全部重置清停用清单', async () => {
     const { mock, request } = assemble()
     const { root } = await mountView(request)
     const firstId = DEFAULT_BUILTIN_RULES[0]!.id
 
-    q<HTMLButtonElement>(q(root, `[data-vet-rule-id="${firstId}"]`), `${act('disable-builtin')}`).click()
+    setBuiltinToggle(q(root, `[data-vet-rule-id="${firstId}"]`), false)
     await flush()
     expect(q(root, '[data-vet-builtin-list]').children).toHaveLength(DEFAULT_BUILTIN_RULES.length - 1)
     const details = q(root, '[data-vet-deleted-rules]')
@@ -303,15 +338,15 @@ describe('内置规则停用/恢复/重置（deletedBuiltinRuleIds 语义）', (
     expect(q(details, `[data-vet-rule-id="${firstId}"]`)).toBeTruthy()
     expect(mock.files.get('rule-state.json')).toContain(firstId)
 
-    // 恢复单条
-    q<HTMLButtonElement>(details, `${act('restore')}`).click()
+    // 恢复单条（折叠区条目开关打开）
+    setBuiltinToggle(q(details, `[data-vet-rule-id="${firstId}"]`), true)
     await flush()
     expect(q(root, '[data-vet-builtin-list]').children).toHaveLength(DEFAULT_BUILTIN_RULES.length)
     expect(q(root, '[data-vet-deleted-rules] summary').textContent).toContain('(0)')
 
     // 停用两条后全部重置
     for (const rule of DEFAULT_BUILTIN_RULES.slice(0, 2)) {
-      q<HTMLButtonElement>(q(root, `[data-vet-rule-id="${rule.id}"]`), `${act('disable-builtin')}`).click()
+      setBuiltinToggle(q(root, `[data-vet-rule-id="${rule.id}"]`), false)
       await flush()
     }
     expect(q(root, '[data-vet-builtin-list]').children).toHaveLength(DEFAULT_BUILTIN_RULES.length - 2)
@@ -320,7 +355,21 @@ describe('内置规则停用/恢复/重置（deletedBuiltinRuleIds 语义）', (
     expect(q(root, '[data-vet-builtin-list]').children).toHaveLength(DEFAULT_BUILTIN_RULES.length)
     expect(q(root, '[data-vet-deleted-rules] summary').textContent).toContain('(0)')
     expect(q(root, '[data-vet-status]').getAttribute('data-vet-status')).toBe('success')
-    expect(mock.files.get('rule-state.json')).toBe(JSON.stringify({ deletedBuiltinRuleIds: [] }, null, 2))
+    expect(mock.files.get('rule-state.json')).toBe(
+      JSON.stringify(
+        {
+          deletedBuiltinRuleIds: [],
+          languagePairs: [
+            { a: 'chinese', b: 'english' },
+            { a: 'chinese', b: 'digit' },
+            { a: 'digit', b: 'english' },
+          ],
+          customScriptCategories: [],
+        },
+        null,
+        2,
+      ),
+    )
   })
 })
 
@@ -464,6 +513,223 @@ describe('拖拽排序', () => {
   })
 })
 
+// ===== 上移/下移按钮（#48：头部按钮 + 行选中态，上游 ↑/↓ 语义） =====
+
+describe('上移/下移按钮', () => {
+  const seed = () => [
+    { id: 'u1', trigger: 'a', replacement: 'A' },
+    { id: 'u2', trigger: 'b', replacement: 'B' },
+    { id: 'u3', trigger: 'c', replacement: 'C' },
+  ]
+  const listIds = (root: HTMLElement): string[] =>
+    [...q(root, '[data-vet-user-list]').children].map((item) => item.getAttribute('data-vet-rule-id')!)
+  const selectedRow = (root: HTMLElement): HTMLElement =>
+    q(root, '[data-vet-user-list] [data-vet-selected="true"]')
+
+  it('无用户规则时上移/下移禁用', async () => {
+    const { request } = assemble({})
+    const { root } = await mountView(request)
+    expect(q<HTMLButtonElement>(root, `${act('move-up')}`).disabled).toBe(true)
+    expect(q<HTMLButtonElement>(root, `${act('move-down')}`).disabled).toBe(true)
+  })
+
+  it('未选中行时禁用；点击行主体选中后两钮可用并标记选中行', async () => {
+    const { request } = assemble({ 'user-rules.json': JSON.stringify(seed()) })
+    const { root } = await mountView(request)
+    expect(q<HTMLButtonElement>(root, `${act('move-up')}`).disabled).toBe(true)
+    expect(q<HTMLButtonElement>(root, `${act('move-down')}`).disabled).toBe(true)
+
+    const middleRow = q(root, '[data-vet-user-list]').children[1]! as HTMLElement
+    q<HTMLElement>(middleRow, '.vsidian-easy-typing-rule-main').click()
+    expect(selectedRow(root).getAttribute('data-vet-rule-id')).toBe('u2')
+    expect(q<HTMLButtonElement>(root, `${act('move-up')}`).disabled).toBe(false)
+    expect(q<HTMLButtonElement>(root, `${act('move-down')}`).disabled).toBe(false)
+  })
+
+  it('选中首行：上移禁用、下移可用；选中末行反之', async () => {
+    const { request } = assemble({ 'user-rules.json': JSON.stringify(seed()) })
+    const { root } = await mountView(request)
+    const rows = q(root, '[data-vet-user-list]').children
+    q<HTMLElement>(rows[0]! as HTMLElement, '.vsidian-easy-typing-rule-main').click()
+    expect(q<HTMLButtonElement>(root, `${act('move-up')}`).disabled).toBe(true)
+    expect(q<HTMLButtonElement>(root, `${act('move-down')}`).disabled).toBe(false)
+
+    q<HTMLElement>(q(root, '[data-vet-user-list]').children[2]!, '.vsidian-easy-typing-rule-main').click()
+    expect(q<HTMLButtonElement>(root, `${act('move-up')}`).disabled).toBe(false)
+    expect(q<HTMLButtonElement>(root, `${act('move-down')}`).disabled).toBe(true)
+  })
+
+  it('下移选中行：相邻交换落盘 + 写后刷新 + 选中与顺序同步', async () => {
+    const { mock, request } = assemble({ 'user-rules.json': JSON.stringify(seed()) })
+    const { root } = await mountView(request)
+    q<HTMLElement>(q(root, '[data-vet-user-list]').children[0]!, '.vsidian-easy-typing-rule-main').click()
+    q<HTMLButtonElement>(root, `${act('move-down')}`).click()
+    await flush()
+
+    expect(listIds(root)).toEqual(['u2', 'u1', 'u3'])
+    expect(selectedRow(root).getAttribute('data-vet-rule-id')).toBe('u1')
+    expect(
+      JSON.parse(mock.files.get(USER_RULES_FILE)!).map((r: { id: string }) => r.id),
+    ).toEqual(['u2', 'u1', 'u3'])
+  })
+
+  it('上移选中行：相邻交换落盘（同一 reorderUserRule 通道）', async () => {
+    const { mock, request } = assemble({ 'user-rules.json': JSON.stringify(seed()) })
+    const { root } = await mountView(request)
+    q<HTMLElement>(q(root, '[data-vet-user-list]').children[2]!, '.vsidian-easy-typing-rule-main').click()
+    q<HTMLButtonElement>(root, `${act('move-up')}`).click()
+    await flush()
+
+    expect(listIds(root)).toEqual(['u1', 'u3', 'u2'])
+    expect(selectedRow(root).getAttribute('data-vet-rule-id')).toBe('u3')
+    expect(
+      JSON.parse(mock.files.get(USER_RULES_FILE)!).map((r: { id: string }) => r.id),
+    ).toEqual(['u1', 'u3', 'u2'])
+  })
+
+  it('删除选中规则后按钮回到禁用（选中 id 失效自愈）', async () => {
+    const { request } = assemble({ 'user-rules.json': JSON.stringify(seed()) })
+    const { root } = await mountView(request)
+    q<HTMLElement>(q(root, '[data-vet-user-list]').children[1]!, '.vsidian-easy-typing-rule-main').click()
+    expect(q<HTMLButtonElement>(root, `${act('move-up')}`).disabled).toBe(false)
+    q<HTMLButtonElement>(q(root, '[data-vet-user-list]').children[1]!, `${act('delete')}`).click()
+    await flush()
+
+    expect(listIds(root)).toEqual(['u1', 'u3'])
+    expect(q<HTMLButtonElement>(root, `${act('move-up')}`).disabled).toBe(true)
+    expect(q<HTMLButtonElement>(root, `${act('move-down')}`).disabled).toBe(true)
+  })
+})
+
+// ===== 内置规则逐条开关与宿主禁用态灰显（#50 / ADR-0016 两层口径） =====
+
+describe('内置规则逐条开关（组件层，deletedBuiltinRuleIds 载体）', () => {
+  it('内置条目带开关：关闭 → 移出主列表、rule-state 记 id、折叠区可见', async () => {
+    const { mock, request } = assemble()
+    const { root } = await mountView(request)
+    const firstRow = q(root, '[data-vet-builtin-list]').children[0]! as HTMLElement
+    const targetId = firstRow.getAttribute('data-vet-rule-id')!
+    const toggle = q<HTMLInputElement>(firstRow, `${act('toggle-builtin')}`)
+    expect(toggle.checked).toBe(true)
+
+    toggle.checked = false
+    toggle.dispatchEvent(new Event('change', { bubbles: true }))
+    await flush()
+
+    expect(q(root, '[data-vet-builtin-list]').children).toHaveLength(DEFAULT_BUILTIN_RULES.length - 1)
+    expect(JSON.parse(mock.files.get('rule-state.json')!).deletedBuiltinRuleIds).toEqual([targetId])
+    const deleted = q(root, '[data-vet-deleted-rules]')
+    expect(deleted.querySelectorAll('[data-vet-rule-id]')).toHaveLength(1)
+    expect(deleted.getAttribute('data-vet-rule-id') ?? deleted.querySelector('[data-vet-rule-id]')!.getAttribute('data-vet-rule-id')).toBe(targetId)
+  })
+
+  it('折叠区条目开关打开 → 恢复主列表（同一开关语义双向）', async () => {
+    // 种子按真实停用终态（停用写路径同时移除 builtin 条目并记账 state）
+    const builtin = DEFAULT_BUILTIN_RULES.filter((r) => r.id !== 'builtin-conv-hw2fw')
+    const { request } = assemble({
+      'rule-state.json': JSON.stringify({ deletedBuiltinRuleIds: ['builtin-conv-hw2fw'] }),
+      'builtin-rules.json': JSON.stringify(builtin),
+    })
+    const { root } = await mountView(request)
+    expect(q(root, '[data-vet-builtin-list]').children).toHaveLength(DEFAULT_BUILTIN_RULES.length - 1)
+
+    const deletedRow = q(root, '[data-vet-deleted-rules] [data-vet-rule-id="builtin-conv-hw2fw"]')
+    const toggle = q<HTMLInputElement>(deletedRow, `${act('toggle-builtin')}`)
+    expect(toggle.checked).toBe(false)
+    toggle.checked = true
+    toggle.dispatchEvent(new Event('change', { bubbles: true }))
+    await flush()
+
+    expect(q(root, '[data-vet-builtin-list]').children).toHaveLength(DEFAULT_BUILTIN_RULES.length)
+    expect(q(root, '[data-vet-deleted-rules] summary').textContent).toContain('(0)')
+  })
+
+  it('在场但 enabled=false 的内置条目呈关态，打开走启用通道', async () => {
+    const builtin = DEFAULT_BUILTIN_RULES.map((r) =>
+      r.id === 'builtin-fw2hw-double' ? { ...r, enabled: false } : r,
+    )
+    const { mock, request } = assemble({ 'builtin-rules.json': JSON.stringify(builtin) })
+    const { root } = await mountView(request)
+    const row = q(root, '[data-vet-builtin-list] [data-vet-rule-id="builtin-fw2hw-double"]')
+    const toggle = q<HTMLInputElement>(row, `${act('toggle-builtin')}`)
+    expect(toggle.checked).toBe(false)
+
+    toggle.checked = true
+    toggle.dispatchEvent(new Event('change', { bubbles: true }))
+    await flush()
+
+    const persisted = JSON.parse(mock.files.get('builtin-rules.json')!).find(
+      (r: { id: string }) => r.id === 'builtin-fw2hw-double',
+    )
+    expect(persisted.enabled).not.toBe(false)
+    expect(q<HTMLInputElement>(root, '[data-vet-builtin-list] [data-vet-rule-id="builtin-fw2hw-double"] input[type="checkbox"]')).toBeTruthy()
+  })
+})
+
+describe('宿主禁用态灰显（两层口径呈现，ADR-0016）', () => {
+  it('单项禁用：覆盖族被禁的内置条目灰态 + tooltip；其余条目不灰', async () => {
+    const bs = mockBehaviorState({ disabled: ['01-punct-collapse'] })
+    const { request } = assemble()
+    const { root } = await mountView(request, bs.facet)
+
+    const row = q(root, '[data-vet-builtin-list] [data-vet-rule-id="builtin-fw2hw-double"]')
+    expect(row.getAttribute('data-vet-host-disabled')).toBe('behavior')
+    expect(row.getAttribute('title')).toContain('已在插件行为管理中被禁用')
+
+    const other = q(root, '[data-vet-builtin-list] [data-vet-rule-id="builtin-autopair-jump"]')
+    expect(other.hasAttribute('data-vet-host-disabled')).toBe(false)
+  })
+
+  it('Input 用户规则覆盖五族：部分禁用不灰、全禁才灰（多对多归族语义）', async () => {
+    const seed = [{ id: 'u1', trigger: 'a', replacement: 'A' }]
+    const bs = mockBehaviorState({ disabled: ['01-punct-collapse', '02-autopair'] })
+    const { request } = assemble({ 'user-rules.json': JSON.stringify(seed) })
+    const { root } = await mountView(request, bs.facet)
+
+    expect(
+      q(root, '[data-vet-user-list] [data-vet-rule-id="u1"]').hasAttribute('data-vet-host-disabled'),
+    ).toBe(false)
+
+    // 宿主落库推送（onEnabledChange）→ 写后重渲染同步灰态（旧 DOM 引用失效，重查）
+    bs.set({
+      disabled: ['01-punct-collapse', '02-autopair', '03-symbol-convert', '04-punct-expand', '05-quote'],
+    })
+    expect(
+      q(root, '[data-vet-user-list] [data-vet-rule-id="u1"]').getAttribute('data-vet-host-disabled'),
+    ).toBe('behavior')
+  })
+
+  it('Delete 类用户规则：06 族被禁即灰（单覆盖族）', async () => {
+    const seed = [{ id: 'ud', trigger: 'a', replacement: 'A', options: 'd' }]
+    const bs = mockBehaviorState({ disabled: ['06-delete-rules'] })
+    const { request } = assemble({ 'user-rules.json': JSON.stringify(seed) })
+    const { root } = await mountView(request, bs.facet)
+    expect(
+      q(root, '[data-vet-user-list] [data-vet-rule-id="ud"]').getAttribute('data-vet-host-disabled'),
+    ).toBe('behavior')
+  })
+
+  it('组件停用：全部条目灰态 + tooltip「组件已停用」', async () => {
+    const bs = mockBehaviorState({ addonRunState: 'user-disabled' })
+    const { request } = assemble()
+    const { root } = await mountView(request, bs.facet)
+
+    const builtinRow = q(root, '[data-vet-builtin-list]').children[0]! as HTMLElement
+    expect(builtinRow.getAttribute('data-vet-host-disabled')).toBe('addon')
+    expect(builtinRow.getAttribute('title')).toContain('组件已停用')
+    const toggle = q<HTMLInputElement>(builtinRow, `${act('toggle-builtin')}`)
+    expect(toggle.disabled).toBe(false) // 两层独立：组件层开关仍可操作
+  })
+
+  it('behaviorState 未注入（旧平台兼容）：无灰态、开关照常', async () => {
+    const { request } = assemble()
+    const { root } = await mountView(request)
+    for (const row of [...q(root, '[data-vet-builtin-list]').children]) {
+      expect((row as HTMLElement).hasAttribute('data-vet-host-disabled')).toBe(false)
+    }
+  })
+})
+
 // ===== 导入导出 =====
 
 describe('JSON 导入导出', () => {
@@ -601,10 +867,7 @@ describe('设置页重开回显', () => {
     toggle.dispatchEvent(new Event('change', { bubbles: true }))
     await flush()
     const firstBuiltinId = DEFAULT_BUILTIN_RULES[0]!.id
-    q<HTMLButtonElement>(
-      q(first.root, `[data-vet-rule-id="${firstBuiltinId}"]`),
-      `${act('disable-builtin')}`,
-    ).click()
+    setBuiltinToggle(q(first.root, `[data-vet-rule-id="${firstBuiltinId}"]`), false)
     await flush()
     first.view.dispose()
     expect(first.root.childElementCount).toBe(0)
@@ -621,5 +884,236 @@ describe('设置页重开回显', () => {
     )
     expect(q(second.root, '[data-vet-deleted-rules] summary').textContent).toContain('(1)')
     expect(JSON.parse(mock.files.get(USER_RULES_FILE)!)[0].enabled).toBe(false)
+  })
+})
+
+// ===== 语言间空格策略管理（#49：语言对 chips + 自定义词典） =====
+
+describe('语言间空格策略（#49）', () => {
+  const stateOf = (mock: { files: Map<string, string> }) =>
+    JSON.parse(mock.files.get('rule-state.json')!)
+
+  it('出厂语言对 chips 回显；删除 chip → 整表落盘并写后刷新', async () => {
+    const { mock, request } = assemble()
+    const { root } = await mountView(request)
+    const chips = q(root, '[data-vet-pair-chips]')
+    expect(chips.querySelectorAll('[data-vet-pair]')).toHaveLength(3)
+    expect(chips.textContent).toContain('中文 ↔ 英文')
+
+    q<HTMLButtonElement>(q(root, '[data-vet-pair="chinese↔english"]'), `${act('remove-pair')}`).click()
+    await flush()
+
+    expect(stateOf(mock).languagePairs).toEqual([
+      { a: 'chinese', b: 'digit' },
+      { a: 'digit', b: 'english' },
+    ])
+    expect(q(root, '[data-vet-pair-chips]').querySelectorAll('[data-vet-pair]')).toHaveLength(2)
+  })
+
+  it('双下拉添加语言对（含自定义类名出现在下拉选项）', async () => {
+    // 预置一个自定义类，验证下拉含自定义类别名
+    const { mock, request } = assemble({
+      'rule-state.json': JSON.stringify({
+        deletedBuiltinRuleIds: [],
+        languagePairs: [
+          { a: 'chinese', b: 'english' },
+          { a: 'chinese', b: 'digit' },
+          { a: 'digit', b: 'english' },
+        ],
+        customScriptCategories: [{ name: 'greek', pattern: 'Α-Ωα-ω' }],
+      }),
+    })
+    const { root } = await mountView(request)
+    const selectA = q<HTMLSelectElement>(root, '[data-vet-input="pair-a"]')
+    const optionValues = [...selectA.options].map((o) => o.value)
+    expect(optionValues).toContain('chinese')
+    expect(optionValues).toContain('greek')
+
+    selectA.value = 'japanese'
+    const selectB = q<HTMLSelectElement>(root, '[data-vet-input="pair-b"]')
+    selectB.value = 'english'
+    q<HTMLButtonElement>(root, `${act('add-pair')}`).click()
+    await flush()
+
+    expect(stateOf(mock).languagePairs).toHaveLength(4)
+    expect(stateOf(mock).languagePairs).toContainEqual({ a: 'japanese', b: 'english' })
+  })
+
+  it('词典：添加条目 → 落盘；修改条目失焦 → 整表提交；删除条目 → 落盘', async () => {
+    const { mock, request } = assemble()
+    const { root } = await mountView(request)
+
+    // 添加
+    typeInto(q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]'), 'greek')
+    typeInto(q<HTMLInputElement>(root, '[data-vet-input="new-category-pattern"]'), 'Α-Ωα-ω')
+    q<HTMLButtonElement>(root, `${act('add-category')}`).click()
+    await flush()
+    expect(stateOf(mock).customScriptCategories).toEqual([{ name: 'greek', pattern: 'Α-Ωα-ω' }])
+    expect(q(root, '[data-vet-category-list]').querySelectorAll('[data-vet-category]')).toHaveLength(1)
+
+    // 修改（条目输入 change → 整表提交）
+    const patternInput = q<HTMLInputElement>(root, '[data-vet-category="greek"] [data-vet-input="category-pattern"]')
+    typeInto(patternInput, 'α-ω')
+    patternInput.dispatchEvent(new Event('change', { bubbles: true }))
+    await flush()
+    expect(stateOf(mock).customScriptCategories).toEqual([{ name: 'greek', pattern: 'α-ω' }])
+
+    // 删除
+    q<HTMLButtonElement>(q(root, '[data-vet-category="greek"]'), `${act('remove-category')}`).click()
+    await flush()
+    expect(stateOf(mock).customScriptCategories).toEqual([])
+    expect(q(root, '[data-vet-category-list]').querySelectorAll('[data-vet-category]')).toHaveLength(0)
+  })
+
+  it('空名或空模式的词典条目不被添加（状态行提示）', async () => {
+    const { request } = assemble()
+    const { root } = await mountView(request)
+    typeInto(q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]'), 'greek')
+    q<HTMLButtonElement>(root, `${act('add-category')}`).click()
+    await flush()
+    const status = q(root, '[data-vet-status]')
+    expect(status.getAttribute('data-vet-status')).toBe('failed')
+  })
+
+  it('行编辑后立即点添加：两个编辑都落盘（blur→change→click 事件序竞态，审查轮 1 P1 回归）', async () => {
+    const { mock, request } = assemble({
+      'rule-state.json': JSON.stringify({
+        deletedBuiltinRuleIds: [],
+        languagePairs: [],
+        customScriptCategories: [{ name: 'greek', pattern: 'Α-Ωα-ω' }],
+      }),
+      'builtin-rules.json': JSON.stringify([]),
+    })
+    const { root } = await mountView(request)
+
+    // 改名 greek → greek2 后不等待写后刷新，立即点「添加」新条目——
+    // 真实浏览器事件序（mousedown→blur→change→click）下添加按钮读到的
+    // 基面必须含改名结果
+    const nameInput = q<HTMLInputElement>(root, '[data-vet-category="greek"] [data-vet-input="category-name"]')
+    typeInto(nameInput, 'greek2')
+    nameInput.dispatchEvent(new Event('change', { bubbles: true }))
+    typeInto(q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]'), 'extra')
+    typeInto(q<HTMLInputElement>(root, '[data-vet-input="new-category-pattern"]'), 'x-y')
+    q<HTMLButtonElement>(root, `${act('add-category')}`).click()
+    await flush(3)
+
+    expect(stateOf(mock).customScriptCategories).toEqual([
+      { name: 'greek2', pattern: 'Α-Ωα-ω' },
+      { name: 'extra', pattern: 'x-y' },
+    ])
+  })
+
+  it('词典草稿在途时其他分区的写后刷新不重建 spacing（真实焦点序：mousedown 即移焦点——脏标记保护，审查轮 2 P1 回归）', async () => {
+    const seed = [{ id: 'u1', trigger: 'a', replacement: 'A' }]
+    const { request } = assemble({ 'user-rules.json': JSON.stringify(seed) })
+    const { root } = await mountView(request)
+
+    // 真实浏览器在 mousedown 即把焦点移向被点控件——jsdom 的 click 不模拟，
+    // 显式 blur 草稿输入复刻该事件序（焦点已离开 spacing）
+    const nameInput = q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]')
+    typeInto(nameInput, 'draft')
+    nameInput.blur()
+    expect(document.activeElement).not.toBe(nameInput)
+
+    // 其他分区的写（用户规则开关）触发写后刷新 → render() 全量入口：
+    // 脏标记（input 事件置位）挡住 spacing 重建
+    const toggle = q<HTMLInputElement>(q(root, '[data-vet-user-list]').children[0]!, `${act('toggle')}`)
+    toggle.checked = false
+    toggle.dispatchEvent(new Event('change', { bubbles: true }))
+    await flush()
+
+    // spacing 分区未被重建：草稿保留（焦点已在别处，靠脏标记而非焦点判定）
+    expect(q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]').value).toBe('draft')
+    // 用户规则分区照常刷新（开关状态对账）
+    expect(q(root, '[data-vet-user-list]').children[0]!.classList.contains('vsidian-easy-typing-rule-disabled')).toBe(true)
+
+    // 草稿消费（添加成功）后：写后刷新重建，新增行清空、条目在场
+    typeInto(q<HTMLInputElement>(root, '[data-vet-input="new-category-pattern"]'), 'a-z')
+    q<HTMLButtonElement>(root, `${act('add-category')}`).click()
+    await flush()
+    expect(q(root, '[data-vet-category="draft"]')).toBeTruthy()
+    expect(q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]').value).toBe('')
+  })
+
+  it('语言对连续删除的乱序响应防护：队列串行保证两笔都生效（审查轮 2 P2 回归）', async () => {
+    const { mock, request } = assemble()
+    // 可控延迟通道：第一笔 mutate 响应扣住 10ms——无队列时第二笔以旧基面
+    // 先完成并整表覆盖第一笔（mock FIFO 不复刻乱序，显式制造）
+    let mutateCount = 0
+    const delayedRequest: RulesChannelLike['request'] = async (topic, payload) => {
+      if (topic === 'easyTyping.rules.mutate') {
+        mutateCount++
+        if (mutateCount === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 10))
+        }
+      }
+      return request(topic, payload)
+    }
+    const { root } = await mountView(delayedRequest)
+
+    const first = q<HTMLButtonElement>(root, '[data-vet-pair="chinese↔english"] button')
+    first.click()
+    const second = q<HTMLButtonElement>(root, '[data-vet-pair="chinese↔digit"] button')
+    second.click()
+    await flush(30)
+
+    // 两笔删除都落盘（队列串行：第二笔待第一笔写后刷新完成后才取基面）
+    const persisted = JSON.parse(mock.files.get('rule-state.json')!).languagePairs
+    expect(persisted).toEqual([{ a: 'digit', b: 'english' }])
+    expect(q(root, '[data-vet-pair-chips]').querySelectorAll('[data-vet-pair]')).toHaveLength(1)
+  })
+
+  it('重名条目提交被 UI 预检拦截（状态行报错、不落盘，审查轮 1 P2 回归）', async () => {
+    const { mock, request } = assemble({
+      'rule-state.json': JSON.stringify({
+        deletedBuiltinRuleIds: [],
+        languagePairs: [],
+        customScriptCategories: [{ name: 'greek', pattern: 'Α-Ωα-ω' }],
+      }),
+      'builtin-rules.json': JSON.stringify([]),
+    })
+    const { root } = await mountView(request)
+
+    // 改第二条与第一条同名（先加第二条再改名）
+    typeInto(q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]'), 'latin')
+    typeInto(q<HTMLInputElement>(root, '[data-vet-input="new-category-pattern"]'), 'a-z')
+    q<HTMLButtonElement>(root, `${act('add-category')}`).click()
+    await flush()
+    const latinName = q<HTMLInputElement>(root, '[data-vet-category="latin"] [data-vet-input="category-name"]')
+    typeInto(latinName, 'greek')
+    latinName.dispatchEvent(new Event('change', { bubbles: true }))
+    await flush()
+
+    const status = q(root, '[data-vet-status]')
+    expect(status.getAttribute('data-vet-status')).toBe('failed')
+    // 落盘仍是一次成功写的结果（latin 未被覆盖为重名表）
+    const persisted = stateOf(mock).customScriptCategories
+    expect(persisted).toHaveLength(2)
+    expect(persisted.map((c: { name: string }) => c.name)).toContain('latin')
+  })
+
+  it('与内置类同名的词典条目在添加时即拦截', async () => {
+    const { request } = assemble()
+    const { root } = await mountView(request)
+    typeInto(q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]'), 'chinese')
+    typeInto(q<HTMLInputElement>(root, '[data-vet-input="new-category-pattern"]'), 'a-z')
+    q<HTMLButtonElement>(root, `${act('add-category')}`).click()
+    await flush()
+    const status = q(root, '[data-vet-status]')
+    expect(status.getAttribute('data-vet-status')).toBe('failed')
+  })
+
+  it('重开回显：语言对与词典从宿主存储读回', async () => {
+    const { request } = assemble()
+    const first = await mountView(request)
+    typeInto(q<HTMLInputElement>(first.root, '[data-vet-input="new-category-name"]'), 'greek')
+    typeInto(q<HTMLInputElement>(first.root, '[data-vet-input="new-category-pattern"]'), 'Α-Ωα-ω')
+    q<HTMLButtonElement>(first.root, `${act('add-category')}`).click()
+    await flush()
+    first.view.dispose()
+
+    const second = await mountView(request)
+    expect(q(second.root, '[data-vet-pair-chips]').querySelectorAll('[data-vet-pair]')).toHaveLength(3)
+    expect(q(second.root, '[data-vet-category="greek"]')).toBeTruthy()
   })
 })

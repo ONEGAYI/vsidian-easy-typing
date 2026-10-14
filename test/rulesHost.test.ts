@@ -413,3 +413,64 @@ describe('存储读失败防护与 init 自愈（审查第 4 轮 C-R4-1 / C-R4-5
     expect(snapshot.user.map((r) => r.trigger)).toContain('z')
   })
 })
+
+// ===== 富结构变更通道（#49：languagePairs / customScriptCategories） =====
+
+describe('富结构变更通道（#49）', () => {
+  it('setLanguagePairs：mutate 清洗落盘 rule-state 并 bump revision', async () => {
+    const mock = mockStorage()
+    const { service } = newService(mock)
+    await service.ensureLoaded()
+    const before = service.revision
+    const outcome = await service.applyMutation({
+      op: 'setLanguagePairs',
+      pairs: [
+        { a: ' chinese ', b: 'japanese' },
+        { a: 'japanese', b: 'chinese' },
+        { a: '', b: 'english' },
+      ],
+    })
+    expect(outcome).toMatchObject({ ok: true })
+    expect(service.revision).toBe(before + 1)
+    const state = JSON.parse(mock.files.get('rule-state.json')!)
+    // trim + 无序对去重 + 空项丢弃
+    expect(state.languagePairs).toEqual([{ a: 'chinese', b: 'japanese' }])
+  })
+
+  it('setCustomScriptCategories：落盘与 revision；非法载荷拒绝 invalid-payload', async () => {
+    const mock = mockStorage()
+    const { service } = newService(mock)
+    await service.ensureLoaded()
+    const outcome = await service.applyMutation({
+      op: 'setCustomScriptCategories',
+      categories: [{ name: 'greek', pattern: 'Α-Ωα-ω' }],
+    })
+    expect(outcome).toMatchObject({ ok: true })
+    const state = JSON.parse(mock.files.get('rule-state.json')!)
+    expect(state.customScriptCategories).toEqual([{ name: 'greek', pattern: 'Α-Ωα-ω' }])
+
+    // 非法载荷（categories 非数组 / 超上限）→ invalid-payload，不写盘
+    expect(await service.applyMutation({ op: 'setCustomScriptCategories', categories: 'bad' })).toMatchObject({
+      ok: false,
+      reason: 'invalid-payload',
+    })
+  })
+
+  it('超上限语言对整批拒绝（invalid-payload）', async () => {
+    const mock = mockStorage()
+    const { service } = newService(mock)
+    await service.ensureLoaded()
+    const tooMany = Array.from({ length: 65 }, (_, i) => ({ a: 'chinese', b: `c${i}` }))
+    const outcome = await service.applyMutation({ op: 'setLanguagePairs', pairs: tooMany })
+    expect(outcome).toMatchObject({ ok: false, reason: 'invalid-payload' })
+    expect(JSON.parse(mock.files.get('rule-state.json')!).languagePairs).toHaveLength(3)
+  })
+
+  it('get 快照含富结构字段（页面装载面）', async () => {
+    const mock = mockStorage()
+    const { service } = newService(mock)
+    const snap = await service.ensureLoaded()
+    expect(snap.languagePairs).toHaveLength(3)
+    expect(snap.customScriptCategories).toEqual([])
+  })
+})

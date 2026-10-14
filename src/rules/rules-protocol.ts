@@ -4,11 +4,11 @@
 // 页面侧无直接 IO（平台不提供页面读写 API），全部经本协议桥接宿主
 // ctx.storage 单写点。
 import type { SimpleRule } from './rule-engine'
-import { sanitizeSimpleRule } from './rule-store'
+import { sanitizeCustomCategories, sanitizeLanguagePairs, sanitizeSimpleRule, type StoredCustomCategory, type StoredLanguagePair } from './rule-store'
 
 /** 规则通道 topic（setup scope；载荷形状见各 handler 注释） */
 export const RULES_TOPIC = {
-  /** 拉取：null → { revision, builtin, user, deletedBuiltinRuleIds } */
+  /** 拉取：null → { revision, builtin, user, deletedBuiltinRuleIds, languagePairs, customScriptCategories } */
   get: 'easyTyping.rules.get',
   /** 轻量轮询：null → { revision }（页面周期比对，变化才整拉重装引擎） */
   revision: 'easyTyping.rules.revision',
@@ -44,6 +44,8 @@ export type RulesMutatePayload =
   | { op: 'restoreBuiltinRule'; id: string }
   | { op: 'resetAllBuiltinRules' }
   | { op: 'importUserRules'; content: string }
+  | { op: 'setLanguagePairs'; pairs: readonly StoredLanguagePair[] }
+  | { op: 'setCustomScriptCategories'; categories: readonly StoredCustomCategory[] }
 
 /** 变更结果（业务级拒绝；通道层自身的 rejected/timeout 由平台包裹） */
 export interface RulesMutateResult {
@@ -112,6 +114,17 @@ export function parseRulesMutatePayload(payload: unknown): RulesMutatePayload | 
       return { op }
     case 'importUserRules':
       return typeof payload['content'] === 'string' ? { op, content: payload['content'] } : null
+    case 'setLanguagePairs': {
+      // 清洗（trim/空项丢弃/无序去重/上限）与存储层同源；null = 超上限整批拒绝
+      if (!Array.isArray(payload['pairs'])) return null
+      const pairs = sanitizeLanguagePairs(payload['pairs'])
+      return pairs ? { op, pairs } : null
+    }
+    case 'setCustomScriptCategories': {
+      if (!Array.isArray(payload['categories'])) return null
+      const categories = sanitizeCustomCategories(payload['categories'])
+      return categories ? { op, categories } : null
+    }
     default:
       return null
   }

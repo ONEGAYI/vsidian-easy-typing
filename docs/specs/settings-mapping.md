@@ -54,8 +54,8 @@
 
 | 上游字段 | 原因 | #14 接口 |
 | --- | --- | --- |
-| `languagePairs` | `LanguagePair[]` 是对象数组（`{a, b}`），a/b 可为 `ScriptCategory` 或自定义类名——嵌套结构超出一层边界，拆平为布尔键会丢失自定义对表达力 | 出厂默认 3 对（中英/中数/数英）在 `src/settings/defaults.ts` 的 `RICH_STRUCTURE_DEFAULTS.languagePairs` 导出，后续间距功能票以此为缺省种子持久化用户编辑（#14 落档：该数据链尚无消费方，未建文件，见 [rules-storage.md](rules-storage.md) 已知边界） |
-| `customScriptCategories` | `CustomScriptDef[]`（`{name, pattern}` 对象数组），同上 | 同上——`RICH_STRUCTURE_DEFAULTS.customScriptCategories`（出厂空数组），同样待间距功能票 |
+| `languagePairs` | `LanguagePair[]` 是对象数组（`{a, b}`），a/b 可为 `ScriptCategory` 或自定义类名——嵌套结构超出一层边界，拆平为布尔键会丢失自定义对表达力 | **#49 已落地**：随 rule-state.json 持久化（三字段之一），管理 UI 在自绘规则页（chips + 双下拉）；出厂种子单一事实源 `src/rules/rule-store.ts` 的 `RICH_STRUCTURE_SEEDS`（本表 `RICH_STRUCTURE_DEFAULTS` 为其 re-export）。链路见 [rules-storage.md](rules-storage.md) |
+| `customScriptCategories` | `CustomScriptDef[]`（`{name, pattern}` 对象数组），同上 | **#49 已落地**：同上（自定义词典成对编辑，随 rule-state.json 持久化） |
 | `deletedBuiltinRuleIds` | `string[]` 本身可映射，但它是**规则管理状态的伴随数据**（标记哪些内置规则被用户删除），与 `builtin-rules.json`/`user-rules.json` 同生命周期，归规则数据族持久化一致性更好 | **#14 已落档**：`rule-state.json`（`{ deletedBuiltinRuleIds }`），出厂种子 `RICH_STRUCTURE_DEFAULTS.deletedBuiltinRuleIds`；不另设设置键 |
 
 ### 永不移植（3 项，AGENTS.md 清单）
@@ -85,7 +85,8 @@
 
 ## 六、已知边界
 
-- 平台 string enum 的设置页渲染展示**值本身**（`'soft'`、`'enter_twice'`），无 per-值文案映射入口——三档语义在 description 中说明；若平台后续提供枚举 label 映射再跟进。
+- ~~平台 string enum 的设置页渲染展示**值本身**，无 per-值文案映射入口~~ **已解除（#477）**：平台 `enumLabels` 形态（vsidian #473）落地后，三档空格策略与严格换行模式四键已带 per-值 `AddonLocalizedText` 双语标签（中文档位如「不要求空格/软空格/严格空格」「两次回车/两个空格加回车/混合模式」）；description 中的枚举值说明保留作文档性补充。
+- **分组 / 多行形态（#477 落档）**：24 键声明消费平台 #472/#475 新形态——每键 `group` 字段引用 `buildSettingGroups()` 四组（编辑增强 6 键 / 自动格式化 13 键 / 通用 1 键 / 实验功能 4 键，组序对照上游五 Tab 语义；内置/自定义规则两域由自绘规则页承载不进声明）；`prefixDictionary` / `userDefinedRegExp` 声明 `multiline: true`（textarea 呈现）；`excludeFiles` 为 array 型不适用 multiline——宿主 #475/#479 数组粘贴拆分承载批量输入，组件侧无声明动作。
 - 跨窗口设置变更不实时推送（平台 Memento 无变更事件，vsidian addonSettings.ts 头注）：同窗口 onChanged 即时；跨窗口以重开对账。
 - `collapsePersistentEnter` 的生效曾受平台 headingFold 未进 main 阻塞（本票 #3 交付时的边界）：平台 PR #416 已合入（2026-10-09），#18 已消费 `experimental.headingFold` 落地生效逻辑，该边界解除。
 

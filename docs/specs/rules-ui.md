@@ -10,6 +10,7 @@
 | `RuleEditModal`（611 行） | `buildFormDom` + `refreshFormVisibility` + `src/rules/rules-ui-model.ts` | 表单字段、pill/chip 交互、可见性联动（SelectKey 隐藏正则与右匹配、Code 作用域点亮语言行）逐项对照；Modal 换为 mountRoot 内自绘浮层（backdrop + dialog） |
 | `buildRuleItem` | `buildUserRuleItem` / `buildBuiltinRuleItem` | 类型/作用域/函数标签、预览行（description 优先，否则 `触发 → 替换`；函数引用显示 `fn:<ref>`，遗留字符串函数体原样展示）逐项对照 |
 | 拖拽排序（settings_tab drag 族事件） | `attachDragHandlers` + `computeDropIndex` | 事件链与上/下半区判定移植；索引换算抽为纯函数矩阵钉住；落点后不做上游的 DOM 手工搬移——写后刷新全量重渲染（语义等价，列表规模小） |
+| 列表头「新增/上移/下移」按钮排（#48） | 头部 ↑/↓ 按钮 + 行选中态 | 上游点选列表条目 + 头部按钮移动的交互形态移植：点击行主体选中（`selectedUserRuleId` 跨渲染保持），同一 `reorderUserRule` 通道做相邻交换；首行禁用上移、末行禁用下移，选中 id 失效自愈回禁用；移动后选中行滚入视野 |
 | 导入导出（export/import 按钮） | `triggerExport` / `triggerImport` | Blob 下载与隐藏 file input 形态一致，导出文件名保留上游 `easy-typing-user-rules.json`（数据跨生态兼容）；解析与去重在宿主单写点（#14 语义），页面仅形状级预检（非 JSON/非数组本地即拒） |
 | `tokenizeJS` + CM6 函数体编辑器 | `tokenizeJs` + `renderHighlightedCode` | 设置页无 cm6 共享运行时（experimental.cm6 仅编辑器页），**降级为只读高亮 pre**（票面允许）；JS 语法高亮词法器原样移植。#17 起只读块展示的是选中函数表条目的函数源码（`fn.toString()`），非可编辑函数体 |
 | `getRuleScopeBadges` / `getRuleTypeLabel` | `buildTagRow` / `typeMeta` | 标签语义一致（`<lang>` 代码域、`ƒx` 公式域），文案走 i18n |
@@ -25,7 +26,7 @@
 
 ## 边界（钉住，后续票不得顺手改）
 
-1. **内置规则逐条开关不在此页**（口径 #1/#3）：走平台「行为冲突管理」，页头给引导文案（i18n `rulesPage.builtinRules.platformToggleHint`）。本页对内置规则只提供**停用**（`deleteBuiltinRule` → deletedBuiltinRuleIds 语义）、**恢复**（`restoreBuiltinRule`）与**全部重置**（`resetAllBuiltinRules`）；内置规则**不可编辑**（上游 gear 按钮不移植——上游 `updateBuiltinRule` 通道能力保留但无 UI 消费面）。
+1. **内置规则逐条开关在本页（#50 回归组件自管，2026-10-13 产品决策）**：条目 checkbox 开关即组件层启停——关 = `deleteBuiltinRule`（移出规则表 + `deletedBuiltinRuleIds` 记账，ADR-0016 点名的组件层载体）、开 = `restoreBuiltinRule`（已停用条目）或 `toggleRuleEnabled`（在场但 `enabled=false` 的存量态）；「已停用的内置规则」折叠区条目同款开关（打开即恢复）。与宿主「行为管理」是**两层独立口径（ADR-0016）**：宿主层（组件停用/单项禁用，经 `sdk.behaviorState` 只读面）与本页开关独立存储、AND 合并生效——宿主层任一为真的条目呈灰态 + tooltip（`hostDisabled.behaviorDisabledTooltip` / `addonDisabledTooltip` 区分「已在插件行为管理中被禁用」与「组件已停用」）；灰态条目的本页开关仍可操作。灰态判定 = 规则覆盖的**全部**行为族被禁（`coveringBehaviorLocalIds`，单一事实源 `src/rules/rule-family-ids.ts`：内置规则按族种子 ruleIds 查表、用户规则按触发类归族——Input 类用户规则并入五个 Input 族，五族全禁才灰）；`onEnabledChange` 落库推送即时重渲染；面缺席（旧平台）不灰显。页头引导文案换两层口径说明（`layerHint`）。内置规则**不可编辑**（上游 gear 按钮不移植——上游 `updateBuiltinRule` 通道能力保留但无 UI 消费面）。
 2. **函数替换体 = 预注册函数引用选择**（#17 解锁，取代 #16 时代的只读锁）：表单「函数式替换」chip 打开后替换面为 ref 下拉（按规则类型过滤签名组，Input/Delete ↔ text、SelectKey ↔ selectKey）+ 函数源码只读块 + 签名参数提示与 fork 引导文案（`functionReadonlyHint`，指向 ADR-0003）；**不含函数体编辑**——函数本体在组件代码的函数表，自定义走组件化 fork。规则类型切换时签名失配的 ref 自动改选该类型首个可用函数；保存校验（`validateRuleForm`）拒绝空 ref 与失配 ref。既有引用规则编辑保存引用原样；遗留字符串函数体规则（#17 前数据）打开表单时 functionRef 为空，须改选预注册函数后方可保存。
 3. **试运行语义**：单规则独立引擎，Input 类按光标位模拟输入、Delete 类按 kind=Delete 匹配、SelectKey 类取选区文本 + 首触发键模拟按键（`testSingleRule`）；空触发式视为未命中（引擎对空 trigger 会空匹配，表单未完成时如实显示 miss）。Tab 触发模式规则在常规模拟下不命中（上游 changeType 语义）。
 4. **自绘样式边界**：全部类名 `vsidian-easy-typing-` 前缀，配色复用 webview 基线 `--vscode-*` 主题变量（带回退值，不新增平台级样式契约）；`src/settings.css` 构建拷贝 `dist/settings.css`，`extension.ts` `registerPage({ entry, css })` 登记。
@@ -49,6 +50,15 @@
 - jsdom 冒烟用 `Event` 模拟拖拽（jsdom 无 DataTransfer）；dataTransfer 空挂在源码侧防御（`if (e.dataTransfer)`），换算逻辑由纯函数矩阵钉住。
 - 状态行 6s 自动清除经计时器注入（测试常显）；跨分组动作共用一条状态行（后写覆盖先写）。
 - 上游 locale 的 `builtinRuleDescriptions`（按规则 id 的内置描述本地化）已随 #19 移植：两语言字典各带 20 条 id 映射，列表预览经 `previewRuleText(rule, m.builtinRuleDescriptions)` 查表优先（上游 settings_tab 同语义）；数据态 description 保持 #1 中文原样，不随语言改写存储。映射完整性（DEFAULT_BUILTIN_RULES id 全覆盖 + 无孤儿键）由 `test/i18n.test.ts` 钉住。
+
+## 已知边界（#48–#50 增补）
+
+- **宿主禁用灰态的族覆盖语义**：一条 Input 类用户规则在五个 Input 族各有一份实例（`resolveRuleFamilies` 归族设计），任一族在场即可触发——灰态判定是「覆盖族**全部**被禁」（多对多归族的精确语义，非任一禁即灰）。
+- **内置开关的双通道**：开关关闭恒走 `deleteBuiltinRule`（deletedBuiltinRuleIds 语义）；仅「在场但 `enabled=false`」的存量态（外部工具写入，UI 无此写路径）打开时走 `toggleRuleEnabled` 启用通道。
+- **语言间空格策略分区（#49）**：现役语言对 chips（内置类经 `scriptNames` 显示名映射）+ 双下拉添加 + 自定义词典成对编辑（失焦整表提交 `setLanguagePairs` / `setCustomScriptCategories`）；上限 64 对 / 128 类整批拒绝（`invalid-payload`）。持久化与引擎消费见 [rules-storage.md](rules-storage.md)。
+- **behaviorState 注入**：`RulesSettingsViewOptions.behaviorState` 为本地结构接口（`RulesBehaviorStateLike`，形状对齐 vendor `AddonBehaviorStateFacet`），入口 `page-settings.ts` 传 `sdk.behaviorState`——视图层保持零 SDK 依赖，jsdom 测试注入 mock。
+- **spacing 分区写路径（评审轮 1–3 落档）**：整表写经本地串行队列（每笔写含写后刷新落地后下一笔才取基面，防浏览器 blur→change→click 事件序下整表写以陈旧基面互相覆盖）+ 词典基面取 DOM 读面；编辑保护 = 焦点在编辑面**或**存在未提交草稿脏标记（真实浏览器 mousedown 即移焦点，仅凭焦点不够）。
+- **已知窄窗口（延后跟踪）**：① 草稿在途时非消费性 spacing 写（chips/词典删除）会清脏标记并重建，草稿丢失——修法是重建时回注草稿值，「按写种类选择性清位」会让 chip 删除不即时反映，更糟；② client.load 单飞下写后 load 可能并入更早发出的 get（快照缺该笔写 → 控件瞬态回弹，下次动作自愈，存储无损）；③ 存量「与内置类同名」词典条目（仅手改 rule-state.json 可造出）会被 UI 预检整表拦截、该行无法经 UI 删除。三者窗口均窄、无存储损坏。
 
 ## 给后续票的接口提示
 

@@ -10,15 +10,18 @@
 // → 立即整拉），无需再付轮询成本。
 import type { SimpleRule } from './rule-engine'
 import { IMPORT_CONTENT_MAX_LENGTH, IMPORT_MAX_RULES, RULES_TOPIC } from './rules-protocol'
+import type { StoredCustomCategory, StoredLanguagePair } from './rule-store'
 import type { RulesChannelLike } from './rules-page'
 
-/** 设置页持有的规则数据态（get 快照 + 装载标记） */
+/** 设置页持有的规则数据态（get 快照 + 装载标记；富结构字段 #49 起） */
 export interface RulesSettingsState {
   loaded: boolean
   revision: number
   builtin: SimpleRule[]
   user: SimpleRule[]
   deletedBuiltinRuleIds: string[]
+  languagePairs: StoredLanguagePair[]
+  customScriptCategories: StoredCustomCategory[]
 }
 
 export interface RulesSettingsClientOptions {
@@ -40,7 +43,15 @@ export interface RulesImportResult {
 export type RulesImportFailure = { kind: 'too-large' } | { kind: 'too-many-rules' }
 
 function initialState(): RulesSettingsState {
-  return { loaded: false, revision: -1, builtin: [], user: [], deletedBuiltinRuleIds: [] }
+  return {
+    loaded: false,
+    revision: -1,
+    builtin: [],
+    user: [],
+    deletedBuiltinRuleIds: [],
+    languagePairs: [],
+    customScriptCategories: [],
+  }
 }
 
 /** mutate 通道结果的业务形状（宿主 RulesMutateResult + 通道包裹层） */
@@ -62,6 +73,8 @@ export class RulesSettingsClient {
   private readonly notify: (state: RulesSettingsState) => void
   /** 构造后追加的监听（视图可在自身装配完成后再订阅） */
   private readonly listeners: Array<(state: RulesSettingsState) => void> = []
+  /** 在途整拉（单飞共享：快速连点失败动作的并发对账不放大请求——审查轮 2 P2） */
+  private loadInFlight: Promise<boolean> | null = null
 
   constructor(options: RulesSettingsClientOptions) {
     this.channel = options.channel
@@ -89,8 +102,18 @@ export class RulesSettingsClient {
     }
   }
 
-  /** 拉取快照（页面装载与每次写后刷新共用入口）；失败保持原状返回 false */
-  async load(): Promise<boolean> {
+  /** 拉取快照（页面装载与每次写后刷新共用入口）；失败保持原状返回 false。
+   *  在途去重：并发调用共享同一次请求（last-write-wins 下的乱序旧快照
+   *  回拉窗口不再因对账 load 叠加而放大） */
+  load(): Promise<boolean> {
+    if (this.loadInFlight !== null) return this.loadInFlight
+    this.loadInFlight = this.performLoad().finally(() => {
+      this.loadInFlight = null
+    })
+    return this.loadInFlight
+  }
+
+  private async performLoad(): Promise<boolean> {
     const outcome = await this.channel.request(RULES_TOPIC.get, null)
     if (!outcome.ok) return false
     const raw = outcome.result
@@ -99,12 +122,15 @@ export class RulesSettingsClient {
     if (typeof rec['revision'] !== 'number') return false
     if (!Array.isArray(rec['builtin']) || !Array.isArray(rec['user'])) return false
     if (!Array.isArray(rec['deletedBuiltinRuleIds'])) return false
+    if (!Array.isArray(rec['languagePairs']) || !Array.isArray(rec['customScriptCategories'])) return false
     this.setState({
       loaded: true,
       revision: rec['revision'],
       builtin: rec['builtin'] as SimpleRule[],
       user: rec['user'] as SimpleRule[],
       deletedBuiltinRuleIds: rec['deletedBuiltinRuleIds'] as string[],
+      languagePairs: rec['languagePairs'] as StoredLanguagePair[],
+      customScriptCategories: rec['customScriptCategories'] as StoredCustomCategory[],
     })
     return true
   }
@@ -145,9 +171,15 @@ export class RulesSettingsClient {
     return this.mutate({ op: 'deleteUserRule', id })
   }
 
-  /** 用户规则启用开关（内置规则逐条开关不在此页，口径 #1/#3） */
+  /** 用户规则启用开关 */
   toggleUserRuleEnabled(id: string, enabled: boolean): Promise<RulesActionResult> {
     return this.mutate({ op: 'toggleRuleEnabled', id, isBuiltin: false, enabled })
+  }
+
+  /** 内置规则启用开关（#50：在场但 enabled=false 的存量态打开通道——
+   *  常规启停走 disable/restore 的 deletedBuiltinRuleIds 语义） */
+  toggleBuiltinRuleEnabled(id: string, enabled: boolean): Promise<RulesActionResult> {
+    return this.mutate({ op: 'toggleRuleEnabled', id, isBuiltin: true, enabled })
   }
 
   /** 内置规则停用 = deleteBuiltinRule（deletedBuiltinRuleIds 语义） */
@@ -166,6 +198,16 @@ export class RulesSettingsClient {
   /** 用户规则拖拽排序（from/to 为 splice 语义索引；换算归 rules-ui-model） */
   reorderUserRule(fromIndex: number, toIndex: number): Promise<RulesActionResult> {
     return this.mutate({ op: 'reorderUserRule', fromIndex, toIndex })
+  }
+
+  /** 整表替换现役语言对（#49 语言间空格策略管理） */
+  setLanguagePairs(pairs: readonly StoredLanguagePair[]): Promise<RulesActionResult> {
+    return this.mutate({ op: 'setLanguagePairs', pairs })
+  }
+
+  /** 整表替换自定义字符类（#49 自定义语言/符号词典） */
+  setCustomScriptCategories(categories: readonly StoredCustomCategory[]): Promise<RulesActionResult> {
+    return this.mutate({ op: 'setCustomScriptCategories', categories })
   }
 
   /**

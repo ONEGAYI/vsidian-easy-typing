@@ -1,4 +1,4 @@
-// vendored from ONEGAYI/vsidian@9cd04d1c8223b39df0969c48d578bad969448da1 — src/shared/addonPage.ts
+// vendored from ONEGAYI/vsidian@1c7c5283665f5a0b5934478d8d7e3638afab9753 — src/shared/addonPage.ts
 // 类型快照：由 scripts/vendorSdkTypes.mjs 自动生成——仅保留类型声明与被
 // 类型引用的常量，值级导出（校验函数、运行时数据）已剥离。不要手改；
 // re-vendor：npm run vendor:sdk（升级锚定提交改脚本 DEFAULT_COMMIT 后重跑）。
@@ -9,7 +9,7 @@ import type { AddonHostSettingsFacet } from './addonHostSettingsApi'
 import type { AddonSyntaxFacet } from './addonSyntaxApi'
 import type { AddonRenderersFacet } from './addonRenderers'
 import type { AddonViewHandle, AddonViewsFacet, AddonViewIdentityFacet } from './addonEditApi'
-import type { AddonBehaviorsFacet } from './addonBehaviors'
+import type { AddonBehaviorsFacet, AddonBehaviorStateFacet } from './addonBehaviors'
 import type { AddonCommandDefinition, AddonCommandRegisterResult, AddonMenuItemDefinition } from './addonCommands'
 import type { AddonUiButtonDefinition, AddonUiPanelDefinition } from './addonUi'
 
@@ -125,6 +125,12 @@ export interface VsidianAddonPageSdk {
    *  每次修饰按自己的原子声明提交）与只读输入观察——注册与观察分开，
    *  onChanged 不是原操作的第二写入口 */
   readonly behaviors?: AddonBehaviorsFacet
+  /** #476 行为禁用态只读面（编辑器页与设置页**均提供**）：查询本组件
+   *  行为启用快照（运行态 + 被禁行为局部 id 集）与订阅变化（宿主落库
+   *  后即时通知）。只读——无任何写入宿主状态的成员；与 behaviors 面
+   *  分开（register 在设置页无意义，本面只报事实）。组件被停用后设置
+   *  页不卸载，本面仍可查询与订阅（灰态消费场景） */
+  readonly behaviorState?: AddonBehaviorStateFacet
   /** T10（#359）命令面（仅编辑器页；设置页为 undefined） */
   readonly commands?: AddonSdkCommandsFacet
   /** T10（#359）菜单面（仅编辑器页；设置页为 undefined） */

@@ -5,6 +5,7 @@
 // 覆盖全部内置规则 id（default-rules.ts 是单一事实源），防新增规则漏登记。
 import { describe, expect, it } from 'vitest'
 import { pickMessages, zhMessages, enMessages } from '../src/i18n'
+import { BUILTIN_CATEGORIES } from '../src/formatting/scriptCategory'
 import { DEFAULT_BUILTIN_RULES } from '../src/rules/default-rules'
 
 /** 收集对象的深度键路径（叶子为非对象值；数组视为叶子） */
@@ -80,6 +81,20 @@ describe('内置规则描述映射（builtinRuleDescriptions，#19）', () => {
       const builtinIds = new Set(DEFAULT_BUILTIN_RULES.map((rule) => rule.id))
       for (const key of Object.keys(messages.builtinRuleDescriptions)) {
         expect(builtinIds.has(key), `orphan key ${key}`).toBe(true)
+      }
+    }
+  })
+})
+
+
+// ===== scriptNames 覆盖（#49：内置脚本类显示名映射完整性） =====
+
+describe('scriptNames 覆盖内置脚本类', () => {
+  it('两语言 scriptNames 键集 ⊇ BUILTIN_CATEGORIES 值集（新增脚本类漏配双语名即红）', () => {
+    for (const messages of [zhMessages, enMessages]) {
+      const keys = Object.keys(messages.rulesPage.scriptNames)
+      for (const category of BUILTIN_CATEGORIES) {
+        expect(keys, `${category} 缺显示名`).toContain(category)
       }
     }
   })
