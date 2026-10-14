@@ -675,6 +675,18 @@ describe('富结构持久化（#49）', () => {
     expect(store.getSnapshot().languagePairs).toHaveLength(3)
   })
 
+  it('上限边界：恰好 64 对 / 128 类整批受理放行', async () => {
+    const { io } = memoryIo()
+    const store = newStore(io)
+    await store.init()
+    const atLimitPairs = Array.from({ length: 64 }, (_, i) => ({ a: 'chinese', b: `c${i}` }))
+    expect(await store.setLanguagePairs(atLimitPairs)).toBe(true)
+    expect(store.getSnapshot().languagePairs).toHaveLength(64)
+    const atLimitCats = Array.from({ length: 128 }, (_, i) => ({ name: `n${i}`, pattern: 'x' }))
+    expect(await store.setCustomScriptCategories(atLimitCats)).toBe(true)
+    expect(store.getSnapshot().customScriptCategories).toHaveLength(128)
+  })
+
   it('getSnapshot：快照含富结构字段（每次新数组）', async () => {
     const { io } = memoryIo()
     const store = newStore(io)

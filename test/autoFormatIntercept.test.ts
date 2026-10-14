@@ -242,8 +242,11 @@ describe('设置门与富结构种子', () => {
     ])
   })
 
-  it('gate：RULES 通道失败/畸形保持当前富结构值（fail-safe）', async () => {
-    let rulesResponse: unknown = { ok: false, reason: 'rejected' }
+  it('gate：RULES 通道失败/畸形保持当前富结构值（两轮刷新钉住：首轮成功下发的用户值不被 settings 面重建打回种子——审查轮 1 P1）', async () => {
+    let rulesResponse: unknown = {
+      ok: true,
+      result: { languagePairs: [], customScriptCategories: [] }, // 用户删光全部对（合法态）
+    }
     const gate = createAutoFormatGate({
       request: (topic: string) =>
         respond(
@@ -253,14 +256,29 @@ describe('设置门与富结构种子', () => {
         ),
     })
     await gate.refresh()
-    // 通道失败保持出厂种子（三对）
-    expect(gate.settings().lineFormat.languagePairs).toEqual(
+    expect(gate.settings().lineFormat.languagePairs).toEqual([])
+    // settings 成功 + rules 失败（瞬时超时）：保持用户值，不回出厂种子
+    rulesResponse = { ok: false, reason: 'timeout' }
+    await gate.refresh()
+    expect(gate.settings().lineFormat.languagePairs).toEqual([])
+    expect(gate.settings().lineFormat.customScriptCategories).toEqual([])
+    // 首拉前通道失败保持出厂种子（三对）
+    const freshGate = createAutoFormatGate({
+      request: (topic: string) =>
+        respond(
+          topic === 'easyTyping.settings.get'
+            ? { ok: true, result: { effective: {} } }
+            : { ok: false, reason: 'rejected' },
+        ),
+    })
+    await freshGate.refresh()
+    expect(freshGate.settings().lineFormat.languagePairs).toEqual(
       RICH_STRUCTURE_DEFAULTS.languagePairs.map((p) => ({ a: p.a, b: p.b })),
     )
-    // 畸形字段（languagePairs 非数组）同样保持
+    // 畸形字段（languagePairs 非数组）同样保持当前值
     rulesResponse = { ok: true, result: { languagePairs: 'bad', customScriptCategories: [] } }
     await gate.refresh()
-    expect(gate.settings().lineFormat.languagePairs).toHaveLength(3)
+    expect(gate.settings().lineFormat.languagePairs).toEqual([])
   })
 
   it('gate：effective 值类型失配回默认（fail-safe）', async () => {

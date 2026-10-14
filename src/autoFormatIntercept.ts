@@ -178,7 +178,19 @@ export function createAutoFormatGate(channel: RulePipelineChannelSubset): AutoFo
       const settingsOutcome = await channel.request(SETTINGS_TOPIC.get, null)
       if (settingsOutcome.ok === true) {
         const effective = (settingsOutcome.result as { effective?: unknown } | null)?.effective
+        const prev = current
         current = readEngineSettings(effective)
+        // schema 面不含富结构（23 键外）：readEngineSettings 重建 base 会带
+        // 出厂种子——回填 RULES 面当前值，否则 settings 成功 + rules 失败的
+        // 组合会把用户富结构静默打回种子（审查轮 1 P1）
+        current = {
+          ...current,
+          lineFormat: {
+            ...current.lineFormat,
+            languagePairs: prev.lineFormat.languagePairs,
+            customScriptCategories: prev.lineFormat.customScriptCategories,
+          },
+        }
       }
       const rulesOutcome = await channel.request(RULES_TOPIC.get, null)
       if (rulesOutcome.ok === true) {

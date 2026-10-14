@@ -144,11 +144,11 @@ export interface StoredCustomCategory {
  */
 export const RICH_STRUCTURE_SEEDS = {
   languagePairs: [
-    { a: 'chinese', b: 'english' },
-    { a: 'chinese', b: 'digit' },
-    { a: 'digit', b: 'english' },
-  ] as StoredLanguagePair[],
-  customScriptCategories: [] as StoredCustomCategory[],
+    Object.freeze({ a: 'chinese', b: 'english' }),
+    Object.freeze({ a: 'chinese', b: 'digit' }),
+    Object.freeze({ a: 'digit', b: 'english' }),
+  ] as readonly StoredLanguagePair[],
+  customScriptCategories: [] as readonly StoredCustomCategory[],
 }
 
 /** 语言对条数上限（#49 通道防线：量级防御，上游 UI 无对应限制） */

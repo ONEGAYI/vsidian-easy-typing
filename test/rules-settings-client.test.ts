@@ -254,3 +254,35 @@ describe('RulesSettingsClient 导入导出', () => {
     expect(await client.storageUri()).toBe('file:///addons/et')
   })
 })
+
+
+// ===== 富结构方法与空表往返（#49） =====
+
+describe('富结构方法（#49）', () => {
+  it('setLanguagePairs 空表往返：载荷 {op,pairs:[]} 直达宿主（用户删光全部对是合法态）', async () => {
+    const { channel, requests } = scriptedChannel({
+      [RULES_TOPIC.mutate]: [{ ok: true, result: { ok: true, revision: 2 } }],
+      [RULES_TOPIC.get]: [{ ok: true, result: snapshot(2) }],
+    })
+    const client = new RulesSettingsClient({ channel })
+    const outcome = await client.setLanguagePairs([])
+    expect(outcome).toEqual({ ok: true })
+    expect(requests[0]).toMatchObject({ topic: RULES_TOPIC.mutate, payload: { op: 'setLanguagePairs', pairs: [] } })
+    // 写后刷新：第二条请求是整拉
+    expect(requests[1]!.topic).toBe(RULES_TOPIC.get)
+  })
+
+  it('toggleBuiltinRuleEnabled：载荷带 isBuiltin: true', async () => {
+    const { channel, requests } = scriptedChannel({
+      [RULES_TOPIC.mutate]: [{ ok: true, result: { ok: true, revision: 3 } }],
+      [RULES_TOPIC.get]: [{ ok: true, result: snapshot(3) }],
+    })
+    const client = new RulesSettingsClient({ channel })
+    const outcome = await client.toggleBuiltinRuleEnabled('b1', true)
+    expect(outcome).toEqual({ ok: true })
+    expect(requests[0]).toMatchObject({
+      topic: RULES_TOPIC.mutate,
+      payload: { op: 'toggleRuleEnabled', id: 'b1', isBuiltin: true, enabled: true },
+    })
+  })
+})
