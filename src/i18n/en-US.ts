@@ -114,6 +114,20 @@ export const enMessages: Messages = {
       desc: 'Insert a new line below the current one, continuing list or quote prefixes (ordered lists auto-increment, task items reset to unchecked); when off, falls back to the built-in editor behavior (plain blank line).',
     },
   },
+  settingsGroups: {
+    editEnhance: 'Editing Enhancements',
+    autoFormat: 'Auto Formatting',
+    general: 'General',
+    experimental: 'Experimental',
+  },
+  enumLabels: {
+    spaceNone: 'No spacing',
+    spaceSoft: 'Soft spacing',
+    spaceStrict: 'Strict spacing',
+    strictLineEnterTwice: 'Two enters',
+    strictLineTwoSpace: 'Two spaces + Enter',
+    strictLineMix: 'Mixed mode',
+  },
   noHost: 'Vsidian (onegayi.vsidian) not found in this extension host',
   // Select-current-block command title (issue #11; wording follows upstream locale commands.selectBlock)
   commandSelectBlock: 'Select current text block',

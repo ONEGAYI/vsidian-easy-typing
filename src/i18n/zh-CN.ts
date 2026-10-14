@@ -114,6 +114,22 @@ const zhMessages = {
       desc: '在当前行下方新建一行并延续列表或引用前缀（有序列表自动递增、任务项重置为未完成）；关闭时回退编辑器内建行为（仅插入空行）',
     },
   },
+  // 设置分组标题与枚举档位标签（#477：经宿主声明式表单呈现，标题用
+  // AddonLocalizedText 双语映射——键形同 #45/#464 的 zh-cn/en）
+  settingsGroups: {
+    editEnhance: '编辑增强',
+    autoFormat: '自动格式化',
+    general: '通用',
+    experimental: '实验功能',
+  },
+  enumLabels: {
+    spaceNone: '不要求空格',
+    spaceSoft: '软空格',
+    spaceStrict: '严格空格',
+    strictLineEnterTwice: '两次回车',
+    strictLineTwoSpace: '两个空格加回车',
+    strictLineMix: '混合模式',
+  },
   noHost: '当前扩展宿主中未找到 Vsidian（onegayi.vsidian）',
   // 「选择当前块」命令标题（工单 #11；文案对齐上游 locale commands.selectBlock）
   commandSelectBlock: '选择当前文本块',

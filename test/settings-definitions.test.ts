@@ -5,7 +5,7 @@
 // 3 项永不移植、3 项归 #14 storage、1 项剔除，均不在此出现。
 import { describe, expect, it } from 'vitest'
 import type { AddonSettingDefinition } from '../types/vendor/shared/addonSettings'
-import { buildSettingDefinitions } from '../src/settings/definitions'
+import { buildSettingDefinitions, buildSettingGroups } from '../src/settings/definitions'
 import {
   DEFAULT_EFFECTIVE_SETTINGS,
   SPACE_MODE_VALUES,
@@ -165,5 +165,102 @@ describe('文案来自 i18n 字典（禁止硬编码字面量散落）', () => {
   it('字符串默认值不含 CJK（默认值是数据不是文案）', () => {
     expect(DEFAULT_EFFECTIVE_SETTINGS.prefixDictionary).not.toMatch(/[\u4e00-\u9fff]/)
     expect(DEFAULT_EFFECTIVE_SETTINGS.userDefinedRegExp).not.toMatch(/[\u4e00-\u9fff]/)
+  })
+})
+
+// ===== 声明消费新形态（#477 / vsidian #472/#473/#475） =====
+
+describe('分组声明（#477）', () => {
+  it('24 键全部携带 group 且引用已声明组键（无孤儿引用）', () => {
+    const groups = buildSettingGroups()
+    const groupKeys = new Set(groups.map((g) => g.key))
+    expect(groupKeys.size).toBe(groups.length)
+    for (const def of zhDefs) {
+      expect(def.group, `${def.key} 缺 group`).toBeTruthy()
+      expect(groupKeys.has(def.group!), `${def.key} 引用未声明组 ${def.group}`).toBe(true)
+    }
+  })
+
+  it('组声明序即呈现序，标题为 zh-cn/en 双语映射', () => {
+    const groups = buildSettingGroups()
+    expect(groups.map((g) => g.key)).toEqual(['edit-enhance', 'auto-format', 'general', 'experimental'])
+    for (const group of groups) {
+      const title = group.title as Record<string, string>
+      expect(title['zh-cn']).toBeTruthy()
+      expect(title['en']).toBeTruthy()
+    }
+  })
+
+  it('归组对照上游五 Tab 语义（规则域两 Tab 由自绘页承载不进声明）', () => {
+    const groupOf = (key: string): string => defByKey(zhDefs, key).group!
+    // 编辑增强 Tab：BetterCodeEdit/Tabout/SmartPaste/BetterBackspace/EnhanceModA + 本仓 newLineBelow
+    for (const key of ['tabout', 'smartPaste', 'betterCodeEdit', 'betterBackspace', 'enhanceModA', 'newLineBelow']) {
+      expect(groupOf(key), key).toBe('edit-enhance')
+    }
+    // 自动格式化 Tab：总门/大写/词典/软空格/行内空格三键/链接智能/保护区族
+    for (const key of [
+      'autoFormat',
+      'autoFormatPaste',
+      'autoCapital',
+      'prefixDictionary',
+      'softSpaceLeftSymbols',
+      'softSpaceRightSymbols',
+      'inlineCodeSpaceMode',
+      'inlineFormulaSpaceMode',
+      'inlineLinkSpaceMode',
+      'inlineLinkSmartSpace',
+      'userDefinedRegSwitch',
+      'userDefinedRegExp',
+      'userRulesRespectUserDefinedRegexBlocks',
+    ]) {
+      expect(groupOf(key), key).toBe('auto-format')
+    }
+    // 通用：排除清单（全局作用面）
+    expect(groupOf('excludeFiles')).toBe('general')
+    // 实验功能：debug / 严格换行族 / collapsePersistentEnter（低频与诊断面）
+    for (const key of ['debug', 'strictModeEnter', 'strictLineMode', 'collapsePersistentEnter']) {
+      expect(groupOf(key), key).toBe('experimental')
+    }
+  })
+})
+
+describe('枚举档位标签（#477 / vsidian #473）', () => {
+  it('三档空格策略与严格换行模式的 enumLabels 键集与 enum 值集一致（双语）', () => {
+    for (const [key, values] of [
+      ['inlineCodeSpaceMode', SPACE_MODE_VALUES],
+      ['inlineFormulaSpaceMode', SPACE_MODE_VALUES],
+      ['inlineLinkSpaceMode', SPACE_MODE_VALUES],
+      ['strictLineMode', STRICT_LINE_MODE_VALUES],
+    ] as const) {
+      for (const defs of [zhDefs, enDefs]) {
+        const def = defByKey(defs, key)
+        if (def.type !== 'string') continue
+        expect(def.enumLabels, `${key} 缺 enumLabels`).toBeTruthy()
+        expect(Object.keys(def.enumLabels!).sort(), key).toEqual([...values].sort())
+        for (const value of values) {
+          const label = def.enumLabels![value] as Record<string, string>
+          expect(label['zh-cn'], `${key}:${value} zh-cn 标签`).toBeTruthy()
+          expect(label['en'], `${key}:${value} en 标签`).toBeTruthy()
+        }
+      }
+    }
+  })
+})
+
+describe('多行形态声明（#477 / vsidian #475）', () => {
+  it('prefixDictionary 与 userDefinedRegExp 声明 multiline；excludeFiles 为 array 型不适用（宿主 #479 粘贴拆分承载）', () => {
+    for (const key of ['prefixDictionary', 'userDefinedRegExp'] as const) {
+      const def = defByKey(zhDefs, key)
+      if (def.type !== 'string') continue
+      expect(def.multiline, key).toBe(true)
+    }
+    // enum 定义与 multiline 互斥（平台形状自洽镜像断言）
+    for (const key of ['inlineCodeSpaceMode', 'inlineFormulaSpaceMode', 'inlineLinkSpaceMode', 'strictLineMode'] as const) {
+      const def = defByKey(zhDefs, key)
+      if (def.type !== 'string') continue
+      expect(def.multiline, key).toBeUndefined()
+    }
+    const excludeDef = defByKey(zhDefs, 'excludeFiles')
+    expect(excludeDef.type).toBe('array')
   })
 })

@@ -37,4 +37,14 @@ export function ruleFamilyNameMap(key: keyof Messages['ruleFamilies']): Record<'
   return { 'zh-cn': zhMessages.ruleFamilies[key].name, en: enMessages.ruleFamilies[key].name }
 }
 
+/** 设置分组标题双语映射（#477：AddonSettingGroup.title 的构造辅助） */
+export function settingGroupTitleMap(key: keyof Messages['settingsGroups']): Record<'zh-cn' | 'en', string> {
+  return { 'zh-cn': zhMessages.settingsGroups[key], en: enMessages.settingsGroups[key] }
+}
+
+/** 枚举档位标签双语映射（#477：enumLabels 值的构造辅助） */
+export function enumLabelMap(key: keyof Messages['enumLabels']): Record<'zh-cn' | 'en', string> {
+  return { 'zh-cn': zhMessages.enumLabels[key], en: enMessages.enumLabels[key] }
+}
+
 export { zhMessages, enMessages }
