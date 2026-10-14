@@ -73,6 +73,8 @@ export class RulesSettingsClient {
   private readonly notify: (state: RulesSettingsState) => void
   /** 构造后追加的监听（视图可在自身装配完成后再订阅） */
   private readonly listeners: Array<(state: RulesSettingsState) => void> = []
+  /** 在途整拉（单飞共享：快速连点失败动作的并发对账不放大请求——审查轮 2 P2） */
+  private loadInFlight: Promise<boolean> | null = null
 
   constructor(options: RulesSettingsClientOptions) {
     this.channel = options.channel
@@ -100,8 +102,18 @@ export class RulesSettingsClient {
     }
   }
 
-  /** 拉取快照（页面装载与每次写后刷新共用入口）；失败保持原状返回 false */
-  async load(): Promise<boolean> {
+  /** 拉取快照（页面装载与每次写后刷新共用入口）；失败保持原状返回 false。
+   *  在途去重：并发调用共享同一次请求（last-write-wins 下的乱序旧快照
+   *  回拉窗口不再因对账 load 叠加而放大） */
+  load(): Promise<boolean> {
+    if (this.loadInFlight !== null) return this.loadInFlight
+    this.loadInFlight = this.performLoad().finally(() => {
+      this.loadInFlight = null
+    })
+    return this.loadInFlight
+  }
+
+  private async performLoad(): Promise<boolean> {
     const outcome = await this.channel.request(RULES_TOPIC.get, null)
     if (!outcome.ok) return false
     const raw = outcome.result

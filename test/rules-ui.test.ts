@@ -1003,26 +1003,64 @@ describe('语言间空格策略（#49）', () => {
     ])
   })
 
-  it('词典编辑焦点在途时其他分区的写后刷新不重建 spacing（未提交输入保留，审查轮 1 P2 回归）', async () => {
+  it('词典草稿在途时其他分区的写后刷新不重建 spacing（真实焦点序：mousedown 即移焦点——脏标记保护，审查轮 2 P1 回归）', async () => {
     const seed = [{ id: 'u1', trigger: 'a', replacement: 'A' }]
     const { request } = assemble({ 'user-rules.json': JSON.stringify(seed) })
     const { root } = await mountView(request)
 
+    // 真实浏览器在 mousedown 即把焦点移向被点控件——jsdom 的 click 不模拟，
+    // 显式 blur 草稿输入复刻该事件序（焦点已离开 spacing）
     const nameInput = q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]')
-    nameInput.focus()
     typeInto(nameInput, 'draft')
+    nameInput.blur()
+    expect(document.activeElement).not.toBe(nameInput)
 
-    // 其他分区的写（用户规则开关）触发写后刷新 → render() 全量入口
+    // 其他分区的写（用户规则开关）触发写后刷新 → render() 全量入口：
+    // 脏标记（input 事件置位）挡住 spacing 重建
     const toggle = q<HTMLInputElement>(q(root, '[data-vet-user-list]').children[0]!, `${act('toggle')}`)
     toggle.checked = false
     toggle.dispatchEvent(new Event('change', { bubbles: true }))
     await flush()
 
-    // spacing 分区未被重建：草稿输入与焦点保留
+    // spacing 分区未被重建：草稿保留（焦点已在别处，靠脏标记而非焦点判定）
     expect(q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]').value).toBe('draft')
-    expect(q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]')).toBe(document.activeElement)
     // 用户规则分区照常刷新（开关状态对账）
     expect(q(root, '[data-vet-user-list]').children[0]!.classList.contains('vsidian-easy-typing-rule-disabled')).toBe(true)
+
+    // 草稿消费（添加成功）后：写后刷新重建，新增行清空、条目在场
+    typeInto(q<HTMLInputElement>(root, '[data-vet-input="new-category-pattern"]'), 'a-z')
+    q<HTMLButtonElement>(root, `${act('add-category')}`).click()
+    await flush()
+    expect(q(root, '[data-vet-category="draft"]')).toBeTruthy()
+    expect(q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]').value).toBe('')
+  })
+
+  it('语言对连续删除的乱序响应防护：队列串行保证两笔都生效（审查轮 2 P2 回归）', async () => {
+    const { mock, request } = assemble()
+    // 可控延迟通道：第一笔 mutate 响应扣住 10ms——无队列时第二笔以旧基面
+    // 先完成并整表覆盖第一笔（mock FIFO 不复刻乱序，显式制造）
+    let mutateCount = 0
+    const delayedRequest: RulesChannelLike['request'] = async (topic, payload) => {
+      if (topic === 'easyTyping.rules.mutate') {
+        mutateCount++
+        if (mutateCount === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 10))
+        }
+      }
+      return request(topic, payload)
+    }
+    const { root } = await mountView(delayedRequest)
+
+    const first = q<HTMLButtonElement>(root, '[data-vet-pair="chinese↔english"] button')
+    first.click()
+    const second = q<HTMLButtonElement>(root, '[data-vet-pair="chinese↔digit"] button')
+    second.click()
+    await flush(30)
+
+    // 两笔删除都落盘（队列串行：第二笔待第一笔写后刷新完成后才取基面）
+    const persisted = JSON.parse(mock.files.get('rule-state.json')!).languagePairs
+    expect(persisted).toEqual([{ a: 'digit', b: 'english' }])
+    expect(q(root, '[data-vet-pair-chips]').querySelectorAll('[data-vet-pair]')).toHaveLength(1)
   })
 
   it('重名条目提交被 UI 预检拦截（状态行报错、不落盘，审查轮 1 P2 回归）', async () => {

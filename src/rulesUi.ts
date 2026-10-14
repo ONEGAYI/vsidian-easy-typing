@@ -634,7 +634,13 @@ export function mountRulesSettingsView(
   let spacingWriteQueue: Promise<unknown> = Promise.resolve()
   function enqueueSpacingWrite(task: () => Promise<{ ok: boolean; reason?: string }>): void {
     spacingWriteQueue = spacingWriteQueue
-      .then(task)
+      .then(() => {
+        // 写请求发出 = 输入面已消费：无论成败，新增行/下拉的草稿语义终结
+        //（成功走写后刷新重建、失败走对账重建——两者都不能被 dirty 挡住；
+        // 在任务体内 load 同步触发 render，须在此之前清位）
+        spacingDirty = false
+        return task()
+      })
       .then((outcome) => {
         if (!outcome.ok) {
           actionFailed(outcome.reason ?? 'io-failed')
@@ -643,10 +649,19 @@ export function mountRulesSettingsView(
           void client.load()
         }
       })
-      .catch(() => {
-        /* 队列只保顺序不传播失败 */
+      .catch((err: unknown) => {
+        // 任务异常（通道 reject 等罕见形态）镜像失败路径，不做无反馈死按钮
+        //（审查轮 2 P2）；队列继续（fulfilled 链尾）
+        actionFailed(String(err))
+        void client.load()
       })
   }
+
+  /** spacing 分区草稿脏标记（审查轮 2 P1）：真实浏览器在 mousedown 即把
+   *  焦点移向被点控件——仅凭 activeElement 判编辑保护挡不住「草稿输入 →
+   *  点其他分区开关」的丢输入场景；新增行与双下拉的输入/选择置位，写请求
+   *  发出（队列消费）后清除 */
+  let spacingDirty = false
 
   /** 词典整表提交前预检（审查轮 1 P2）：重名/空值/与内置类同名在 UI 拦截
    *  并提示，不交给存储清洗静默吞掉（吞掉 = 写后刷新后行直接消失） */
@@ -670,7 +685,11 @@ export function mountRulesSettingsView(
     return true
   }
 
-  function submitCategories(categories: Array<{ name: string; pattern: string }>): void {
+  function submitCategories(rawCategories: Array<{ name: string; pattern: string }>): void {
+    // 入口先 trim（与存储清洗同口径）：预检校验 trim 值而提交原值时，编辑
+    // 保护跳过重建的窗口内 UI 显示 ` greek ` 而存储是 `greek`——失配无限
+    // 期持续到下一次渲染（审查轮 2 P2）
+    const categories = rawCategories.map((c) => ({ name: c.name.trim(), pattern: c.pattern.trim() }))
     if (!validateCategoriesForSubmit(categories)) return
     enqueueSpacingWrite(() => client.setCustomScriptCategories(categories))
   }
@@ -716,6 +735,13 @@ export function mountRulesSettingsView(
     const selA = buildCategorySelect('pair-a', options)
     const selB = buildCategorySelect('pair-b', options)
     selB.selectedIndex = Math.min(1, options.length - 1)
+    // 下拉选择是未提交草稿：置脏标记（写后刷新重建会重置选项——审查轮 2 P1）
+    selA.addEventListener('change', () => {
+      spacingDirty = true
+    })
+    selB.addEventListener('change', () => {
+      spacingDirty = true
+    })
     const addPairBtn = el('button', `${CLS}-btn`, sp.pairAdd)
     addPairBtn.type = 'button'
     addPairBtn.setAttribute('data-vet-action', 'add-pair')
@@ -724,11 +750,11 @@ export function mountRulesSettingsView(
         showStatus('failed', sp.pairInvalid)
         return
       }
+      // 入队时捕获选择值：前一笔写的写后刷新可能重建分区，执行时再读
+      // select 是 detached 节点（值虽保留但脆弱——审查轮 2 P2）
+      const pair = { a: selA.value, b: selB.value }
       enqueueSpacingWrite(() =>
-        client.setLanguagePairs([
-          ...client.state.languagePairs.map((p) => ({ ...p })),
-          { a: selA.value, b: selB.value },
-        ]),
+        client.setLanguagePairs([...client.state.languagePairs.map((p) => ({ ...p })), pair]),
       )
     })
     addPairRow.append(selA, selB, addPairBtn)
@@ -784,12 +810,18 @@ export function mountRulesSettingsView(
     newName.placeholder = sp.categoryName
     newName.setAttribute('data-vet-input', 'new-category-name')
     newName.setAttribute('aria-label', sp.categoryName)
+    newName.addEventListener('input', () => {
+      spacingDirty = true
+    })
     const newPattern = el('input') as HTMLInputElement
     newPattern.type = 'text'
     newPattern.className = `${CLS}-input`
     newPattern.placeholder = sp.categoryPattern
     newPattern.setAttribute('data-vet-input', 'new-category-pattern')
     newPattern.setAttribute('aria-label', sp.categoryPattern)
+    newPattern.addEventListener('input', () => {
+      spacingDirty = true
+    })
     const addCatBtn = el('button', `${CLS}-btn`, sp.categoryAdd)
     addCatBtn.type = 'button'
     addCatBtn.setAttribute('data-vet-action', 'add-category')
@@ -807,6 +839,8 @@ export function mountRulesSettingsView(
     addCatRow.append(newName, newPattern, addCatBtn)
     dictGroup.append(addCatRow)
     spacingSection.append(dictGroup)
+    // 重建值即存储基线：脏标记随重建归零（跳过重建的路径不清——草稿仍在）
+    spacingDirty = false
   }
 
   function renderStorageSection(): void {
@@ -828,18 +862,15 @@ export function mountRulesSettingsView(
     })
   }
 
-  /** spacing 分区是否有编辑中的控件（焦点在输入/下拉上）：写后刷新全量重建
-   *  会丢弃未提交输入与焦点（审查轮 1 P2）——编辑进行时跳过本分区重建，
-   *  无焦点冲突的下一次渲染再补齐。 */
+  /** spacing 分区编辑保护（审查轮 1 P2 + 轮 2 P1）：焦点在输入/下拉上，
+   *  **或**存在未提交草稿（真实浏览器 mousedown 即移焦点，仅凭焦点挡不住
+   *  「草稿输入 → 点其他分区开关」的丢输入场景——脏标记补位）时跳过本
+   *  分区重建；无冲突的下一次渲染再补齐。 */
   function spacingEditingInFlight(): boolean {
+    if (spacingDirty) return true
     const active = doc.activeElement
     if (active === null || !spacingSection.contains(active)) return false
-    return (
-      (active instanceof HTMLInputElement || active instanceof HTMLSelectElement) &&
-      // 静默保护仅限真编辑面；新增行的两个输入以 placeholder 呈现空值，
-      // 焦点在其中同样视为编辑中
-      true
-    )
+    return active instanceof HTMLInputElement || active instanceof HTMLSelectElement
   }
 
   function render(): void {
