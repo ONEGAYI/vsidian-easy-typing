@@ -1,6 +1,6 @@
 # 自定义规则内核与 JSON 持久化（工单 #14）
 
-规则数据链完整落地：存储纯逻辑（上游 rule_manager 数据面）、宿主 storage 单写点服务、页面引擎装载与自动重载、通道协议。事实源模块：`src/rules/rule-store.ts`（存储纯逻辑）、`src/rulesHost.ts`（宿主接线）、`src/rules/rules-protocol.ts`（通道协议）、`src/rules/rules-page.ts`（页面客户端）；测试矩阵：`test/rule-store.test.ts`、`test/rulesHost.test.ts`、`test/rules-page.test.ts`（含端到端）。
+规则数据链完整落地：存储纯逻辑（上游 rule_manager 数据面）、宿主 storage 单写点服务、页面引擎装载与自动重载、通道协议。事实源模块：`src/rules/rule-store.ts`（存储纯逻辑 + #49 富结构种子）、`src/rulesHost.ts`（宿主接线）、`src/rules/rules-protocol.ts`（通道协议）、`src/rules/rules-page.ts`（页面客户端）、`src/rules/rule-family-ids.ts`（#50 规则→行为族映射）；测试矩阵：`test/rule-store.test.ts`、`test/rulesHost.test.ts`、`test/rules-page.test.ts`（含端到端）、`test/rule-family-ids.test.ts`。
 
 ## 验收口径
 
@@ -43,7 +43,7 @@
 
 - **函数替换体引用形态收口（#17 已落地）**：`sanitizeSimpleRule` 接受 `replacement` 双形态——字符串字面量或函数引用对象 `{kind:'function', ref}`（kind/ref 浅拷贝、附加键丢弃、畸形引用拒绝）。**不查函数表**：存储层只管声明性数据的形状（fork 组件扩展函数表后可存内置表之外的 ref），ref 是否存在、签名是否匹配由引擎装载时查表校验并 reportError（见 [rule-engine.md](rule-engine.md) 函数替换体预注册节）。遗留字符串函数体（F 旗标 + 字符串）存储侧原样保留——数据不丢，装载侧拒绝并通知，用户可在 UI 改选预注册函数。决策见 [ADR-0003](../adr/0003-function-replacement-preregistered-table.md)。
 - **文件整体缺失 = 恢复出厂全量**（上游 exists=false 分支语义）：deletedIds 只约束 merge 补种路径，不拦截「文件不存在」分支——外部删除 builtin-rules.json 会复活已删内置规则，与上游一致（`test/rule-store.test.ts`「上游语义钉子」用例钉住，防好心修复）。
-- **languagePairs / customScriptCategories 未建持久化文件**：二者是间距引擎（smart space）的富结构，数据链归对应功能票；#3 边界句「富结构归你的 JSON 持久化」在本票只消费了 deletedBuiltinRuleIds（rule-state.json）。语言对种子仍以 `RICH_STRUCTURE_DEFAULTS` 为单一事实源，届时扩展同一 rule-state 文件或平行文件。
+- **languagePairs / customScriptCategories 随 rule-state.json 持久化（#49 落地，前述边界解除）**：rule-state.json 扩为三字段 `{ deletedBuiltinRuleIds, languagePairs, customScriptCategories }`——三个富结构本是一族（映射表 §三），同一文件共用 watcher 与 revision 通道。富结构出厂种子单一事实源迁入 `src/rules/rule-store.ts`（`RICH_STRUCTURE_SEEDS`：中英/中数/数英三对 + 空词典），`settings/defaults.ts` 的 `RICH_STRUCTURE_DEFAULTS` 改 re-export 保持既有消费面。装载逐字段 fail-safe：字段缺失或整体非数组回种子、畸形项清洗丢弃（**清洗后空数组是合法态**——用户可删光全部语言对，不回种子）；mutate 新增 `setLanguagePairs` / `setCustomScriptCategories` 两整表 op（通道与存储共用 `sanitizeLanguagePairs` / `sanitizeCustomCategories`：trim/空项丢弃/无序对去重/重名保留首个；上限 64 对 / 128 类整批拒绝）。引擎消费经 `autoFormatIntercept` 的 gate 双通道刷新（设置面 + RULES 面，独立 fail-safe）——规则页编辑落盘后下一次输入观察即生效。
 - **revision 非持久化**：代次是运行态计数（每次激活期从 0 起），页面装载时以 -1 起步强制首拉；同一激活期内任何数据变化都会递增，跨激活期无比较意义（页面重新装载亦从 -1 起）。
 - **自写抑制窗口内的外部改动会被误丢弃（审查 C-P3-1，上游同款继承）**：`HostRulesService.onFileChange` 的自写抑制判据是「距上次成功写 < 2s 的文件事件一律忽略」（上游 `lastSaveTime` 同款，平台对自写也会回调 onDidChangeFile 所致）——外部同步工具恰在本组件写操作后 2s 内改写规则文件时，该事件被误判为自写回声而丢弃（不重载、revision 不增），宿主缓存与文件失配，直到下一次落在窗外的文件事件或组件重装载才恢复。上游行为一致，未收窄未放宽；同步工具侧的缓解是避开在本组件写入后立即改写（或改写后再触发一次落盘外保存让事件落在窗外）。
 - **页面装载链路与引擎消费均已接线**（审查 B-F1 / C-P1-2 修复收口）：page-editor.ts 装载引擎 + 轮询重载；`PageRulesClient` 的 `onReload` 快照喂规则源（`createRuleSnapshotSource`，src/ruleBehaviorIntercept.ts），#25/#9 行为族引擎经其同步重建——用户规则、内置停用与删除、外部改写轮询重载对编辑行为即时生效（端到端测试：test/ruleBehaviorIntercept.test.ts「端到端：存储态 → 行为族引擎」组）。装载前 / 通道不可用时行为族回落出厂数据。设置门控（上游 `userDefinedRegSwitch` 关闭时用户规则不参与）在消费侧经 #27 探针接线，存储层不复制开关。
@@ -52,6 +52,6 @@
 ## 给后续票的接口提示
 
 - **#15（Tabstop 导航）**：`ApplyResult.tabstops`（`{number, from, to}` 文档绝对坐标，number 升序）已填充，`cursor` 落 `tabstops[0].from`；分组导航把 tabstop 组转多光标选区 + Tab/Shift-Tab 跳转，引擎零改动。
-- **#16（规则管理 UI，已落地）**：读写全经 `RULES_TOPIC`（`src/rules/rules-protocol.ts`）；`get` 返回 `{ revision, builtin, user, deletedBuiltinRuleIds }`；mutate 11 op 覆盖增删改/开关/排序/触发模式/删除恢复重置/导入（content 字符串）；`exportUser` 给下载、`storageUri` 给「打开数据目录」类提示。设置页（setup 通道）与编辑器页（enable 通道）都已注册。实施落档见 [rules-ui.md](rules-ui.md)。
+- **#16（规则管理 UI，已落地）**：读写全经 `RULES_TOPIC`（`src/rules/rules-protocol.ts`）；`get` 返回 `{ revision, builtin, user, deletedBuiltinRuleIds, languagePairs, customScriptCategories }`（富结构两字段 #49 起）；mutate 13 op 覆盖增删改/开关/排序/触发模式/删除恢复重置/导入（content 字符串）/语言对与词典整表替换（#49）；`exportUser` 给下载、`storageUri` 给「打开数据目录」类提示。设置页（setup 通道）与编辑器页（enable 通道）都已注册。实施落档见 [rules-ui.md](rules-ui.md)。
 - **#17（函数替换体，已落地）**：`replacement` 引用对象形态随 JSON 序列化无损往返（出厂种子 → 落盘 → 解析回读，`test/rule-store.test.ts` 钉住）；mutate 通道的 rule 载荷经 `sanitizeSimpleRule` 同一收口，UI 产出的引用对象可直传。实施落档见 [rule-engine.md](rule-engine.md) 与 ADR-0003。
 - **#25（输入行为链，已接线）**：消费入口不是单一的 `PageRulesClient.engine`（该引擎保留为数据链诊断面），而是行为族各自引擎经**规则源**动态装载——`page-editor.ts` 把 `createRuleSnapshotSource()` 接到 `client.onReload`，`registerRuleInputBehaviors` / `registerRuleDeleteSelectKeyBehaviors` 收到快照（`{builtin, user}`）即同步重建族引擎（归族设计见 [rule-engine.md](rule-engine.md)「用户规则归族与动态重建」节）；快照的 `builtin` 数组已不含被删内置规则（`deleteBuiltinRule` 从文件移除），`enabled=false` 保留在装载集、由引擎 process 门控跳过。作用域判定按 #1 设计注入 `scopeHint`（C-P1-1 起带 All 短路与事务级 memo）。
