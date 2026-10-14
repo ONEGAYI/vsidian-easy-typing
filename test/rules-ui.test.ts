@@ -464,6 +464,94 @@ describe('拖拽排序', () => {
   })
 })
 
+// ===== 上移/下移按钮（#48：头部按钮 + 行选中态，上游 ↑/↓ 语义） =====
+
+describe('上移/下移按钮', () => {
+  const seed = () => [
+    { id: 'u1', trigger: 'a', replacement: 'A' },
+    { id: 'u2', trigger: 'b', replacement: 'B' },
+    { id: 'u3', trigger: 'c', replacement: 'C' },
+  ]
+  const listIds = (root: HTMLElement): string[] =>
+    [...q(root, '[data-vet-user-list]').children].map((item) => item.getAttribute('data-vet-rule-id')!)
+  const selectedRow = (root: HTMLElement): HTMLElement =>
+    q(root, '[data-vet-user-list] [data-vet-selected="true"]')
+
+  it('无用户规则时上移/下移禁用', async () => {
+    const { request } = assemble({})
+    const { root } = await mountView(request)
+    expect(q<HTMLButtonElement>(root, `${act('move-up')}`).disabled).toBe(true)
+    expect(q<HTMLButtonElement>(root, `${act('move-down')}`).disabled).toBe(true)
+  })
+
+  it('未选中行时禁用；点击行主体选中后两钮可用并标记选中行', async () => {
+    const { request } = assemble({ 'user-rules.json': JSON.stringify(seed()) })
+    const { root } = await mountView(request)
+    expect(q<HTMLButtonElement>(root, `${act('move-up')}`).disabled).toBe(true)
+    expect(q<HTMLButtonElement>(root, `${act('move-down')}`).disabled).toBe(true)
+
+    const middleRow = q(root, '[data-vet-user-list]').children[1]! as HTMLElement
+    q<HTMLElement>(middleRow, '.vsidian-easy-typing-rule-main').click()
+    expect(selectedRow(root).getAttribute('data-vet-rule-id')).toBe('u2')
+    expect(q<HTMLButtonElement>(root, `${act('move-up')}`).disabled).toBe(false)
+    expect(q<HTMLButtonElement>(root, `${act('move-down')}`).disabled).toBe(false)
+  })
+
+  it('选中首行：上移禁用、下移可用；选中末行反之', async () => {
+    const { request } = assemble({ 'user-rules.json': JSON.stringify(seed()) })
+    const { root } = await mountView(request)
+    const rows = q(root, '[data-vet-user-list]').children
+    q<HTMLElement>(rows[0]! as HTMLElement, '.vsidian-easy-typing-rule-main').click()
+    expect(q<HTMLButtonElement>(root, `${act('move-up')}`).disabled).toBe(true)
+    expect(q<HTMLButtonElement>(root, `${act('move-down')}`).disabled).toBe(false)
+
+    q<HTMLElement>(q(root, '[data-vet-user-list]').children[2]!, '.vsidian-easy-typing-rule-main').click()
+    expect(q<HTMLButtonElement>(root, `${act('move-up')}`).disabled).toBe(false)
+    expect(q<HTMLButtonElement>(root, `${act('move-down')}`).disabled).toBe(true)
+  })
+
+  it('下移选中行：相邻交换落盘 + 写后刷新 + 选中与顺序同步', async () => {
+    const { mock, request } = assemble({ 'user-rules.json': JSON.stringify(seed()) })
+    const { root } = await mountView(request)
+    q<HTMLElement>(q(root, '[data-vet-user-list]').children[0]!, '.vsidian-easy-typing-rule-main').click()
+    q<HTMLButtonElement>(root, `${act('move-down')}`).click()
+    await flush()
+
+    expect(listIds(root)).toEqual(['u2', 'u1', 'u3'])
+    expect(selectedRow(root).getAttribute('data-vet-rule-id')).toBe('u1')
+    expect(
+      JSON.parse(mock.files.get(USER_RULES_FILE)!).map((r: { id: string }) => r.id),
+    ).toEqual(['u2', 'u1', 'u3'])
+  })
+
+  it('上移选中行：相邻交换落盘（同一 reorderUserRule 通道）', async () => {
+    const { mock, request } = assemble({ 'user-rules.json': JSON.stringify(seed()) })
+    const { root } = await mountView(request)
+    q<HTMLElement>(q(root, '[data-vet-user-list]').children[2]!, '.vsidian-easy-typing-rule-main').click()
+    q<HTMLButtonElement>(root, `${act('move-up')}`).click()
+    await flush()
+
+    expect(listIds(root)).toEqual(['u1', 'u3', 'u2'])
+    expect(selectedRow(root).getAttribute('data-vet-rule-id')).toBe('u3')
+    expect(
+      JSON.parse(mock.files.get(USER_RULES_FILE)!).map((r: { id: string }) => r.id),
+    ).toEqual(['u1', 'u3', 'u2'])
+  })
+
+  it('删除选中规则后按钮回到禁用（选中 id 失效自愈）', async () => {
+    const { request } = assemble({ 'user-rules.json': JSON.stringify(seed()) })
+    const { root } = await mountView(request)
+    q<HTMLElement>(q(root, '[data-vet-user-list]').children[1]!, '.vsidian-easy-typing-rule-main').click()
+    expect(q<HTMLButtonElement>(root, `${act('move-up')}`).disabled).toBe(false)
+    q<HTMLButtonElement>(q(root, '[data-vet-user-list]').children[1]!, `${act('delete')}`).click()
+    await flush()
+
+    expect(listIds(root)).toEqual(['u1', 'u3'])
+    expect(q<HTMLButtonElement>(root, `${act('move-up')}`).disabled).toBe(true)
+    expect(q<HTMLButtonElement>(root, `${act('move-down')}`).disabled).toBe(true)
+  })
+})
+
 // ===== 导入导出 =====
 
 describe('JSON 导入导出', () => {

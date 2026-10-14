@@ -194,6 +194,8 @@ const zhMessages = {
       import: '导入',
       export: '导出',
       empty: '暂无用户规则，点击「添加规则」创建第一条',
+      moveUp: '上移选中规则',
+      moveDown: '下移选中规则',
     },
     builtinRules: {
       title: '内置规则',

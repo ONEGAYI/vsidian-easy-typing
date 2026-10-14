@@ -74,6 +74,10 @@ export function mountRulesSettingsView(
   let statusTimer: unknown = null
   let dragSourceIndex: number | null = null
   let cachedMidY = 0
+  /** 用户规则选中行 id（#48 头部上移/下移的操作目标；写后刷新跨渲染保持） */
+  let selectedUserRuleId: string | null = null
+  /** 移动动作后置位：下次渲染时把选中行滚入视野（一次性消费） */
+  let pendingScrollToSelected = false
 
   /** DOM 构造糖 */
   function el<K extends keyof HTMLElementTagNameMap>(
@@ -176,10 +180,20 @@ export function mountRulesSettingsView(
     item.setAttribute('data-vet-rule-id', rule.id ?? '')
     item.setAttribute('data-vet-rule-index', String(index))
     if (rule.enabled === false) item.classList.add(`${CLS}-rule-disabled`)
+    if (selectedUserRuleId !== null && selectedUserRuleId === rule.id) {
+      item.classList.add(`${CLS}-rule-selected`)
+      item.setAttribute('data-vet-selected', 'true')
+    }
 
     item.append(buildDragHandle())
 
     const main = el('div', `${CLS}-rule-main`)
+    // 点击行主体选中（#48 上移/下移的操作目标；按钮/开关区不触发）
+    main.classList.add(`${CLS}-rule-selectable`)
+    main.addEventListener('click', () => {
+      selectedUserRuleId = rule.id ?? null
+      refreshSelectionUi()
+    })
     main.append(buildTagRow(rule))
     const meta = el('div', `${CLS}-rule-meta`)
     if (RuleEngine.parseOptions(rule.options).type === RuleType.Input) {
@@ -352,6 +366,24 @@ export function mountRulesSettingsView(
     addBtn.addEventListener('click', () => openCreateForm())
     actions.append(addBtn)
 
+    // #48 上移/下移（与新增同排，上游 ↑/↓ 语义）：移动当前选中的用户规则，
+    // 同一 reorderUserRule 通道做相邻交换；禁用态见 refreshSelectionUi
+    const moveUpBtn = el('button', `${CLS}-btn`, '↑')
+    moveUpBtn.type = 'button'
+    moveUpBtn.setAttribute('data-vet-action', 'move-up')
+    moveUpBtn.setAttribute('aria-label', t.userRules.moveUp)
+    moveUpBtn.title = t.userRules.moveUp
+    moveUpBtn.addEventListener('click', () => moveSelectedUserRule(-1))
+    actions.append(moveUpBtn)
+
+    const moveDownBtn = el('button', `${CLS}-btn`, '↓')
+    moveDownBtn.type = 'button'
+    moveDownBtn.setAttribute('data-vet-action', 'move-down')
+    moveDownBtn.setAttribute('aria-label', t.userRules.moveDown)
+    moveDownBtn.title = t.userRules.moveDown
+    moveDownBtn.addEventListener('click', () => moveSelectedUserRule(1))
+    actions.append(moveDownBtn)
+
     const importBtn = el('button', `${CLS}-btn`, t.userRules.import)
     importBtn.type = 'button'
     importBtn.setAttribute('data-vet-action', 'import')
@@ -377,6 +409,48 @@ export function mountRulesSettingsView(
       client.state.user.forEach((rule, index) => list.append(buildUserRuleItem(rule, index)))
     }
     userSection.append(list)
+    refreshSelectionUi()
+    if (pendingScrollToSelected) {
+      // 移动后的滚动跟随（真实浏览器生效；jsdom 无实现，可选调用防御）
+      pendingScrollToSelected = false
+      userSection
+        .querySelector<HTMLElement>('[data-vet-selected="true"]')
+        ?.scrollIntoView?.({ block: 'nearest' })
+    }
+  }
+
+  /** 选中态同步（#48）：行标记 + 头部按钮禁用（首行上移 / 末行下移置灰；
+   * 选中 id 失效（规则被删/导入去重）时两钮自愈回禁用） */
+  function refreshSelectionUi(): void {
+    const rules = client.state.user
+    const selectedIndex =
+      selectedUserRuleId === null ? -1 : rules.findIndex((r) => r.id === selectedUserRuleId)
+    userSection.querySelectorAll<HTMLElement>('[data-vet-rule-id]').forEach((row) => {
+      const selected =
+        selectedIndex !== -1 && row.getAttribute('data-vet-rule-id') === selectedUserRuleId
+      row.classList.toggle(`${CLS}-rule-selected`, selected)
+      if (selected) row.setAttribute('data-vet-selected', 'true')
+      else row.removeAttribute('data-vet-selected')
+    })
+    const upBtn = userSection.querySelector<HTMLButtonElement>('[data-vet-action="move-up"]')
+    const downBtn = userSection.querySelector<HTMLButtonElement>('[data-vet-action="move-down"]')
+    if (upBtn) upBtn.disabled = selectedIndex <= 0
+    if (downBtn) downBtn.disabled = selectedIndex === -1 || selectedIndex >= rules.length - 1
+  }
+
+  /** #48 相邻移动选中行（与拖拽同一 reorderUserRule 通道；写后刷新保持
+   * 选中并滚动跟随——交互后行为与列表既有惯例一致） */
+  function moveSelectedUserRule(direction: -1 | 1): void {
+    const rules = client.state.user
+    const index =
+      selectedUserRuleId === null ? -1 : rules.findIndex((r) => r.id === selectedUserRuleId)
+    if (index === -1) return
+    const toIndex = index + direction
+    if (toIndex < 0 || toIndex >= rules.length) return
+    pendingScrollToSelected = true
+    void client.reorderUserRule(index, toIndex).then((outcome) => {
+      if (!outcome.ok) actionFailed(outcome.reason)
+    })
   }
 
   function renderBuiltinSection(): void {

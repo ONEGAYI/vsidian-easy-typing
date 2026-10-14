@@ -88,6 +88,11 @@
   background: var(--vscode-button-secondaryHoverBackground, #45494e);
 }
 
+.vsidian-easy-typing-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .vsidian-easy-typing-btn-primary {
   background: var(--vscode-button-background, #0e639c);
   color: var(--vscode-button-foreground, #ffffff);
@@ -156,6 +161,14 @@
   padding: 6px 8px;
   border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
   border-radius: 5px;
+}
+
+.vsidian-easy-typing-rule-selected {
+  border-color: var(--vscode-focusBorder, #007fd4);
+}
+
+.vsidian-easy-typing-rule-selectable {
+  cursor: pointer;
 }
 
 .vsidian-easy-typing-rule-disabled {

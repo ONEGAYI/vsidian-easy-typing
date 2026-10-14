@@ -195,6 +195,8 @@ export const enMessages: Messages = {
       import: 'Import',
       export: 'Export',
       empty: 'No user rules yet. Click "Add Rule" to create the first one.',
+      moveUp: 'Move selected rule up',
+      moveDown: 'Move selected rule down',
     },
     builtinRules: {
       title: 'Built-in Rules',
