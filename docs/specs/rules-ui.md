@@ -57,6 +57,8 @@
 - **内置开关的双通道**：开关关闭恒走 `deleteBuiltinRule`（deletedBuiltinRuleIds 语义）；仅「在场但 `enabled=false`」的存量态（外部工具写入，UI 无此写路径）打开时走 `toggleRuleEnabled` 启用通道。
 - **语言间空格策略分区（#49）**：现役语言对 chips（内置类经 `scriptNames` 显示名映射）+ 双下拉添加 + 自定义词典成对编辑（失焦整表提交 `setLanguagePairs` / `setCustomScriptCategories`）；上限 64 对 / 128 类整批拒绝（`invalid-payload`）。持久化与引擎消费见 [rules-storage.md](rules-storage.md)。
 - **behaviorState 注入**：`RulesSettingsViewOptions.behaviorState` 为本地结构接口（`RulesBehaviorStateLike`，形状对齐 vendor `AddonBehaviorStateFacet`），入口 `page-settings.ts` 传 `sdk.behaviorState`——视图层保持零 SDK 依赖，jsdom 测试注入 mock。
+- **spacing 分区写路径（评审轮 1–3 落档）**：整表写经本地串行队列（每笔写含写后刷新落地后下一笔才取基面，防浏览器 blur→change→click 事件序下整表写以陈旧基面互相覆盖）+ 词典基面取 DOM 读面；编辑保护 = 焦点在编辑面**或**存在未提交草稿脏标记（真实浏览器 mousedown 即移焦点，仅凭焦点不够）。
+- **已知窄窗口（延后跟踪）**：① 草稿在途时非消费性 spacing 写（chips/词典删除）会清脏标记并重建，草稿丢失——修法是重建时回注草稿值，「按写种类选择性清位」会让 chip 删除不即时反映，更糟；② client.load 单飞下写后 load 可能并入更早发出的 get（快照缺该笔写 → 控件瞬态回弹，下次动作自愈，存储无损）；③ 存量「与内置类同名」词典条目（仅手改 rule-state.json 可造出）会被 UI 预检整表拦截、该行无法经 UI 删除。三者窗口均窄、无存储损坏。
 
 ## 给后续票的接口提示
 
