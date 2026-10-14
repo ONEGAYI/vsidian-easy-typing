@@ -21,10 +21,10 @@
 // inlineCode·Formula·LinkSpaceMode / inlineLinkSmartSpace），装载时与每次
 // behaviors.onChanged 刷新缓存（平台 onChanged 每次输入触发，经 3s 节流窗
 // 压缩——C-R4-2：设置页改动最迟一个窗口后的下一次键入生效）；通道失败
-// 保持上次值（首拉前为出厂默认）。语言对
-// 与自定义字符类不在 23 键 schema——languagePairs / customScriptCategories
-// 出厂种子直取 RICH_STRUCTURE_DEFAULTS（富结构持久化归后续票，运行时
-// 消费面此为单一事实源）。
+// 保持上次值（首拉前为出厂默认）。语言对与自定义字符类不在 23 键 schema
+// ——#49 起随 rule-state.json 持久化，经 RULES_TOPIC.get 快照同拍刷新
+//（规则页编辑 → 宿主落盘 → 下一次输入观察/装载即生效）；清洗与存储层
+// 同源（sanitizeLanguagePairs / sanitizeCustomCategories）。
 import type { AddonInputContext } from '../types/vendor/shared/addonBehaviors'
 import {
   DEFAULT_EFFECTIVE_SETTINGS,
@@ -35,6 +35,8 @@ import {
 import { pickMessages, ruleFamilyNameMap } from './i18n'
 import { debugLog } from './logging'
 import { SETTINGS_TOPIC } from './settings/store'
+import { RULES_TOPIC } from './rules/rules-protocol'
+import { sanitizeCustomCategories, sanitizeLanguagePairs } from './rules/rule-store'
 import {
   INPUT_RULE_EXCLUSIVE_GROUP,
   type InputContextOwnership,
@@ -169,10 +171,39 @@ export function createAutoFormatGate(channel: RulePipelineChannelSubset): AutoFo
   return {
     settings: () => current,
     refresh: async () => {
-      const outcome = await channel.request(SETTINGS_TOPIC.get, null)
-      if (outcome.ok !== true) return
-      const effective = (outcome.result as { effective?: unknown } | null)?.effective
-      current = readEngineSettings(effective)
+      // 双通道（顺序拉取，设置面先落）：设置面（23 键 schema）+ 规则面
+      // （#49 富结构——语言对与自定义字符类随 rule-state.json，经
+      // RULES_TOPIC 快照下发）。两通道独立 fail-safe：任一失败保持该面
+      // 当前值（首拉前为出厂默认）。
+      const settingsOutcome = await channel.request(SETTINGS_TOPIC.get, null)
+      if (settingsOutcome.ok === true) {
+        const effective = (settingsOutcome.result as { effective?: unknown } | null)?.effective
+        current = readEngineSettings(effective)
+      }
+      const rulesOutcome = await channel.request(RULES_TOPIC.get, null)
+      if (rulesOutcome.ok === true) {
+        const snap = rulesOutcome.result as {
+          languagePairs?: unknown
+          customScriptCategories?: unknown
+        } | null
+        // readEngineSettings 重建 base（含出厂种子）——富结构成功态才覆盖
+        const pairs = Array.isArray(snap?.languagePairs)
+          ? sanitizeLanguagePairs(snap.languagePairs)
+          : null
+        const categories = Array.isArray(snap?.customScriptCategories)
+          ? sanitizeCustomCategories(snap.customScriptCategories)
+          : null
+        current = {
+          ...current,
+          lineFormat: {
+            ...current.lineFormat,
+            ...(pairs ? { languagePairs: pairs.map((p) => ({ a: p.a, b: p.b })) } : {}),
+            ...(categories
+              ? { customScriptCategories: categories.map((c) => ({ name: c.name, pattern: c.pattern })) }
+              : {}),
+          },
+        }
+      }
     },
   }
 }

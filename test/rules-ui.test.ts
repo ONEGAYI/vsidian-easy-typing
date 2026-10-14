@@ -355,7 +355,21 @@ describe('内置规则停用/恢复/重置（deletedBuiltinRuleIds 语义）', (
     expect(q(root, '[data-vet-builtin-list]').children).toHaveLength(DEFAULT_BUILTIN_RULES.length)
     expect(q(root, '[data-vet-deleted-rules] summary').textContent).toContain('(0)')
     expect(q(root, '[data-vet-status]').getAttribute('data-vet-status')).toBe('success')
-    expect(mock.files.get('rule-state.json')).toBe(JSON.stringify({ deletedBuiltinRuleIds: [] }, null, 2))
+    expect(mock.files.get('rule-state.json')).toBe(
+      JSON.stringify(
+        {
+          deletedBuiltinRuleIds: [],
+          languagePairs: [
+            { a: 'chinese', b: 'english' },
+            { a: 'chinese', b: 'digit' },
+            { a: 'digit', b: 'english' },
+          ],
+          customScriptCategories: [],
+        },
+        null,
+        2,
+      ),
+    )
   })
 })
 
@@ -870,5 +884,108 @@ describe('设置页重开回显', () => {
     )
     expect(q(second.root, '[data-vet-deleted-rules] summary').textContent).toContain('(1)')
     expect(JSON.parse(mock.files.get(USER_RULES_FILE)!)[0].enabled).toBe(false)
+  })
+})
+
+// ===== 语言间空格策略管理（#49：语言对 chips + 自定义词典） =====
+
+describe('语言间空格策略（#49）', () => {
+  const stateOf = (mock: { files: Map<string, string> }) =>
+    JSON.parse(mock.files.get('rule-state.json')!)
+
+  it('出厂语言对 chips 回显；删除 chip → 整表落盘并写后刷新', async () => {
+    const { mock, request } = assemble()
+    const { root } = await mountView(request)
+    const chips = q(root, '[data-vet-pair-chips]')
+    expect(chips.querySelectorAll('[data-vet-pair]')).toHaveLength(3)
+    expect(chips.textContent).toContain('中文 ↔ 英文')
+
+    q<HTMLButtonElement>(q(root, '[data-vet-pair="chinese↔english"]'), `${act('remove-pair')}`).click()
+    await flush()
+
+    expect(stateOf(mock).languagePairs).toEqual([
+      { a: 'chinese', b: 'digit' },
+      { a: 'digit', b: 'english' },
+    ])
+    expect(q(root, '[data-vet-pair-chips]').querySelectorAll('[data-vet-pair]')).toHaveLength(2)
+  })
+
+  it('双下拉添加语言对（含自定义类名出现在下拉选项）', async () => {
+    // 预置一个自定义类，验证下拉含自定义类别名
+    const { mock, request } = assemble({
+      'rule-state.json': JSON.stringify({
+        deletedBuiltinRuleIds: [],
+        languagePairs: [
+          { a: 'chinese', b: 'english' },
+          { a: 'chinese', b: 'digit' },
+          { a: 'digit', b: 'english' },
+        ],
+        customScriptCategories: [{ name: 'greek', pattern: 'Α-Ωα-ω' }],
+      }),
+    })
+    const { root } = await mountView(request)
+    const selectA = q<HTMLSelectElement>(root, '[data-vet-input="pair-a"]')
+    const optionValues = [...selectA.options].map((o) => o.value)
+    expect(optionValues).toContain('chinese')
+    expect(optionValues).toContain('greek')
+
+    selectA.value = 'japanese'
+    const selectB = q<HTMLSelectElement>(root, '[data-vet-input="pair-b"]')
+    selectB.value = 'english'
+    q<HTMLButtonElement>(root, `${act('add-pair')}`).click()
+    await flush()
+
+    expect(stateOf(mock).languagePairs).toHaveLength(4)
+    expect(stateOf(mock).languagePairs).toContainEqual({ a: 'japanese', b: 'english' })
+  })
+
+  it('词典：添加条目 → 落盘；修改条目失焦 → 整表提交；删除条目 → 落盘', async () => {
+    const { mock, request } = assemble()
+    const { root } = await mountView(request)
+
+    // 添加
+    typeInto(q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]'), 'greek')
+    typeInto(q<HTMLInputElement>(root, '[data-vet-input="new-category-pattern"]'), 'Α-Ωα-ω')
+    q<HTMLButtonElement>(root, `${act('add-category')}`).click()
+    await flush()
+    expect(stateOf(mock).customScriptCategories).toEqual([{ name: 'greek', pattern: 'Α-Ωα-ω' }])
+    expect(q(root, '[data-vet-category-list]').querySelectorAll('[data-vet-category]')).toHaveLength(1)
+
+    // 修改（条目输入 change → 整表提交）
+    const patternInput = q<HTMLInputElement>(root, '[data-vet-category="greek"] [data-vet-input="category-pattern"]')
+    typeInto(patternInput, 'α-ω')
+    patternInput.dispatchEvent(new Event('change', { bubbles: true }))
+    await flush()
+    expect(stateOf(mock).customScriptCategories).toEqual([{ name: 'greek', pattern: 'α-ω' }])
+
+    // 删除
+    q<HTMLButtonElement>(q(root, '[data-vet-category="greek"]'), `${act('remove-category')}`).click()
+    await flush()
+    expect(stateOf(mock).customScriptCategories).toEqual([])
+    expect(q(root, '[data-vet-category-list]').querySelectorAll('[data-vet-category]')).toHaveLength(0)
+  })
+
+  it('空名或空模式的词典条目不被添加（状态行提示）', async () => {
+    const { request } = assemble()
+    const { root } = await mountView(request)
+    typeInto(q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]'), 'greek')
+    q<HTMLButtonElement>(root, `${act('add-category')}`).click()
+    await flush()
+    const status = q(root, '[data-vet-status]')
+    expect(status.getAttribute('data-vet-status')).toBe('failed')
+  })
+
+  it('重开回显：语言对与词典从宿主存储读回', async () => {
+    const { request } = assemble()
+    const first = await mountView(request)
+    typeInto(q<HTMLInputElement>(first.root, '[data-vet-input="new-category-name"]'), 'greek')
+    typeInto(q<HTMLInputElement>(first.root, '[data-vet-input="new-category-pattern"]'), 'Α-Ωα-ω')
+    q<HTMLButtonElement>(first.root, `${act('add-category')}`).click()
+    await flush()
+    first.view.dispose()
+
+    const second = await mountView(request)
+    expect(q(second.root, '[data-vet-pair-chips]').querySelectorAll('[data-vet-pair]')).toHaveLength(3)
+    expect(q(second.root, '[data-vet-category="greek"]')).toBeTruthy()
   })
 })

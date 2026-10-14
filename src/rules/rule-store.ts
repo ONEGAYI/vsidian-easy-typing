@@ -121,6 +121,86 @@ export async function migrateRulesFiles(
 
 // ===== RuleStore =====
 
+/** 语言对存储形态（上游 LanguagePair；a/b 为脚本类名字符串——内置
+ *  ScriptCategory 枚举值或自定义类名） */
+export interface StoredLanguagePair {
+  a: string
+  b: string
+}
+
+/** 自定义字符类存储形态（上游 CustomScriptDef；pattern 为字符类内部片段，
+ *  如 `Α-Ωα-ω`，不含方括号） */
+export interface StoredCustomCategory {
+  name: string
+  pattern: string
+}
+
+/**
+ * 富结构出厂种子（#49 起随 rule-state.json 持久化；settings/defaults.ts
+ * 的 RICH_STRUCTURE_DEFAULTS 自此 re-export——单一事实源在存储层）：
+ * - languagePairs：默认三组语言对（中英 / 中数 / 数英）；
+ * - customScriptCategories：默认空；
+ * - deletedBuiltinRuleIds：默认空（#14 起已有）。
+ */
+export const RICH_STRUCTURE_SEEDS = {
+  languagePairs: [
+    { a: 'chinese', b: 'english' },
+    { a: 'chinese', b: 'digit' },
+    { a: 'digit', b: 'english' },
+  ] as StoredLanguagePair[],
+  customScriptCategories: [] as StoredCustomCategory[],
+}
+
+/** 语言对条数上限（#49 通道防线：量级防御，上游 UI 无对应限制） */
+export const MAX_LANGUAGE_PAIRS = 64
+/** 自定义字符类条数上限（同上） */
+export const MAX_CUSTOM_CATEGORIES = 128
+
+/** 语言对清洗（通道/存储共用）：逐项 trim、缺侧或空侧丢弃、无序对去重
+ *  （buildPairRegexps 双向生成，a-b 与 b-a 同义）；超上限返回 null */
+export function sanitizeLanguagePairs(
+  raw: readonly unknown[],
+): StoredLanguagePair[] | null {
+  const seen = new Set<string>()
+  const pairs: StoredLanguagePair[] = []
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) continue
+    const rec = item as Record<string, unknown>
+    const rawA = typeof rec['a'] === 'string' ? rec['a'] : ''
+    const rawB = typeof rec['b'] === 'string' ? rec['b'] : ''
+    const a = rawA.trim()
+    const b = rawB.trim()
+    if (!a || !b) continue
+    const key = [a, b].sort().join('\0')
+    if (seen.has(key)) continue
+    seen.add(key)
+    pairs.push({ a, b })
+  }
+  if (pairs.length > MAX_LANGUAGE_PAIRS) return null
+  return pairs
+}
+
+/** 自定义字符类清洗（通道/存储共用）：name/pattern trim、空名或空模式
+ *  丢弃、重名保留首个；超上限返回 null */
+export function sanitizeCustomCategories(
+  raw: readonly unknown[],
+): StoredCustomCategory[] | null {
+  const seen = new Set<string>()
+  const categories: StoredCustomCategory[] = []
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) continue
+    const rec = item as Record<string, unknown>
+    const name = typeof rec['name'] === 'string' ? rec['name'].trim() : ''
+    const pattern = typeof rec['pattern'] === 'string' ? rec['pattern'].trim() : ''
+    if (!name || !pattern) continue
+    if (seen.has(name)) continue
+    seen.add(name)
+    categories.push({ name, pattern })
+  }
+  if (categories.length > MAX_CUSTOM_CATEGORIES) return null
+  return categories
+}
+
 export interface RuleStoreOptions {
   /** 用户规则 id 工厂（缺省上游形态 user-${Date.now()}-${rand4}） */
   generateUserId?: () => string
@@ -132,12 +212,20 @@ export interface RulesSnapshot {
   builtin: SimpleRule[]
   user: SimpleRule[]
   deletedBuiltinRuleIds: string[]
+  /** 现役语言对（#49；装载缺字段回种子） */
+  languagePairs: StoredLanguagePair[]
+  /** 自定义字符类（#49；装载缺字段回种子） */
+  customScriptCategories: StoredCustomCategory[]
 }
 
 export class RuleStore {
   cachedBuiltinRules: SimpleRule[] = []
   cachedUserRules: SimpleRule[] = []
   deletedBuiltinRuleIds: string[] = []
+  /** 现役语言对（#49；出厂种子 RICH_STRUCTURE_SEEDS.languagePairs） */
+  languagePairs: StoredLanguagePair[] = [...RICH_STRUCTURE_SEEDS.languagePairs]
+  /** 自定义字符类（#49；出厂空） */
+  customScriptCategories: StoredCustomCategory[] = [...RICH_STRUCTURE_SEEDS.customScriptCategories]
   /** 最近一次本实例写规则文件的时间戳（宿主 watcher 自写抑制判据） */
   lastSaveTime = 0
 
@@ -178,7 +266,15 @@ export class RuleStore {
   private async saveState(): Promise<boolean> {
     const ok = await this.io.writeText(
       RULE_STATE_FILE,
-      JSON.stringify({ deletedBuiltinRuleIds: this.deletedBuiltinRuleIds }, null, 2),
+      JSON.stringify(
+        {
+          deletedBuiltinRuleIds: this.deletedBuiltinRuleIds,
+          languagePairs: this.languagePairs,
+          customScriptCategories: this.customScriptCategories,
+        },
+        null,
+        2,
+      ),
     )
     if (ok) this.lastSaveTime = this.now()
     return ok
@@ -211,17 +307,28 @@ export class RuleStore {
     if (stateContent === null) {
       await requireAbsent(RULE_STATE_FILE)
       this.deletedBuiltinRuleIds = []
+      this.languagePairs = [...RICH_STRUCTURE_SEEDS.languagePairs]
+      this.customScriptCategories = [...RICH_STRUCTURE_SEEDS.customScriptCategories]
       await this.saveState() // 空目录伴随落盘（停用重装后数据可观测）
     } else {
+      // 逐字段 fail-safe：字段缺失/损坏回种子（#49 装载口径），不丢其余字段
       try {
-        const parsed = JSON.parse(stateContent) as { deletedBuiltinRuleIds?: unknown }
+        const parsed = JSON.parse(stateContent) as Record<string, unknown>
         this.deletedBuiltinRuleIds =
           Array.isArray(parsed.deletedBuiltinRuleIds) &&
           parsed.deletedBuiltinRuleIds.every((i) => typeof i === 'string')
             ? [...parsed.deletedBuiltinRuleIds]
             : []
+        this.languagePairs = Array.isArray(parsed.languagePairs)
+          ? (sanitizeLanguagePairs(parsed.languagePairs) ?? [...RICH_STRUCTURE_SEEDS.languagePairs])
+          : [...RICH_STRUCTURE_SEEDS.languagePairs]
+        this.customScriptCategories = Array.isArray(parsed.customScriptCategories)
+          ? (sanitizeCustomCategories(parsed.customScriptCategories) ?? [])
+          : []
       } catch {
         this.deletedBuiltinRuleIds = []
+        this.languagePairs = [...RICH_STRUCTURE_SEEDS.languagePairs]
+        this.customScriptCategories = []
       }
     }
 
@@ -383,6 +490,29 @@ export class RuleStore {
 
   // ===== 开关 / 排序 / 触发模式 =====
 
+  /** 整表替换现役语言对（#49 UI 编辑落盘入口）：清洗（trim/去重）后超上限
+   *  或写失败 → false 且缓存不动；成功替换缓存并写 state 文件 */
+  async setLanguagePairs(raw: readonly unknown[]): Promise<boolean> {
+    const pairs = sanitizeLanguagePairs(raw)
+    if (pairs === null) return false
+    const prev = this.languagePairs
+    this.languagePairs = pairs
+    const ok = await this.saveState()
+    if (!ok) this.languagePairs = prev
+    return ok
+  }
+
+  /** 整表替换自定义字符类（#49；清洗与回滚语义同上） */
+  async setCustomScriptCategories(raw: readonly unknown[]): Promise<boolean> {
+    const categories = sanitizeCustomCategories(raw)
+    if (categories === null) return false
+    const prev = this.customScriptCategories
+    this.customScriptCategories = categories
+    const ok = await this.saveState()
+    if (!ok) this.customScriptCategories = prev
+    return ok
+  }
+
   async toggleRuleEnabled(id: string, isBuiltin: boolean, enabled: boolean): Promise<boolean> {
     const cache = isBuiltin ? this.cachedBuiltinRules : this.cachedUserRules
     const idx = cache.findIndex((r) => r.id === id)
@@ -418,12 +548,14 @@ export class RuleStore {
 
   // ===== 快照 =====
 
-  /** 三份数据快照（每次新数组，页面装载与 #16 UI 的读取面） */
+  /** 全量数据快照（每次新数组，页面装载与 #16 UI 的读取面） */
   getSnapshot(): RulesSnapshot {
     return {
       builtin: [...this.cachedBuiltinRules],
       user: [...this.cachedUserRules],
       deletedBuiltinRuleIds: [...this.deletedBuiltinRuleIds],
+      languagePairs: this.languagePairs.map((p) => ({ ...p })),
+      customScriptCategories: this.customScriptCategories.map((c) => ({ ...c })),
     }
   }
 }

@@ -210,6 +210,59 @@ describe('设置门与富结构种子', () => {
     expect(gate.settings().lineFormat.autoCapital).toBe(true) // 失败保持
   })
 
+  /** mock 通道返回值收窄（判别联合字面量形态） */
+  const respond = (outcome: unknown) =>
+    Promise.resolve(outcome as { ok: true; result: unknown } | { ok: false; reason: string })
+
+  it('gate：RULES 通道下发语言对与自定义类（#49 引擎消费接线）', async () => {
+    const responses = new Map<string, unknown>([
+      ['easyTyping.settings.get', { ok: true, result: { effective: {} } }],
+      [
+        'easyTyping.rules.get',
+        {
+          ok: true,
+          result: {
+            revision: 3,
+            builtin: [],
+            user: [],
+            deletedBuiltinRuleIds: [],
+            languagePairs: [{ a: ' japanese ', b: 'english' }],
+            customScriptCategories: [{ name: 'greek', pattern: 'Α-Ωα-ω' }],
+          },
+        },
+      ],
+    ])
+    const gate = createAutoFormatGate({
+      request: (topic: string) => respond(responses.get(topic) ?? { ok: false, reason: 'rejected' }),
+    })
+    await gate.refresh()
+    expect(gate.settings().lineFormat.languagePairs).toEqual([{ a: 'japanese', b: 'english' }])
+    expect(gate.settings().lineFormat.customScriptCategories).toEqual([
+      { name: 'greek', pattern: 'Α-Ωα-ω' },
+    ])
+  })
+
+  it('gate：RULES 通道失败/畸形保持当前富结构值（fail-safe）', async () => {
+    let rulesResponse: unknown = { ok: false, reason: 'rejected' }
+    const gate = createAutoFormatGate({
+      request: (topic: string) =>
+        respond(
+          topic === 'easyTyping.settings.get'
+            ? { ok: true, result: { effective: {} } }
+            : rulesResponse,
+        ),
+    })
+    await gate.refresh()
+    // 通道失败保持出厂种子（三对）
+    expect(gate.settings().lineFormat.languagePairs).toEqual(
+      RICH_STRUCTURE_DEFAULTS.languagePairs.map((p) => ({ a: p.a, b: p.b })),
+    )
+    // 畸形字段（languagePairs 非数组）同样保持
+    rulesResponse = { ok: true, result: { languagePairs: 'bad', customScriptCategories: [] } }
+    await gate.refresh()
+    expect(gate.settings().lineFormat.languagePairs).toHaveLength(3)
+  })
+
   it('gate：effective 值类型失配回默认（fail-safe）', async () => {
     const gate = createAutoFormatGate({
       request: () =>

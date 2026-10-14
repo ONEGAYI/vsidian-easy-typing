@@ -10,15 +10,18 @@
 // → 立即整拉），无需再付轮询成本。
 import type { SimpleRule } from './rule-engine'
 import { IMPORT_CONTENT_MAX_LENGTH, IMPORT_MAX_RULES, RULES_TOPIC } from './rules-protocol'
+import type { StoredCustomCategory, StoredLanguagePair } from './rule-store'
 import type { RulesChannelLike } from './rules-page'
 
-/** 设置页持有的规则数据态（get 快照 + 装载标记） */
+/** 设置页持有的规则数据态（get 快照 + 装载标记；富结构字段 #49 起） */
 export interface RulesSettingsState {
   loaded: boolean
   revision: number
   builtin: SimpleRule[]
   user: SimpleRule[]
   deletedBuiltinRuleIds: string[]
+  languagePairs: StoredLanguagePair[]
+  customScriptCategories: StoredCustomCategory[]
 }
 
 export interface RulesSettingsClientOptions {
@@ -40,7 +43,15 @@ export interface RulesImportResult {
 export type RulesImportFailure = { kind: 'too-large' } | { kind: 'too-many-rules' }
 
 function initialState(): RulesSettingsState {
-  return { loaded: false, revision: -1, builtin: [], user: [], deletedBuiltinRuleIds: [] }
+  return {
+    loaded: false,
+    revision: -1,
+    builtin: [],
+    user: [],
+    deletedBuiltinRuleIds: [],
+    languagePairs: [],
+    customScriptCategories: [],
+  }
 }
 
 /** mutate 通道结果的业务形状（宿主 RulesMutateResult + 通道包裹层） */
@@ -99,12 +110,15 @@ export class RulesSettingsClient {
     if (typeof rec['revision'] !== 'number') return false
     if (!Array.isArray(rec['builtin']) || !Array.isArray(rec['user'])) return false
     if (!Array.isArray(rec['deletedBuiltinRuleIds'])) return false
+    if (!Array.isArray(rec['languagePairs']) || !Array.isArray(rec['customScriptCategories'])) return false
     this.setState({
       loaded: true,
       revision: rec['revision'],
       builtin: rec['builtin'] as SimpleRule[],
       user: rec['user'] as SimpleRule[],
       deletedBuiltinRuleIds: rec['deletedBuiltinRuleIds'] as string[],
+      languagePairs: rec['languagePairs'] as StoredLanguagePair[],
+      customScriptCategories: rec['customScriptCategories'] as StoredCustomCategory[],
     })
     return true
   }
@@ -172,6 +186,16 @@ export class RulesSettingsClient {
   /** 用户规则拖拽排序（from/to 为 splice 语义索引；换算归 rules-ui-model） */
   reorderUserRule(fromIndex: number, toIndex: number): Promise<RulesActionResult> {
     return this.mutate({ op: 'reorderUserRule', fromIndex, toIndex })
+  }
+
+  /** 整表替换现役语言对（#49 语言间空格策略管理） */
+  setLanguagePairs(pairs: readonly StoredLanguagePair[]): Promise<RulesActionResult> {
+    return this.mutate({ op: 'setLanguagePairs', pairs })
+  }
+
+  /** 整表替换自定义字符类（#49 自定义语言/符号词典） */
+  setCustomScriptCategories(categories: readonly StoredCustomCategory[]): Promise<RulesActionResult> {
+    return this.mutate({ op: 'setCustomScriptCategories', categories })
   }
 
   /**

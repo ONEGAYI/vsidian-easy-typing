@@ -148,6 +148,18 @@ export class HostRulesService {
     return this.record(await this.store.updateRuleTriggerMode(id, isBuiltin, tabMode))
   }
 
+  /** 整表替换现役语言对（#49 UI 编辑落盘；清洗与上限归存储层） */
+  async setLanguagePairs(pairs: readonly unknown[]): Promise<boolean> {
+    await this.ensureLoaded()
+    return this.record(await this.store.setLanguagePairs(pairs))
+  }
+
+  /** 整表替换自定义字符类（#49） */
+  async setCustomScriptCategories(categories: readonly unknown[]): Promise<boolean> {
+    await this.ensureLoaded()
+    return this.record(await this.store.setCustomScriptCategories(categories))
+  }
+
   async deleteBuiltinRule(id: string): Promise<boolean> {
     await this.ensureLoaded()
     return this.record(await this.store.deleteBuiltinRule(id))
@@ -235,6 +247,10 @@ export class HostRulesService {
         return (await this.restoreBuiltinRule(parsed.id)) ? okResult() : failResult()
       case 'resetAllBuiltinRules':
         return (await this.resetAllBuiltinRules()) ? okResult() : failResult()
+      case 'setLanguagePairs':
+        return (await this.setLanguagePairs(parsed.pairs)) ? okResult() : failResult()
+      case 'setCustomScriptCategories':
+        return (await this.setCustomScriptCategories(parsed.categories)) ? okResult() : failResult()
       case 'importUserRules': {
         // 载荷上限（审查 C-P3-4）：content 长度在 JSON.parse 之前判定
         //（大载荷同步 parse 阻塞宿主线程的防线；通道载荷可来自任意页面

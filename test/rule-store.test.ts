@@ -12,6 +12,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   BUILTIN_RULES_FILE,
+  MAX_LANGUAGE_PAIRS,
   RULE_STATE_FILE,
   USER_RULES_FILE,
   RuleStore,
@@ -65,7 +66,15 @@ describe('init：出厂种子与 ensure 语义（上游 initRuleEngine 数据面
     await store.init()
     expect(JSON.parse(files.get(BUILTIN_RULES_FILE)!)).toHaveLength(DEFAULT_BUILTIN_RULES.length)
     expect(JSON.parse(files.get(USER_RULES_FILE)!)).toEqual([])
-    expect(JSON.parse(files.get(RULE_STATE_FILE)!)).toEqual({ deletedBuiltinRuleIds: [] })
+    expect(JSON.parse(files.get(RULE_STATE_FILE)!)).toEqual({
+      deletedBuiltinRuleIds: [],
+      languagePairs: [
+        { a: 'chinese', b: 'english' },
+        { a: 'chinese', b: 'digit' },
+        { a: 'digit', b: 'english' },
+      ],
+      customScriptCategories: [],
+    })
     expect(store.cachedBuiltinRules).toHaveLength(DEFAULT_BUILTIN_RULES.length)
     expect(store.cachedUserRules).toEqual([])
     expect(store.deletedBuiltinRuleIds).toEqual([])
@@ -400,7 +409,7 @@ describe('内置规则管理（上游 deleteBuiltinRule / restoreBuiltinRule / r
     const target = DEFAULT_BUILTIN_RULES[0]!.id
     expect(await store.deleteBuiltinRule(target)).toBe(true)
     expect(JSON.parse(files.get(BUILTIN_RULES_FILE)!)).toHaveLength(DEFAULT_BUILTIN_RULES.length - 1)
-    expect(JSON.parse(files.get(RULE_STATE_FILE)!)).toEqual({ deletedBuiltinRuleIds: [target] })
+    expect(JSON.parse(files.get(RULE_STATE_FILE)!).deletedBuiltinRuleIds).toEqual([target])
     expect(store.deletedBuiltinRuleIds).toEqual([target])
   })
 
@@ -427,7 +436,15 @@ describe('内置规则管理（上游 deleteBuiltinRule / restoreBuiltinRule / r
     })
     expect(await store.resetAllBuiltinRules()).toBe(true)
     expect(JSON.parse(files.get(BUILTIN_RULES_FILE)!)).toHaveLength(DEFAULT_BUILTIN_RULES.length)
-    expect(JSON.parse(files.get(RULE_STATE_FILE)!)).toEqual({ deletedBuiltinRuleIds: [] })
+    expect(JSON.parse(files.get(RULE_STATE_FILE)!)).toEqual({
+      deletedBuiltinRuleIds: [],
+      languagePairs: [
+        { a: 'chinese', b: 'english' },
+        { a: 'chinese', b: 'digit' },
+        { a: 'digit', b: 'english' },
+      ],
+      customScriptCategories: [],
+    })
     expect(store.cachedBuiltinRules.find((r) => r.id === DEFAULT_BUILTIN_RULES[1]!.id)!.trigger)
       .not.toBe('zzz')
   })
@@ -544,5 +561,129 @@ describe('重载与快照（外部变化重载 = 重跑 init 语义）', () => {
     expect(snap1).not.toBe(snap2)
     expect(snap2.builtin).toHaveLength(DEFAULT_BUILTIN_RULES.length)
     expect(snap2.deletedBuiltinRuleIds).toEqual([])
+  })
+})
+
+// ===== 富结构持久化（#49：languagePairs / customScriptCategories 随 rule-state） =====
+
+describe('富结构持久化（#49）', () => {
+  it('空目录：state 文件写出厂三字段（含语言对种子三对）', async () => {
+    const { files, io } = memoryIo()
+    const store = newStore(io)
+    await store.init()
+    expect(JSON.parse(files.get(RULE_STATE_FILE)!)).toEqual({
+      deletedBuiltinRuleIds: [],
+      languagePairs: [
+        { a: 'chinese', b: 'english' },
+        { a: 'chinese', b: 'digit' },
+        { a: 'digit', b: 'english' },
+      ],
+      customScriptCategories: [],
+    })
+  })
+
+  it('旧版 state（仅 deletedBuiltinRuleIds）：装载补种子进内存，下次写 state 带全字段', async () => {
+    const { files, io } = memoryIo({
+      [RULE_STATE_FILE]: JSON.stringify({ deletedBuiltinRuleIds: ['builtin-conv-hw2fw'] }),
+    })
+    const store = newStore(io)
+    await store.init()
+    // 内存态：语言对补种子、deletedIds 保留
+    expect(store.getSnapshot().languagePairs).toHaveLength(3)
+    expect(store.deletedBuiltinRuleIds).toEqual(['builtin-conv-hw2fw'])
+    // 触发一次 state 写（恢复规则）→ 文件升级为三字段
+    await store.restoreBuiltinRule('builtin-conv-hw2fw')
+    const persisted = JSON.parse(files.get(RULE_STATE_FILE)!)
+    expect(persisted.deletedBuiltinRuleIds).toEqual([])
+    expect(persisted.languagePairs).toHaveLength(3)
+    expect(persisted.customScriptCategories).toEqual([])
+  })
+
+  it('畸形项清洗丢弃（清洗后空数组是合法态——用户可删光全部对）；字段整体非数组才回种子', async () => {
+    const { io } = memoryIo({
+      [RULE_STATE_FILE]: JSON.stringify({
+        deletedBuiltinRuleIds: ['builtin-conv-hw2fw'],
+        languagePairs: [{ a: 'chinese' }, 'bad'],
+        customScriptCategories: 'bad',
+      }),
+    })
+    const store = newStore(io)
+    await store.init()
+    const snap = store.getSnapshot()
+    // 畸形项（缺 b、非对象）丢弃后为空数组：合法用户态（删光全部对），不回种子
+    expect(snap.languagePairs).toEqual([])
+    // 字段整体非数组 → 回种子
+    expect(snap.customScriptCategories).toEqual([])
+    expect(snap.deletedBuiltinRuleIds).toEqual(['builtin-conv-hw2fw'])
+  })
+
+  it('setLanguagePairs：trim/空项丢弃/无序对去重/写盘/快照同步', async () => {
+    const { files, io } = memoryIo()
+    const store = newStore(io)
+    await store.init()
+    const ok = await store.setLanguagePairs([
+      { a: ' japanese ', b: 'english' },
+      { a: '', b: 'english' },
+      { a: 'english', b: 'japanese' }, // 与首项无序重复
+      { a: 'chinese', b: 'greek' },
+    ])
+    expect(ok).toBe(true)
+    const snap = store.getSnapshot()
+    expect(snap.languagePairs).toEqual([
+      { a: 'japanese', b: 'english' },
+      { a: 'chinese', b: 'greek' },
+    ])
+    expect(JSON.parse(files.get(RULE_STATE_FILE)!).languagePairs).toHaveLength(2)
+  })
+
+  it('setLanguagePairs：超上限整批拒绝（缓存与文件不动）', async () => {
+    const { files, io } = memoryIo()
+    const store = newStore(io)
+    await store.init()
+    const tooMany = Array.from({ length: MAX_LANGUAGE_PAIRS + 1 }, (_, i) => ({
+      a: 'chinese',
+      b: `cat-${i}`,
+    }))
+    const ok = await store.setLanguagePairs(tooMany)
+    expect(ok).toBe(false)
+    expect(store.getSnapshot().languagePairs).toHaveLength(3)
+    expect(JSON.parse(files.get(RULE_STATE_FILE)!).languagePairs).toHaveLength(3)
+  })
+
+  it('setCustomScriptCategories：trim/空名项丢弃/重名保留首个/写盘', async () => {
+    const { files, io } = memoryIo()
+    const store = newStore(io)
+    await store.init()
+    const ok = await store.setCustomScriptCategories([
+      { name: ' greek ', pattern: 'Α-Ωα-ω' },
+      { name: '', pattern: 'x' },
+      { name: 'greek', pattern: 'dup' },
+      { name: 'empty-pattern', pattern: '  ' },
+    ])
+    expect(ok).toBe(true)
+    const snap = store.getSnapshot()
+    expect(snap.customScriptCategories).toEqual([{ name: 'greek', pattern: 'Α-Ωα-ω' }])
+    expect(JSON.parse(files.get(RULE_STATE_FILE)!).customScriptCategories).toHaveLength(1)
+  })
+
+  it('写失败：内存回滚（与规则写路径同原则）', async () => {
+    const { io } = failingWriteIo()
+    const store = newStore(io)
+    await store.init()
+    const ok = await store.setLanguagePairs([{ a: 'chinese', b: 'japanese' }])
+    expect(ok).toBe(false)
+    expect(store.getSnapshot().languagePairs).toHaveLength(3)
+  })
+
+  it('getSnapshot：快照含富结构字段（每次新数组）', async () => {
+    const { io } = memoryIo()
+    const store = newStore(io)
+    await store.init()
+    const snap1 = store.getSnapshot()
+    await store.setLanguagePairs([{ a: 'chinese', b: 'japanese' }])
+    const snap2 = store.getSnapshot()
+    expect(snap1.languagePairs).toHaveLength(3)
+    expect(snap2.languagePairs).toEqual([{ a: 'chinese', b: 'japanese' }])
+    expect(snap1.languagePairs).not.toBe(snap2.languagePairs)
   })
 })

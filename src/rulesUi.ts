@@ -17,6 +17,8 @@ import type { Messages } from './i18n'
 import { RuleEngine, RuleScope, RuleTriggerMode, RuleType, type SimpleRule } from './rules/rule-engine'
 import { coveringBehaviorLocalIds } from './rules/rule-family-ids'
 import { DEFAULT_BUILTIN_RULES } from './rules/default-rules'
+import type { StoredLanguagePair } from './rules/rule-store'
+import { BUILTIN_CATEGORIES } from './formatting/scriptCategory'
 import { FUNCTION_TABLE_BY_REF, signatureKindForRuleType, type FunctionTableEntry } from './rules/function-table'
 import { RulesSettingsClient } from './rules/rules-settings-client'
 import {
@@ -149,9 +151,11 @@ export function mountRulesSettingsView(
   userSection.setAttribute('data-vet-section', 'user')
   const builtinSection = el('section', `${CLS}-section`)
   builtinSection.setAttribute('data-vet-section', 'builtin')
+  const spacingSection = el('section', `${CLS}-section`)
+  spacingSection.setAttribute('data-vet-section', 'spacing')
   const storageSection = el('section', `${CLS}-section ${CLS}-storage`)
   storageSection.setAttribute('data-vet-section', 'storage')
-  root.append(title, intro, status, userSection, builtinSection, storageSection)
+  root.append(title, intro, status, userSection, builtinSection, spacingSection, storageSection)
 
   /** 模态浮层容器（编辑表单；常驻 root 末位，hidden 切换） */
   const overlay = el('div', classes(`${CLS}-modal`, `${CLS}-hidden`))
@@ -555,6 +559,199 @@ export function mountRulesSettingsView(
     builtinSection.append(details)
   }
 
+
+  // ===== 语言间空格策略（#49：语言对 + 自定义词典，整表提交） =====
+
+  /** 语言对 chip 键（无序：与存储去重口径一致） */
+  function pairKey(pair: StoredLanguagePair): string {
+    return [pair.a, pair.b].sort().join('\u2194')
+  }
+
+  /** 语言对显示名（内置类经 i18n 显示名，自定义类名原样） */
+  function pairLabel(pair: StoredLanguagePair): string {
+    const nameOf = (raw: string): string =>
+      (t.scriptNames as Record<string, string | undefined>)[raw] ?? raw
+    return `${nameOf(pair.a)} \u2194 ${nameOf(pair.b)}`
+  }
+
+  /** 下拉选项集：内置脚本类（显示名）+ 现有自定义类名 */
+  function categoryOptions(): Array<{ value: string; label: string }> {
+    const options: Array<{ value: string; label: string }> = BUILTIN_CATEGORIES.map((c) => ({
+      value: c,
+      label: (t.scriptNames as Record<string, string | undefined>)[c] ?? c,
+    }))
+    for (const custom of client.state.customScriptCategories) {
+      options.push({ value: custom.name, label: custom.name })
+    }
+    return options
+  }
+
+  function buildCategorySelect(
+    attr: string,
+    options: Array<{ value: string; label: string }>,
+  ): HTMLSelectElement {
+    const select = el('select') as HTMLSelectElement
+    select.className = `${CLS}-select`
+    select.setAttribute('data-vet-input', attr)
+    for (const opt of options) {
+      const option = el('option', undefined, opt.label)
+      option.value = opt.value
+      select.append(option)
+    }
+    return select
+  }
+
+  /** 词典条目当前 DOM 值整表收集（change 提交的读面） */
+  function collectCategoriesFromDom(): Array<{ name: string; pattern: string }> {
+    const list = spacingSection.querySelector('[data-vet-category-list]')
+    if (!list) return []
+    return [...list.querySelectorAll<HTMLElement>('[data-vet-category]')].map((row) => {
+      const name = row.querySelector<HTMLInputElement>('[data-vet-input="category-name"]')
+      const pattern = row.querySelector<HTMLInputElement>('[data-vet-input="category-pattern"]')
+      return { name: name?.value ?? '', pattern: pattern?.value ?? '' }
+    })
+  }
+
+  function submitCategories(categories: Array<{ name: string; pattern: string }>): void {
+    void client.setCustomScriptCategories(categories).then((outcome) => {
+      if (!outcome.ok) actionFailed(outcome.reason)
+    })
+  }
+
+  function renderSpacingSection(): void {
+    const sp = t.spacing
+    spacingSection.textContent = ''
+    const header = el('div', `${CLS}-section-header`)
+    header.append(el('h3', `${CLS}-section-title`, sp.title))
+    spacingSection.append(header)
+    spacingSection.append(el('p', `${CLS}-section-desc`, sp.intro))
+
+    // -- 现役语言对 chips（可删）+ 双下拉添加 --
+    const pairsGroup = el('div', `${CLS}-form-group`)
+    pairsGroup.append(el('span', `${CLS}-form-name`, sp.pairsTitle))
+    const chips = el('div', `${CLS}-chip-options`)
+    chips.setAttribute('data-vet-pair-chips', '')
+    if (client.state.languagePairs.length === 0) {
+      chips.append(el('span', `${CLS}-empty`, sp.empty))
+    }
+    for (const pair of client.state.languagePairs) {
+      const chip = el('span', classes(`${CLS}-chip`, `${CLS}-pair-chip`), pairLabel(pair))
+      chip.setAttribute('data-vet-pair', pairKey(pair))
+      const remove = el('button', `${CLS}-icon-btn`, '×')
+      remove.type = 'button'
+      remove.setAttribute('data-vet-action', 'remove-pair')
+      remove.setAttribute('aria-label', sp.pairRemove)
+      remove.title = sp.pairRemove
+      remove.addEventListener('click', () => {
+        const next = client.state.languagePairs.filter((p) => pairKey(p) !== pairKey(pair))
+        void client.setLanguagePairs(next).then((outcome) => {
+          if (!outcome.ok) actionFailed(outcome.reason)
+        })
+      })
+      chip.append(remove)
+      chips.append(chip)
+    }
+    pairsGroup.append(chips)
+
+    const addPairRow = el('div', classes(`${CLS}-form-row`, `${CLS}-pair-add-row`))
+    const options = categoryOptions()
+    const selA = buildCategorySelect('pair-a', options)
+    const selB = buildCategorySelect('pair-b', options)
+    selB.selectedIndex = Math.min(1, options.length - 1)
+    const addPairBtn = el('button', `${CLS}-btn`, sp.pairAdd)
+    addPairBtn.type = 'button'
+    addPairBtn.setAttribute('data-vet-action', 'add-pair')
+    addPairBtn.addEventListener('click', () => {
+      if (!selA.value || !selB.value || selA.value === selB.value) {
+        showStatus('failed', sp.pairInvalid)
+        return
+      }
+      const next = [...client.state.languagePairs.map((p) => ({ ...p })), { a: selA.value, b: selB.value }]
+      void client.setLanguagePairs(next).then((outcome) => {
+        if (!outcome.ok) actionFailed(outcome.reason)
+      })
+    })
+    addPairRow.append(selA, selB, addPairBtn)
+    pairsGroup.append(addPairRow)
+    spacingSection.append(pairsGroup)
+
+    // -- 自定义语言/符号词典（成对编辑，增删改）--
+    const dictGroup = el('div', `${CLS}-form-group`)
+    dictGroup.append(el('span', `${CLS}-form-name`, sp.categoriesTitle))
+    dictGroup.append(el('span', `${CLS}-form-desc`, sp.categoryPatternHint))
+    const categoryList = el('div', `${CLS}-category-list`)
+    categoryList.setAttribute('data-vet-category-list', '')
+    if (client.state.customScriptCategories.length === 0) {
+      categoryList.append(el('div', `${CLS}-empty`, sp.empty))
+    }
+    for (const custom of client.state.customScriptCategories) {
+      const row = el('div', classes(`${CLS}-form-row`, `${CLS}-category-row`))
+      row.setAttribute('data-vet-category', custom.name)
+      const nameInput = el('input') as HTMLInputElement
+      nameInput.type = 'text'
+      nameInput.className = `${CLS}-input`
+      nameInput.value = custom.name
+      nameInput.setAttribute('data-vet-input', 'category-name')
+      nameInput.setAttribute('aria-label', sp.categoryName)
+      const patternInput = el('input') as HTMLInputElement
+      patternInput.type = 'text'
+      patternInput.className = `${CLS}-input`
+      patternInput.value = custom.pattern
+      patternInput.setAttribute('data-vet-input', 'category-pattern')
+      patternInput.setAttribute('aria-label', sp.categoryPattern)
+      // 失焦（change）提交整表：条目值即所存
+      const submitRow = () => submitCategories(collectCategoriesFromDom())
+      nameInput.addEventListener('change', submitRow)
+      patternInput.addEventListener('change', submitRow)
+      const removeBtn = el('button', `${CLS}-icon-btn ${CLS}-danger`, t.ruleItem.remove)
+      removeBtn.type = 'button'
+      removeBtn.setAttribute('data-vet-action', 'remove-category')
+      removeBtn.setAttribute('aria-label', sp.categoryRemove)
+      removeBtn.addEventListener('click', () => {
+        const next = collectCategoriesFromDom().filter((c) => c.name !== custom.name)
+        submitCategories(next)
+      })
+      row.append(nameInput, patternInput, removeBtn)
+      categoryList.append(row)
+    }
+    dictGroup.append(categoryList)
+
+    const addCatRow = el('div', classes(`${CLS}-form-row`, `${CLS}-category-row`))
+    const newName = el('input') as HTMLInputElement
+    newName.type = 'text'
+    newName.className = `${CLS}-input`
+    newName.placeholder = sp.categoryName
+    newName.setAttribute('data-vet-input', 'new-category-name')
+    newName.setAttribute('aria-label', sp.categoryName)
+    const newPattern = el('input') as HTMLInputElement
+    newPattern.type = 'text'
+    newPattern.className = `${CLS}-input`
+    newPattern.placeholder = sp.categoryPattern
+    newPattern.setAttribute('data-vet-input', 'new-category-pattern')
+    newPattern.setAttribute('aria-label', sp.categoryPattern)
+    const addCatBtn = el('button', `${CLS}-btn`, sp.categoryAdd)
+    addCatBtn.type = 'button'
+    addCatBtn.setAttribute('data-vet-action', 'add-category')
+    addCatBtn.addEventListener('click', () => {
+      const name = newName.value.trim()
+      const pattern = newPattern.value.trim()
+      if (!name || !pattern) {
+        showStatus('failed', sp.categoryInvalid)
+        return
+      }
+      const next = [
+        ...client.state.customScriptCategories.map((c) => ({ ...c })),
+        { name, pattern },
+      ]
+      void client.setCustomScriptCategories(next).then((outcome) => {
+        if (!outcome.ok) actionFailed(outcome.reason)
+      })
+    })
+    addCatRow.append(newName, newPattern, addCatBtn)
+    dictGroup.append(addCatRow)
+    spacingSection.append(dictGroup)
+  }
+
   function renderStorageSection(): void {
     storageSection.textContent = ''
     storageSection.append(el('h3', `${CLS}-section-title`, t.storage.dataDirLabel))
@@ -577,6 +774,7 @@ export function mountRulesSettingsView(
   function render(): void {
     renderUserSection()
     renderBuiltinSection()
+    renderSpacingSection()
     renderStorageSection()
   }
 

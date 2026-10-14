@@ -27,6 +27,8 @@ const snapshot = (revision = 1, extra: Partial<{ user: unknown[]; deleted: strin
   builtin: [{ id: 'b1', trigger: '【', replacement: '【$0】', options: '' }],
   user: extra.user ?? [],
   deletedBuiltinRuleIds: extra.deleted ?? [],
+  languagePairs: [],
+  customScriptCategories: [],
 })
 
 describe('RulesSettingsClient 装载', () => {
