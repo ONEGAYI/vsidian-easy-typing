@@ -16,11 +16,17 @@
 // 去重核验」节）；#26 格式化管线从同一入口形状挂接。
 //
 // 【选区语义】快照 selections 不含主选区标记（平台 AddonEditorSnapshot
-// 不携带 mainIndex）：管线取首个（最左）选区，上游取 asSingle().main
-// ——单光标（主流形态）两者一致，多光标差异记录于规格。Input 类仅处理
+// 不携带 mainIndex）：#47 B 方向起 Input 管线对**每个塌缩 range 分别**
+// 构造 TxContext 评估（上游为单选区设计，asSingle().main 收窄不再追随
+// ——B2 声明随多 range 语义修订）。逐 range 独立命中/不命中：命中的
+// range 各产生一条 change，未命中的 range 无 change、其选区由回设数组
+// 经 changes 映射保持。计划 selection 形态与平台 #498 通道同源：单选区
+// 快照 → 单对象（旧形态）；多选区快照 → 数组逐 range 回设（mainIndex
+// 恒 0 = 首 range 为主，未命中与非塌缩 range 一并保留）。Input 类仅处理
 // 塌缩选区（上游 notSelected 同口径；选区替换形态归 SelectKey 管线）。
-// 计划 selection 为单一 {anchor, head}，平台按 EditorSelection.single
-// 应用——命中即坍缩其余光标，与上游 dispatch 单选区行为等价。
+// 紧邻光标的匹配区间重叠时后 range 放弃修饰（ChangeSet 不允许重叠）。
+// Delete/SelectKey 管线不演进：多选区门（selections.length !== 1 →
+// null）保留——replaced 按 range 重建需新平台能力，另票跟踪。
 //
 // ===== 工单 #9：Delete / SelectKey 触发管线 =====
 //
@@ -161,10 +167,12 @@ export interface RuleInputPipelineContext {
 }
 
 /** 行为链修饰计划（对齐 AddonBehaviorInputPlan 的核心两件套；changes
- * 形状兼容 SerChange——length 恒显式携带） */
+ * 形状兼容 SerChange——length 恒显式携带）。selection 双形态与平台
+ * #498 通道同源：单选区快照 → 单对象（旧形态，既有消费零迁移）；
+ * 多选区快照 → 数组逐 range 回设（mainIndex 恒 0 = 首 range 为主）。 */
 export interface RuleInputBehaviorPlan {
   changes: Array<{ offset: number; length: number; text: string }>
-  selection: { anchor: number; head: number }
+  selection: { anchor: number; head: number } | Array<{ anchor: number; head: number }>
 }
 
 /** 计划 + 引擎 tabstop 组的伴随形态（Delete/SelectKey 管线返回值） */
@@ -196,6 +204,10 @@ export function planInputRuleModification(
  * 返回（#15 导航态激活的数据源——行为链 onInput 暂存 tabstops，页面装配层
  * 在计划应用后喂 tabstopNav.activateTabstops；tabstops 为 applyReplacement
  * 后文档绝对坐标，与平台应用计划后的文档一致，可直接使用）。
+ *
+ * per-range 合成（#47 B 方向）：多 range 命中时 tabstops 为各组拼接——
+ * 后方 range 的组坐标按前方 changes 长度差平移；同号并组即多光标同步
+ * 编辑单元（tabstopGroup 既有语义，激活面零改动）。
  */
 export function planInputRuleWithTabstops(
   engine: RuleEngine,
@@ -209,41 +221,146 @@ export function planInputRuleWithTabstops(
   // 规则。若放行，替换后快照光标已塌缩，autopair 类会基于残缺上下文
   // 命中并占用独占组，把 SelectKey 管线堵在链外（且被替换内容已丢失）。
   if (ctx.replaced !== null) return null
-  const first = ctx.snapshot.selections[0]
-  if (first === undefined) return null
-  const from = Math.min(first.anchor, first.head)
-  const to = Math.max(first.anchor, first.head)
-  if (from !== to) return null // 非塌缩选区：Input 类不处理（包裹归 SelectKey）
-  if (from > ctx.snapshot.text.length) return null // 防御：越界坐标不进引擎
+  const selections = ctx.snapshot.selections
+  if (selections.length === 0) return null
+  // 防御：任一选区坐标越界即快照自相矛盾——整体不接管（多 range 下
+  // selection 数组须覆盖全部 range，携带越界坐标必被平台拒绝，跳过单个
+  // range 则丢其光标；坏数据不做修饰）。
+  for (const sel of selections) {
+    if (Math.max(sel.anchor, sel.head) > ctx.snapshot.text.length) return null
+  }
 
-  const scope = resolveScopeForEngine(engine, ctx.snapshot.text, options, from)
-  if (scope === null) return null // 查询缺席/查询拒绝（评审 P3）：不接管
-  // #27 保护区（上游 triggerCvtRule 同位判定）：检查列回退一列（input.*）
-  if (
-    options.protectedZone !== undefined &&
-    isPositionInProtectedZone(ctx.snapshot.text, from, ctx.userEvent, options.protectedZone)
-  ) {
-    return null
+  // per-range 评估（#47 B 方向）：每个塌缩 range 独立构造 TxContext 跑
+  // 引擎；非塌缩 range 跳过（Input 类只处理塌缩选区，包裹归 SelectKey），
+  // 其选区经 changes 映射保留。作用域/保护区逐 range 判定。
+  const hits: PerRangeHit[] = []
+  for (let rangeIndex = 0; rangeIndex < selections.length; rangeIndex++) {
+    const sel = selections[rangeIndex]!
+    const from = Math.min(sel.anchor, sel.head)
+    const to = Math.max(sel.anchor, sel.head)
+    if (from !== to) continue // 非塌缩：不评估，选区进回设数组
+    const scope = resolveScopeForEngine(engine, ctx.snapshot.text, options, from)
+    if (scope === null) continue // 查询缺席/查询拒绝（评审 P3）：该 range 不修饰
+    // #27 保护区（上游 triggerCvtRule 同位判定）：检查列回退一列（input.*）
+    if (
+      options.protectedZone !== undefined &&
+      isPositionInProtectedZone(ctx.snapshot.text, from, ctx.userEvent, options.protectedZone)
+    ) {
+      continue
+    }
+    const tx: TxContext = {
+      kind: RuleType.Input,
+      docText: ctx.snapshot.text,
+      selection: { from, to },
+      inserted: ctx.inputText,
+      changeType: ctx.userEvent,
+      scopeHint: scope.scope,
+      ...(scope.language !== undefined ? { scopeLanguage: scope.language } : {}),
+      ...(options.debug === true ? { debug: true } : {}),
+    }
+    const result = engine.process(tx)
+    if (result === null) continue // 该 range 未命中：无 change，光标映射保留
+    // 重叠防御：per-range 引擎在各自 leftDoc 上匹配，紧邻光标下后 range
+    // 的 matchRange 可跨越前 range 光标（与前 change 重叠）——ChangeSet
+    // 不允许重叠区间，后者放弃修饰（按未命中处理，光标经映射保留）。
+    const prev = hits[hits.length - 1]
+    if (prev !== undefined && result.matchRange.from < prev.changeEnd) continue
+    hits.push({
+      rangeIndex,
+      cursor: result.cursor,
+      change: {
+        offset: result.matchRange.from,
+        length: result.matchRange.to - result.matchRange.from,
+        text: result.newText,
+      },
+      changeEnd: result.matchRange.to,
+      tabstops: result.tabstops,
+    })
   }
-  const tx: TxContext = {
-    kind: RuleType.Input,
-    docText: ctx.snapshot.text,
-    selection: { from, to },
-    inserted: ctx.inputText,
-    changeType: ctx.userEvent,
-    scopeHint: scope.scope,
-    ...(scope.language !== undefined ? { scopeLanguage: scope.language } : {}),
-    ...(options.debug === true ? { debug: true } : {}),
+  if (hits.length === 0) return null
+  return { plan: synthesizePlan(ctx, hits), tabstops: synthesizeTabstops(hits) }
+}
+
+/** per-range 命中条目（评估收集 → 计划合成的中间形态） */
+interface PerRangeHit {
+  /** 快照 range 下标（selection 数组对位用；命中序 = hits 数组下标） */
+  readonly rangeIndex: number
+  /** 引擎 cursor：本 change 替换后形态的快照坐标 */
+  readonly cursor: number
+  readonly change: { offset: number; length: number; text: string }
+  /** 本 change 快照区间末端（重叠防御基准） */
+  readonly changeEnd: number
+  readonly tabstops: readonly TabstopSpec[]
+}
+
+/** 前方 changes 长度差累计：命中 cursor / tabstop 已是本 change 替换后
+ * 形态，只平移**前方**（rangeIndex 个）change 的 delta。 */
+function shiftByPreceding(pos: number, hits: readonly PerRangeHit[], ownIndex: number): number {
+  let shifted = pos
+  for (let i = 0; i < ownIndex; i++) {
+    const c = hits[i]!.change
+    shifted += c.text.length - c.length
   }
-  const result = engine.process(tx)
-  if (result === null) return null
-  return { plan: applyResultToPlan(result), tabstops: result.tabstops }
+  return shifted
+}
+
+/** 未命中/非塌缩 range 的选区坐标经**全部** changes 映射：p ≤ change 起点
+ * 不变、p ≥ 末端平移、区间内（选区与命中区间不重叠，理论不可达）按
+ * 替换后末端防御夹取。changes 按 offset 升序，可线性累计。 */
+function mapPosThroughChanges(pos: number, hits: readonly PerRangeHit[]): number {
+  let mapped = pos
+  for (const hit of hits) {
+    const c = hit.change
+    if (pos <= c.offset) break // 后方 changes 更远，不再影响
+    if (pos >= c.offset + c.length) {
+      mapped += c.text.length - c.length
+    } else {
+      mapped = c.offset + c.text.length // 防御：夹到替换后末端
+      break
+    }
+  }
+  return mapped
+}
+
+/** 计划合成：changes 逐命中拼接；selection 按快照选区数取形态（单选区
+ * → 单对象，多选区 → 数组逐 range 回设，顺序保持快照 range 原序）。 */
+function synthesizePlan(
+  ctx: RuleInputPipelineContext,
+  hits: readonly PerRangeHit[],
+): RuleInputBehaviorPlan {
+  const changes = hits.map((h) => ({ ...h.change }))
+  if (ctx.snapshot.selections.length === 1) {
+    // 唯一 range 且已命中（无命中早返回 null）
+    return { changes, selection: { anchor: hits[0]!.cursor, head: hits[0]!.cursor } }
+  }
+  const selection = ctx.snapshot.selections.map((sel, index) => {
+    const hitIndex = hits.findIndex((h) => h.rangeIndex === index)
+    if (hitIndex >= 0) {
+      const cursor = shiftByPreceding(hits[hitIndex]!.cursor, hits, hitIndex)
+      return { anchor: cursor, head: cursor }
+    }
+    return { anchor: mapPosThroughChanges(sel.anchor, hits), head: mapPosThroughChanges(sel.head, hits) }
+  })
+  return { changes, selection }
+}
+
+/** tabstops 合成：per-range 组拼接 + 前方 delta 平移（同号并组归
+ * tabstopNav 激活面，坐标为应用后文档绝对坐标——与计划 selection 同基准）。 */
+function synthesizeTabstops(hits: readonly PerRangeHit[]): readonly TabstopSpec[] {
+  const out: TabstopSpec[] = []
+  hits.forEach((hit, index) => {
+    for (const t of hit.tabstops) {
+      out.push({ number: t.number, from: shiftByPreceding(t.from, hits, index), to: shiftByPreceding(t.to, hits, index) })
+    }
+  })
+  return out
 }
 
 /**
  * ApplyResult → 行为链计划（matchRange + newText → changes；cursor →
- * selection）。#14 落地 $0 解析后 tabstop 组转多光标选区在此换算（规格
- * 「平台映射」节预留）。
+ * selection）的单命中换算语义（公开钉子：#25 时代为管线主体，#47 B 方向
+ * 起 Input 管线改 per-range 合成（synthesizePlan，含多 range 平移），
+ * 本函数保留单命中形态的换算口径——单选区命中路径与之等价）。
  */
 export function applyResultToPlan(result: ApplyResult): RuleInputBehaviorPlan {
   return {

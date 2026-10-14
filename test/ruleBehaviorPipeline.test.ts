@@ -15,6 +15,7 @@ import {
   pipelineConsumesUserEvent,
   planDeleteRuleModification,
   planInputRuleModification,
+  planInputRuleWithTabstops,
   planSelectKeyRuleModification,
   type RuleInputPipelineContext,
 } from '../src/ruleBehaviorPipeline'
@@ -147,35 +148,17 @@ describe('userEvent 门控（Input 类触发面）', () => {
   })
 })
 
-// ===== 选区语义（多选区 open question 的管线侧结论） =====
+// ===== 选区语义（#47 B 方向：多光标 per-range 评估） =====
 
-describe('选区语义', () => {
+describe('选区语义（单选区基线）', () => {
   const engine = engineOf(['builtin-fw2hw-double'])
 
-  it('仅处理首个选区：首选区不命中时次选区可命中也不处理', () => {
-    // 首选区左文 x。（不命中）；次选区左文以 。。结尾（可命中）
-    const plan = planInputRuleModification(
-      engine,
-      inputCtx('x。y。。', 2, 'input.type', '。', [
-        { anchor: 2, head: 2 },
-        { anchor: 6, head: 6 },
-      ]),
-    )
-    expect(plan).toBeNull()
-  })
-
-  it('首选区命中 → 计划携带单一 selection（平台按 EditorSelection.single 应用，坍缩其余光标）', () => {
-    const plan = planInputRuleModification(
-      engine,
-      inputCtx('。。。。', 2, 'input.type', '。', [
-        { anchor: 2, head: 2 },
-        { anchor: 6, head: 6 },
-      ]),
-    )
+  it('单选区命中 → selection 单对象（旧形态保持：单选区不走数组通道）', () => {
+    const plan = planInputRuleModification(engine, inputCtx('。。', 2, 'input.type', '。'))
     expect(plan?.selection).toEqual({ anchor: 1, head: 1 })
   })
 
-  it('首选区非塌缩（选区替换形态）→ null（SelectKey 包裹归 #9）', () => {
+  it('唯一选区非塌缩（选区替换形态）→ null（SelectKey 包裹归 #9）', () => {
     expect(
       planInputRuleModification(engine, inputCtx('。。', 2, 'input.type', '。', [{ anchor: 0, head: 2 }])),
     ).toBeNull()
@@ -194,6 +177,292 @@ describe('选区语义', () => {
     expect(planInputRuleModification(engine, inputCtx('。。', 2, 'input.type', '。', []))).toBeNull()
   })
 })
+
+// ===== per-range 评估（#47 B 方向：规则对每个塌缩 range 分别评估应用） =====
+//
+// 计划合成契约：
+// - changes：每命中 range 一条，快照坐标、按 range 升序（平台 ChangeSet
+//   同基准多条语义）；
+// - selection：快照选区数 1 → 单对象（旧通道零迁移）；> 1 → 数组，按
+//   range 原序逐 range 回设——命中 range 为引擎 cursor（替换后形态）加
+//   前方 changes 长度差平移，未命中 range 为快照光标经全部 changes 映射
+//   （平台 #498 数组多选区回设，mainIndex 恒 0 = 首 range 为主）；
+// - tabstops：per-range 引擎产出拼接，后方 range 的组坐标按前方 delta
+//   平移（同号并组即多光标单元，激活面天然支持）。
+
+describe('per-range 评估：多光标全命中（票面主场景）', () => {
+  const engine = engineOf(['builtin-fw2hw-double'])
+
+  it('双光标各自行尾 。。 → 各自转换，selection 数组逐 range 回设（后方光标平移）', () => {
+    // 快照：两行各 。。（双光标同时键入第二个 。），光标 [2, 5]
+    const plan = planInputRuleModification(
+      engine,
+      inputCtx('。。\n。。', 2, 'input.type.compose', '。', [
+        { anchor: 2, head: 2 },
+        { anchor: 5, head: 5 },
+      ]),
+    )
+    expect(plan).toEqual({
+      changes: [
+        { offset: 0, length: 2, text: '.' },
+        { offset: 3, length: 2, text: '.' },
+      ],
+      // range1 cursor 1（替换后形态）；range2 cursor 4 平移 delta(1-2=-1) → 3
+      selection: [
+        { anchor: 1, head: 1 },
+        { anchor: 3, head: 3 },
+      ],
+    })
+  })
+
+  it('普通键入（input.type）多光标同语义（compose 与非 compose 同路径）', () => {
+    const plan = planInputRuleModification(
+      engine,
+      inputCtx('。。\n。。', 2, 'input.type', '。', [
+        { anchor: 2, head: 2 },
+        { anchor: 5, head: 5 },
+      ]),
+    )
+    expect(plan?.changes).toHaveLength(2)
+    expect(plan?.selection).toEqual([
+      { anchor: 1, head: 1 },
+      { anchor: 3, head: 3 },
+    ])
+  })
+
+  it('同 range 处替换体更长时（autopair）后方光标正向平移', () => {
+    // 快照 （\n（，双光标 [1, 3]；补全 （） 后第二光标 = 3 + delta(2-1=+1) = 4
+    const autopair = engineOf(['builtin-autopair-input'])
+    const plan = planInputRuleModification(
+      autopair,
+      inputCtx('（\n（', 1, 'input.type', '（', [
+        { anchor: 1, head: 1 },
+        { anchor: 3, head: 3 },
+      ]),
+    )
+    expect(plan).toEqual({
+      changes: [
+        { offset: 0, length: 1, text: '（）' },
+        { offset: 2, length: 1, text: '（）' },
+      ],
+      selection: [
+        { anchor: 1, head: 1 },
+        { anchor: 4, head: 4 },
+      ],
+    })
+  })
+})
+
+describe('per-range 评估：部分命中', () => {
+  const engine = engineOf(['builtin-fw2hw-double'])
+
+  it('首个 range 不命中、次 range 命中 → 单条 change，未命中光标原位保留', () => {
+    // 快照：x。\n。。（第一光标左文单句号不命中；第二光标命中）
+    const plan = planInputRuleModification(
+      engine,
+      inputCtx('x。\n。。', 2, 'input.type', '。', [
+        { anchor: 2, head: 2 },
+        { anchor: 5, head: 5 },
+      ]),
+    )
+    expect(plan).toEqual({
+      changes: [{ offset: 3, length: 2, text: '.' }],
+      // range1 光标 2 在 change 前方不动；range2 cursor 4（前方无其他 change）
+      selection: [
+        { anchor: 2, head: 2 },
+        { anchor: 4, head: 4 },
+      ],
+    })
+  })
+
+  it('命中在前、未命中在后 → 未命中光标经 change 映射平移', () => {
+    // 快照：。。\nx。：首 range 命中（change [0,2)→'.'），次 range 光标
+    // 5 映射：5 ≥ 2 → 5 + (1-2) = 4
+    const plan = planInputRuleModification(
+      engine,
+      inputCtx('。。\nx。', 2, 'input.type', '。', [
+        { anchor: 2, head: 2 },
+        { anchor: 5, head: 5 },
+      ]),
+    )
+    expect(plan).toEqual({
+      changes: [{ offset: 0, length: 2, text: '.' }],
+      selection: [
+        { anchor: 1, head: 1 },
+        { anchor: 4, head: 4 },
+      ],
+    })
+  })
+
+  it('多选区全部不命中 → null（多光标原样保留，链照常）', () => {
+    expect(
+      planInputRuleModification(
+        engine,
+        inputCtx('x。\ny。', 2, 'input.type', '。', [
+          { anchor: 2, head: 2 },
+          { anchor: 5, head: 5 },
+        ]),
+      ),
+    ).toBeNull()
+  })
+})
+
+describe('per-range 评估：非塌缩与防御边界', () => {
+  const engine = engineOf(['builtin-fw2hw-double'])
+
+  it('非塌缩 range 跳过评估、选区原样保留（映射后）；塌缩 range 照常命中', () => {
+    // 快照：。。  + 行尾选区（选中 y）：塌缩 range 命中，选区 range 保留
+    const plan = planInputRuleModification(
+      engine,
+      inputCtx('。。\nyzz', 2, 'input.type', '。', [
+        { anchor: 2, head: 2 },
+        { anchor: 4, head: 5 },
+      ]),
+    )
+    expect(plan).toEqual({
+      changes: [{ offset: 0, length: 2, text: '.' }],
+      // 选区 [4,5) 在 change 后方：两端各平移 -1 → [3,4)
+      selection: [
+        { anchor: 1, head: 1 },
+        { anchor: 3, head: 4 },
+      ],
+    })
+  })
+
+  it('全部 range 非塌缩 → 无可评估目标 → null', () => {
+    expect(
+      planInputRuleModification(
+        engine,
+        inputCtx('。。。。', 2, 'input.type', '。', [
+          { anchor: 0, head: 2 },
+          { anchor: 2, head: 4 },
+        ]),
+      ),
+    ).toBeNull()
+  })
+
+  it('任一 range 越界（防御）→ 整体不接管返回 null（不产出含越界坐标的选区数组）', () => {
+    expect(
+      planInputRuleModification(
+        engine,
+        inputCtx('。。', 2, 'input.type', '。', [
+          { anchor: 99, head: 99 },
+          { anchor: 2, head: 2 },
+        ]),
+      ),
+    ).toBeNull()
+  })
+
+  it('紧邻光标的匹配区间重叠 → 后 range 放弃修饰（无 change、光标经映射保留）', () => {
+    // 快照：。。|。（range1 光标 2、range2 光标 3 紧邻）。range1 命中
+    // [0,2)；range2 左文末尾 。。 跨越 range1 光标（[1,3)）与前 change
+    // 重叠——后者放弃，避免 ChangeSet 重叠
+    const plan = planInputRuleModification(
+      engine,
+      inputCtx('。。。', 2, 'input.type', '。', [
+        { anchor: 2, head: 2 },
+        { anchor: 3, head: 3 },
+      ]),
+    )
+    expect(plan).toEqual({
+      changes: [{ offset: 0, length: 2, text: '.' }],
+      // range2 光标 3 ≥ 2 → 3 + (1-2) = 2
+      selection: [
+        { anchor: 1, head: 1 },
+        { anchor: 2, head: 2 },
+      ],
+    })
+  })
+})
+
+describe('per-range 评估：作用域与保护区逐 range 判定', () => {
+  it('围栏代码内 range 被 scopeHint=Code 拦下、正文 range 照常命中（部分命中）', () => {
+    const engine = new RuleEngine()
+    engine.addSimpleRule({ trigger: '。', replacement: '。!', options: 't' } satisfies SimpleRule)
+    // 光标 6 在围栏内（。 后）；光标 14 在正文 。。 尾（doc 长 14）
+    const doc = '```js\n。\n```\n。。'
+    const plan = planInputRuleModification(
+      engine,
+      inputCtx(doc, 6, 'input.type', '。', [
+        { anchor: 6, head: 6 },
+        { anchor: 14, head: 14 },
+      ]),
+      { scopeQuery: makeSyntaxFake(doc).query },
+    )
+    expect(plan?.changes).toEqual([{ offset: 13, length: 1, text: '。!' }])
+  })
+
+  it('保护区内 range 跳过、区外 range 照常命中（#27 探针逐 range）', () => {
+    const engine = engineOf(['builtin-fw2hw-double'])
+    // 行 1 的 。。 落在用户保护区（含 PROTECT 的自定义正则块）；行 2 不在
+    const protectedZone = {
+      isProtected: (lineText: string, column: number) =>
+        lineText.includes('PROTECT') ? column > 0 : false,
+    }
+    const plan = planInputRuleModification(
+      engine,
+      inputCtx('PROTECT 。。\n。。', 10, 'input.type', '。', [
+        { anchor: 10, head: 10 },
+        { anchor: 13, head: 13 },
+      ]),
+      { protectedZone },
+    )
+    expect(plan?.changes).toEqual([{ offset: 11, length: 2, text: '.' }])
+  })
+})
+
+describe('per-range 评估：tabstop 组按 range 平移拼接', () => {
+  it('双光标各自命中带 $1 的规则 → 同号两组、后方组平移前方 delta', () => {
+    const engine = new RuleEngine()
+    engine.addSimpleRule({ trigger: 'q', replacement: 'A$1B', options: 'r' } satisfies SimpleRule)
+    // 快照：q\nq，双光标 [1, 3]
+    const withTabstops = planInputRuleWithTabstops(
+      engine,
+      inputCtx('q\nq', 1, 'input.type', 'q', [
+        { anchor: 1, head: 1 },
+        { anchor: 3, head: 3 },
+      ]),
+    )
+    expect(withTabstops?.plan.changes).toEqual([
+      { offset: 0, length: 1, text: 'AB' },
+      { offset: 2, length: 1, text: 'AB' },
+    ])
+    // range1 $1 @1；range2 $1 相对 3、平移 delta(+1) → 4
+    expect(withTabstops?.tabstops).toEqual([
+      { number: 1, from: 1, to: 1 },
+      { number: 1, from: 4, to: 4 },
+    ])
+  })
+})
+
+describe('per-range 评估：引擎匹配位置回归（#47 定位附验迁移）', () => {
+  it('后 range 的 leftDoc 含前 range 的 。。（更早匹配）时 matchRange 仍紧贴各自光标', () => {
+    // 单光标即可钉住引擎行为：前文 offset 3 处已有 。。，光标处再输入 。
+    // ——leftRegex 尾锚 (?![\s\S]) 保证取紧贴光标的匹配
+    const engine = engineOf(['builtin-fw2hw-double'])
+    const doc = '- 好。。bar。。'
+    const plan = planInputRuleModification(engine, inputCtx(doc, doc.length, 'input.type', '。'))
+    expect(plan?.changes).toEqual([{ offset: doc.length - 2, length: 2, text: '.' }])
+  })
+
+  it('双光标同文档下两处匹配互不干扰（各自 leftDoc 末尾的 。。）', () => {
+    const engine = engineOf(['builtin-fw2hw-double'])
+    // 行 1 光标前有更早的 。。（offset 0 起）；两 range 各命中紧贴自己的 。
+    //（`。。x。。\n。。` = 8 字符：行 1 [0,5)、行 2 。。 [6,8)）
+    const plan = planInputRuleModification(
+      engine,
+      inputCtx('。。x。。\n。。', 5, 'input.type', '。', [
+        { anchor: 5, head: 5 },
+        { anchor: 8, head: 8 },
+      ]),
+    )
+    expect(plan?.changes).toEqual([
+      { offset: 3, length: 2, text: '.' },
+      { offset: 6, length: 2, text: '.' },
+    ])
+  })
+})
+
 
 // ===== 作用域注入（#5 切片 B：树版 detectScopeViaQuery 换传） =====
 
