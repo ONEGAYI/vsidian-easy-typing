@@ -7,8 +7,12 @@
 // 行——「零 FAIL 但计划用例未全部取得终态」的宿主截断必须判败并点名缺失
 // 用例（上游 #211 收尾噪声误放行 / #254 截断判定的契约化，issue 号指
 // ONEGAYI/vsidian）。深度进程树保障（SIGINT 清理 / 父启动器退出兜杀 /
-// 包装层故障清理 / 剪贴板隔离探针）上游 testHost.test.mjs 已覆盖，本仓不
-// 重复移植；机制回流以上游该文件为准。
+// 包装层故障清理 / 剪贴板隔离探针）与超时最近输出快照契约（对应机制
+// TAIL_LINES 环形缓冲已随 testHost.mjs 移植，测试留上游）均由上游
+// testHost.test.mjs 覆盖，本仓不重复移植；机制回流以上游该文件为准。
+// 已知边界：hiddenDesktop.ps1 无 BOM，非 UTF-8 代码页（ACP≠65001）的
+// Windows 上中文诊断串乱码并致本文件静默探针断言失败——上游同源同缺
+// 陷，属上游回流项，不在本仓单独修（破坏字节级同源契约）。
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
