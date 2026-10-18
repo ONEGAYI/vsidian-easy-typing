@@ -29,30 +29,41 @@ export const SETTINGS_TOPIC = {
  * SETTINGS_TOPIC 的落位约定）。 */
 export const RULE_ERROR_TOPIC = 'easyTyping.ruleError.notify'
 
-/** 设置页 UI 浏览态通道 topic（#63）：只承载 UI 浏览位置（当前 Tab），
- * 会话级内存态不落盘——对齐上游「跨开关保留、重启复位」语义（上游内存态
- * 挂在常驻 PluginSettingTab 实例的 activeTab 字段，本仓对齐载体是宿主
- * extension 进程的 setup 常驻闭包）。宿主与页面共用同一常量源。 */
+/** 设置页 UI 浏览态通道 topic（#63）：承载 UI 浏览位置（当前 Tab + 页面级
+ * 滚动偏移），会话级内存态不落盘——对齐上游「跨开关保留、重启复位」语义
+ * （上游内存态挂在常驻 PluginSettingTab 实例的 activeTab 字段，本仓对齐
+ * 载体是宿主 extension 进程的 setup 常驻闭包；scroll 面超上游一步——上游
+ * display() 全量重建必回顶，#63 验收预期补齐）。宿主与页面共用同一常量源。 */
 export const VIEW_STATE_TOPIC = {
-  /** 拉取：{ tab: string | null }（null = 会话内尚无浏览记录） */
+  /** 拉取：{ tab: string | null; scroll: number | null }（null = 会话内尚无
+   *  浏览记录 / scroll 未上报过——旧页面载荷形态） */
   get: 'easyTyping.viewState.get',
-  /** 上送：payload { tab: string } → { ok: true }；字符串即存不校验 Tab
-   *  语义（合法性校验归页面侧 SETTINGS_TAB_IDS） */
+  /** 上送：payload { tab: string; scroll?: number } → { ok: true }；tab
+   *  字符串即存不校验 Tab 语义（合法性校验归页面侧 SETTINGS_TAB_IDS），
+   *  scroll 有限非负数即存（取整与钳制语义归页面侧）；scroll 缺席保持
+   *  既有记忆（向后兼容旧页面只送 tab 的载荷） */
   update: 'easyTyping.viewState.update',
 } as const
 
-/** 注册 view-state 通道（#63 宿主侧，extension.ts setup 接线）：lastTab
- *  闭包持内存态，setup 生命周期即会话级（跨设置面板开关保留，重启 VSCode
- *  / 代次重注册复位——对齐上游常驻实例的内存态语义，deactivate 不持久化）。
- *  注册面仅 channel registry：无 storage 形参即无落盘面（不落盘由构造
- *  保证）；get/update 均同步内存读写，无失败面。 */
+/** 注册 view-state 通道（#63 宿主侧，extension.ts setup 接线）：lastTab +
+ *  lastScroll 闭包持内存态，setup 生命周期即会话级（跨设置面板开关保留，
+ *  重启 VSCode / 代次重注册复位——对齐上游常驻实例的内存态语义，
+ *  deactivate 不持久化）。注册面仅 channel registry：无 storage 形参即无
+ *  落盘面（不落盘由构造保证）；get/update 均同步内存读写，无失败面。 */
 export function registerViewStateChannels(registry: AddonChannelRegistry): void {
   let lastTab: string | null = null
-  registry.handle(VIEW_STATE_TOPIC.get, () => ({ tab: lastTab }))
+  let lastScroll: number | null = null
+  registry.handle(VIEW_STATE_TOPIC.get, () => ({ tab: lastTab, scroll: lastScroll }))
   registry.handle(VIEW_STATE_TOPIC.update, (payload) => {
-    const request = payload as { tab?: unknown }
+    const request = payload as { tab?: unknown; scroll?: unknown }
     if (typeof request?.tab !== 'string' || request.tab.length === 0) {
       return { ok: false, reason: 'invalid-payload' }
+    }
+    if (request.scroll !== undefined) {
+      if (typeof request.scroll !== 'number' || !Number.isFinite(request.scroll) || request.scroll < 0) {
+        return { ok: false, reason: 'invalid-payload' }
+      }
+      lastScroll = request.scroll
     }
     lastTab = request.tab
     return { ok: true }

@@ -34,8 +34,10 @@
 // 【Tab 态】（#63 修正）宿主侧会话级 view-state 通道（VIEW_STATE_TOPIC）
 // 承载——Tab 浏览位置跨面板开关保留（平台隐藏面板即释放 webview，重开
 // 重新装载页面，内存态经宿主 setup 常驻闭包续存）、重启 VSCode 复位；
-// 滚动位置不保存（上游亦无保存行为）。switchTab 为受控切换 API（外部
-// 驱动面）；按钮 / 键盘 / 定位切换经 selectTab 同一受控路径切页并上送。
+// 页面级滚动偏移同通道承载（#63 扩展，超上游一步，见 view-state 接入节
+// 注释——平台 focusSection.scroll 恢复对异步装载的附加页失效，组件侧
+// 补完时机）。switchTab 为受控切换 API（外部驱动面）；按钮 / 键盘 / 定位
+// 切换经 selectTab 同一受控路径切页并上送。
 import { localeTagFor, pickMessages, type Messages } from './i18n'
 import type { AddonSettingDefinition } from '../types/vendor/shared/addonSettings'
 import type { AddonSettingsLocateTarget, AddonSettingsScopeSnapshot } from '../types/vendor/shared/addonSettingsContextApi'
@@ -323,17 +325,63 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
    *  默认渲染与恢复切换本身都不置位（初始上送会把宿主态冲回默认） */
   let viewStateClaimed = false
 
-  /** 确定导航的唯一切页入口：切页 + 上送宿主 view-state（失败静默不阻塞
-   *  切换——UI 浏览态尽力而为）。按钮点击 / 键盘导航 / switchTab 受控
-   *  API / 搜索定位四路共用 */
-  function selectTab(tabId: SettingsTabId, focusButton = false): void {
-    viewStateClaimed = true
-    activateTab(tabId, focusButton)
+  // ---- 页面级滚动偏移的保存与恢复（#63 扩展，超上游一步）----
+  // 滚动容器不是 mountRoot 内部元素：真宿主里设置页随平台设置 webview 的
+  // 主区（.vsidian-settings-main，overflow-y:auto）滚动。平台自身的会话内
+  // 恢复（settings.focusSection.scroll）在渲染后立即应用 scrollTop，而附加
+  // 组件页异步装载——应用时内容高度未起，偏移被钳为 0。本侧补完该恢复的
+  // 时机：装载完成后经 rAF 回放。滚动祖先由 mountRoot 向上解析（首个
+  // overflow-y 为 auto/scroll 的祖先），解析失败回退 scrollingElement——
+  // 平台 DOM 结构变化时优雅降级为不保存（与修复前行为一致，无破坏面）。
+  const scrollEl: HTMLElement = (() => {
+    let node: HTMLElement | null = root.parentElement
+    while (node !== null) {
+      const overflowY = doc.defaultView?.getComputedStyle(node).overflowY
+      if (overflowY === 'auto' || overflowY === 'scroll') return node
+      node = node.parentElement
+    }
+    // 回退文档滚动根 scrollingElement；其未实现/异形的环境（如 jsdom 返回
+    // undefined）落 documentElement——同为文档滚动根
+    return doc.scrollingElement instanceof HTMLElement ? doc.scrollingElement : doc.documentElement
+  })()
+
+  /** 当前滚动偏移（取整对齐平台 uiState 口径） */
+  function readScroll(): number {
+    return Math.round(scrollEl.scrollTop)
+  }
+
+  /** 滚动上报尾沿节流（200ms）：scroll 事件按帧高频，通道请求roundtrip
+   *  不逐帧打；尾沿保证停止滚动后 200ms 内落账。残余边界：滚动后 200ms
+   *  内关闭面板丢失最后一段位移（可接受，spec 已知边界） */
+  const SCROLL_THROTTLE_MS = 200
+  let scrollPushTimer: unknown = null
+
+  function pushViewState(tabId: SettingsTabId): void {
     void options.channel
-      .request(VIEW_STATE_TOPIC.update, { tab: tabId })
+      .request(VIEW_STATE_TOPIC.update, { tab: tabId, scroll: readScroll() })
       .catch(() => {
         // 通道异常静默（尽力而为通道，无重试面）
       })
+  }
+
+  function onAnyScroll(evt: Event): void {
+    if (evt.target !== scrollEl) return
+    if (scrollPushTimer !== null) cancel(scrollPushTimer)
+    scrollPushTimer = schedule(() => {
+      scrollPushTimer = null
+      pushViewState(active)
+    }, SCROLL_THROTTLE_MS)
+  }
+  doc.addEventListener('scroll', onAnyScroll, { capture: true, passive: true })
+
+  /** 确定导航的唯一切页入口：切页 + 上送宿主 view-state（失败静默不阻塞
+   *  切换——UI 浏览态尽力而为）。按钮点击 / 键盘导航 / switchTab 受控
+   *  API / 搜索定位四路共用；上送时顺带读取当前滚动偏移入账（覆盖节流
+   *  窗内未落账的程序性位移） */
+  function selectTab(tabId: SettingsTabId, focusButton = false): void {
+    viewStateClaimed = true
+    activateTab(tabId, focusButton)
+    pushViewState(tabId)
   }
 
   for (const tabId of SETTINGS_TAB_IDS) {
@@ -927,18 +975,35 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
 
   void refreshSettings()
 
-  // view-state 恢复（#63）：mount 后拉宿主会话级 Tab 浏览位置。先同步渲染
-  // 默认 Tab、回包后切换（本地通道毫秒级，用户无感）；回包 tab 经
+  // view-state 恢复（#63）：mount 后拉宿主会话级 Tab 浏览位置与滚动偏移。
+  // 先同步渲染默认 Tab、回包后切换（本地通道毫秒级，用户无感）；回包 tab 经
   // SETTINGS_TAB_IDS 合法性校验（非法/缺席保持默认），通道失败静默；回包
   // 前已有确定导航（viewStateClaimed，见 selectTab）则放弃恢复；dispose 后
   // 迟到的回包无操作。恢复切换不上送（值本就来自宿主侧，无回写必要）。
+  // 滚动偏移在内容起高后回放（rAF，定时器回退兜底）：Tab 恢复不发生时
+  // （如宿主记忆 tab 即默认）同样应用——离开时停在默认 Tab 中部也属浏览
+  // 进度；超出内容高度由浏览器自然钳制。
   void options.channel
     .request(VIEW_STATE_TOPIC.get, null)
     .then((outcome) => {
       if (disposed || viewStateClaimed || outcome.ok !== true) return
-      const tab = (outcome.result as { tab?: unknown } | null)?.tab
+      const result = outcome.result as { tab?: unknown; scroll?: unknown } | null
+      const tab = result?.tab
       if (typeof tab !== 'string' || !(SETTINGS_TAB_IDS as readonly string[]).includes(tab)) return
       if (tab !== active) activateTab(tab as SettingsTabId)
+      if (typeof result?.scroll === 'number' && Number.isFinite(result.scroll) && result.scroll > 0) {
+        const offset = result.scroll
+        const applyScroll = (): void => {
+          if (!disposed && !viewStateClaimed) scrollEl.scrollTop = offset
+        }
+        // rAF 等布局落地（jsdom 无 rAF 时定时器回退）；再次校验 claimed——
+        // 回包与帧回调之间用户仍可能抢先导航
+        if (typeof doc.defaultView?.requestAnimationFrame === 'function') {
+          doc.defaultView.requestAnimationFrame(applyScroll)
+        } else {
+          schedule(applyScroll, 0)
+        }
+      }
     })
     .catch(() => {
       // 通道异常静默（恢复尽力而为，保持默认 Tab）
@@ -1013,6 +1078,11 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
     refreshSettings,
     dispose(): void {
       disposed = true
+      // view-state 滚动接入清理（#63 扩展）：捕获监听与节流定时器随页面
+      // 释放（dispose 后位移不再入账；迟到的回放回调经 disposed 守卫跳过）
+      doc.removeEventListener('scroll', onAnyScroll, { capture: true } as EventListenerOptions)
+      if (scrollPushTimer !== null) cancel(scrollPushTimer)
+      scrollPushTimer = null
       if (statusTimer !== null) cancel(statusTimer)
       statusTimer = null
       unsubscribeScope?.()

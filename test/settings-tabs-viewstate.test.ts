@@ -14,8 +14,10 @@
 //
 // 沿革：诊断探针 DEBUG-diagA 观察环断言反转转正（现状断言见票 #63 诊断
 // 结论）；对照两例保留——A 页面内重渲染不重置 Tab；B 设置数据跨 mount
-// 不丢（丢失面仅浏览位置类 UI 态；本票收口 Tab，滚动位置上游亦不保存、
-// 维持不持久化）。
+// 不丢（丢失面仅浏览位置类 UI 态；本票收口 Tab + 页面级滚动偏移——
+// 滚动保存超上游一步：上游 display() 全量重建必回顶，本仓按 #63 验收
+// 预期补齐，恢复时机修正见票内「平台 focusSection.scroll 对异步装载的
+// 附加组件页失效」分析）。
 import { afterEach, describe, expect, it } from 'vitest'
 import { mountSettingsPage, type SettingsPageViewHandle } from '../src/settingsTabsUi'
 import { HostRulesService, registerRulesChannels } from '../src/rulesHost'
@@ -126,6 +128,11 @@ function assembleHostBackend(initialSettings: Record<string, unknown> = {}, with
       const outcome = await request(VIEW_STATE_TOPIC.get, null)
       return outcome.ok ? ((outcome.result as { tab: string | null }).tab ?? null) : null
     },
+    /** 宿主侧 view-state 全量读取（tab + scroll） */
+    async hostViewState(): Promise<{ tab: string | null; scroll: number | null }> {
+      const outcome = await request(VIEW_STATE_TOPIC.get, null)
+      return outcome.ok ? (outcome.result as { tab: string | null; scroll: number | null }) : { tab: null, scroll: null }
+    },
     /** 注入宿主持有的 Tab 值（经 update topic——字符串即存） */
     async seedTab(tab: string): Promise<void> {
       await request(VIEW_STATE_TOPIC.update, { tab })
@@ -191,8 +198,10 @@ async function mountPage(
     messages: zhMessages,
     localeTag: 'zh-cn',
     doc: document,
-    setTimeout: () => 0,
-    clearTimeout: () => {},
+    // 真实定时器（#63 滚动扩展）：滚动上报走 200ms 尾沿节流，空桩会吞掉
+    // 节流回调导致位移永不上送
+    setTimeout: (fn, ms) => setTimeout(fn, ms),
+    clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
     settingsContext,
   })
   await flush()
@@ -201,20 +210,21 @@ async function mountPage(
 
 afterEach(() => {
   document.body.textContent = ''
+  // jsdom 的 documentElement.scrollTop 跨用例持久（真实浏览器每次装载
+  // 归零）——复位以对齐真实语义，避免滚动用例间串扰
+  document.documentElement.scrollTop = 0
 })
 
 describe('Tab 浏览态跨 mount 保留（#63 宿主侧会话级 view-state）', () => {
-  it('主线：切到非默认 Tab → 关闭面板 → 重开，回到离开时的 Tab（滚动归零维持不持久化）', async () => {
+  it('主线：切到非默认 Tab → 关闭面板 → 重开，回到离开时的 Tab', async () => {
     const backend = assembleHostBackend()
     const first = await mountPage(backend.request)
 
-    // 用户点选非默认 Tab（真实交互路径）并滚动面板（jsdom scrollTop 可写可读）
+    // 用户点选非默认 Tab（真实交互路径）
     const btn = first.root.querySelector<HTMLButtonElement>('[data-vet-tab="user-rules"]')
     expect(btn).not.toBeNull()
     btn!.click()
     expect(first.view.activeTab()).toBe('user-rules')
-    const panel1 = first.root.querySelector<HTMLElement>('[data-vet-panel="user-rules"]')
-    panel1!.scrollTop = 300
 
     // 关闭设置页：webview 销毁（页面 dispose）——宿主后端常驻
     first.view.dispose()
@@ -225,8 +235,9 @@ describe('Tab 浏览态跨 mount 保留（#63 宿主侧会话级 view-state）',
     const panel2 = second.root.querySelector<HTMLElement>('[data-vet-panel="user-rules"]')
     expect(panel2).not.toBeNull()
     expect(panel2!.hasAttribute('hidden')).toBe(false)
-    // 滚动位置不持久化（上游亦无保存——对齐；只有 Tab 经 view-state 保留）
-    expect(panel2!.scrollTop).toBe(0)
+    // 页面级滚动（documentElement，jsdom 无平台滚动祖先时的回退落点）的
+    // 保存与恢复见下方「滚动位置」组；本例未滚动，保持顶部
+    expect(document.documentElement.scrollTop).toBe(0)
     second.view.dispose()
   })
 
@@ -327,5 +338,97 @@ describe('对照例（探针转正保留：丢失面仅浏览位置类 UI 态）
     const input2 = row2!.querySelector<HTMLInputElement>('input[type="checkbox"]')
     expect(input2!.checked).toBe(false)
     second.view.dispose()
+  })
+})
+
+describe('滚动位置随 view-state 保存与恢复（#63 扩展：超上游一步）', () => {
+  /** 触发滚动上报路径：设置 documentElement（jsdom 回退落点）scrollTop
+   *  并派发 scroll 事件（真实宿主的滚动祖先由 mount 向上解析取得，
+   *  jsdom 无平台滚动祖先 → scrollingElement 回退，同一读写面） */
+  function scrollPageTo(offset: number): void {
+    document.documentElement.scrollTop = offset
+    document.documentElement.dispatchEvent(new Event('scroll'))
+  }
+
+  /** 等待滚动上报尾沿节流窗（实现口径 200ms + 余量） */
+  async function waitScrollThrottle(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 260))
+  }
+
+  it('主线：滚动 → 关闭面板 → 重开，回到离开时的 Tab 与滚动偏移', async () => {
+    const backend = assembleHostBackend()
+    const first = await mountPage(backend.request)
+    first.root.querySelector<HTMLButtonElement>('[data-vet-tab="user-rules"]')!.click()
+
+    scrollPageTo(400)
+    await waitScrollThrottle()
+    expect(await backend.hostViewState()).toEqual({ tab: 'user-rules', scroll: 400 })
+
+    first.view.dispose()
+
+    const second = await mountPage(backend.request)
+    expect(second.view.activeTab()).toBe('user-rules')
+    await flush(4)
+    // 滚动恢复在内容起高后回放（rAF/定时器回退）——离开时偏移原样回位
+    expect(document.documentElement.scrollTop).toBe(400)
+    second.view.dispose()
+  })
+
+  it('切换即上送携带当前滚动：无 scroll 事件的程序性位移也随 Tab 切换入账', async () => {
+    const backend = assembleHostBackend()
+    const page = await mountPage(backend.request)
+    // 程序性设置 scrollTop（不派发 scroll 事件——模拟节流窗内的最后位移）
+    document.documentElement.scrollTop = 300
+    page.view.switchTab('other')
+    await flush(2)
+    expect(await backend.hostViewState()).toEqual({ tab: 'other', scroll: 300 })
+    page.view.dispose()
+  })
+
+  it('无滚动位移重开保持顶部（scroll 记忆为 0，回放等价无操作）', async () => {
+    const backend = assembleHostBackend()
+    const first = await mountPage(backend.request)
+    first.root.querySelector<HTMLButtonElement>('[data-vet-tab="auto-format"]')!.click()
+    // 未滚动（无 scroll 事件、切换时 scrollTop 为 0）→ 宿主只有 tab 记忆
+    await flush(2)
+    expect(await backend.hostViewState()).toEqual({ tab: 'auto-format', scroll: 0 })
+    first.view.dispose()
+
+    const second = await mountPage(backend.request)
+    await flush(4)
+    expect(second.view.activeTab()).toBe('auto-format')
+    expect(document.documentElement.scrollTop).toBe(0)
+    second.view.dispose()
+  })
+
+  it('恢复让位：回包迟到于用户切换时不应用滚动（不翻转既有视图）', async () => {
+    const backend = assembleHostBackend()
+    // 种入带滚动的记忆，挂起恢复回包
+    await backend.request('easyTyping.viewState.update', { tab: 'user-rules', scroll: 500 })
+    const release = backend.holdViewStateGet()
+    const page = await mountPage(backend.request)
+    document.documentElement.scrollTop = 0
+    // 回包挂起期间用户已切到 other
+    page.root.querySelector<HTMLButtonElement>('[data-vet-tab="other"]')!.click()
+    release()
+    await flush(6)
+    expect(page.view.activeTab()).toBe('other')
+    // 迟到的 {user-rules, 500} 不回放滚动
+    expect(document.documentElement.scrollTop).toBe(0)
+    page.view.dispose()
+  })
+
+  it('dispose 后滚动监听清理：后续滚动位移不再上送宿主', async () => {
+    const backend = assembleHostBackend()
+    const page = await mountPage(backend.request)
+    scrollPageTo(200)
+    await waitScrollThrottle()
+    expect((await backend.hostViewState()).scroll).toBe(200)
+
+    page.view.dispose()
+    scrollPageTo(600)
+    await waitScrollThrottle()
+    // 监听与节流定时器随 dispose 释放——宿主记忆停留在 200
+    expect(await backend.hostViewState()).toEqual({ tab: 'edit-enhance', scroll: 200 })
   })
 })
