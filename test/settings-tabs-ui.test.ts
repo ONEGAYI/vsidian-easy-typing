@@ -864,7 +864,7 @@ function flakyGetChannel(
 }
 
 describe('首次读取失败三态（审查轮 R2-P2-2：默认值在场 + 失败锁定 + 重试）', () => {
-  it('装载窗口（get 挂起）：控件已显示定义默认值且联动同步（不落浏览器原生初值）', async () => {
+  it('装载窗口（get 挂起）：控件已显示定义默认值且全行禁用（首读完成前不可编辑，不落浏览器原生初值）', async () => {
     const { store, request, holdNextGet } = assemble()
     // 存储真值先就位（mock 的 get 快照在调用时捕获，挂起门只延迟结算）
     store.values.autoFormat = false
@@ -878,9 +878,10 @@ describe('首次读取失败三态（审查轮 R2-P2-2：默认值在场 + 失�
     expect((rowControl(root, 'prefixDictionary') as HTMLTextAreaElement).value).toBe(
       DEFAULT_EFFECTIVE_SETTINGS.prefixDictionary,
     )
-    // 联动同步：默认总开关开 → 下游可编辑（与显示的总开关状态一致）
-    expect(rowControl(root, 'autoFormatPaste').disabled).toBe(false)
-    expect(rowControl(root, 'userDefinedRegExp').disabled).toBe(false)
+    // 首读完成前全行禁用（PR #59 复审 P2 收紧：默认值只作诚实呈现，不可编辑）
+    expect(rowControl(root, 'autoFormat').disabled).toBe(true)
+    expect(rowControl(root, 'autoFormatPaste').disabled).toBe(true)
+    expect(rowControl(root, 'userDefinedRegExp').disabled).toBe(true)
     // get 返回后照常应用存储真值（默认值只是装载窗口的诚实呈现）
     release()
     await flush()
@@ -975,6 +976,114 @@ describe('控件可访问名称（审查轮 R2-P2-4：WCAG 4.1.2 / F68）', () =
       // 统一走 aria-labelledby（checkbox 一并统一），不再叠用 aria-label
       expect(control.getAttribute('aria-label'), key).toBeNull()
     }
+  })
+})
+
+// ===== PR #59 第二轮复审修复（review 2026-10-18 P2 / P3）=====
+
+describe('首读完成前普通设置不可编辑（复审 P2：防默认值覆盖已存配置）', () => {
+  it('装载窗口 24 行全部禁用（disabled + aria-disabled）；规则分区独立通道照常可用；放行后恢复可编辑', async () => {
+    const { request, holdNextGet } = assemble()
+    const release = holdNextGet()
+    const { root } = await mountPage(request)
+    const rowEls = [...root.querySelectorAll('[data-vet-setting-key]')]
+    expect(rowEls).toHaveLength(24)
+    for (const rowEl of rowEls) {
+      const key = rowEl.getAttribute('data-vet-setting-key') ?? ''
+      const control = q<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(rowEl, 'input, select, textarea')
+      expect(control.disabled, key).toBe(true)
+      expect(rowEl.getAttribute('aria-disabled'), key).toBe('true')
+    }
+    // 规则分区走独立通道（RulesSettingsClient）：首读门不影响其可编辑性
+    const builtinToggle = q<HTMLInputElement>(root, '[data-vet-builtin-list] input[data-vet-action="toggle-builtin"]')
+    expect(builtinToggle.disabled).toBe(false)
+    release()
+    await flush()
+    expect(rowControl(root, 'tabout').disabled).toBe(false)
+  })
+
+  it('反例①：存储 tabout=false，装载窗口仅聚焦不构成草稿——放行后首快照强制回填存储真值', async () => {
+    const { request, holdNextGet } = assemble({ tabout: false })
+    const release = holdNextGet()
+    const { root } = await mountPage(request)
+    const control = rowControl(root, 'tabout') as HTMLInputElement
+    // 装载窗口显示定义默认值 true 且禁用（disabled 控件聚焦不成立）
+    expect(control.checked).toBe(true)
+    expect(control.disabled).toBe(true)
+    control.focus()
+    release()
+    await flush()
+    // 单纯聚焦（无真实草稿）不再挡存储真值回填
+    expect(control.checked).toBe(false)
+  })
+
+  it('反例②：存储 autoFormat=false，放行后主开关 false + 下游禁用（无「主开关 true 而下游已禁」矛盾态）', async () => {
+    const { request, holdNextGet } = assemble({ autoFormat: false })
+    const release = holdNextGet()
+    const { root } = await mountPage(request)
+    const master = rowControl(root, 'autoFormat') as HTMLInputElement
+    // 装载窗口：主开关显示默认 true 但自身禁用、下游同步禁用——不存在可操作的矛盾呈现
+    expect(master.checked).toBe(true)
+    expect(master.disabled).toBe(true)
+    expect(rowControl(root, 'autoFormatPaste').disabled).toBe(true)
+    master.focus()
+    release()
+    await flush()
+    // 首快照强制回填 + 联动按存储真值接管：主开关 false 且可用、下游置灰
+    expect(master.checked).toBe(false)
+    expect(master.disabled).toBe(false)
+    expect(rowControl(root, 'autoFormatPaste').disabled).toBe(true)
+    const downstreamRow = q(root, '[data-vet-setting-key="autoFormatPaste"]')
+    expect(downstreamRow.getAttribute('title')).toBe(zhMessages.settingsTabs.hintDisabledByMaster)
+  })
+
+  it('反例③：装载窗口词典不可编辑，已存词典不被「默认词典+新词条」覆盖（放行后显示存储词典且零写入）', async () => {
+    const { store, request, holdNextGet } = assemble({ prefixDictionary: '存储词典, /x/' })
+    const release = holdNextGet()
+    const { root } = await mountPage(request)
+    const dict = rowControl(root, 'prefixDictionary') as HTMLTextAreaElement
+    expect(dict.disabled).toBe(true) // 不可编辑 → 用户无法在默认词典上追加词条
+    // 纵有程序化 change 到达（防御深度）：未加载完成的写入被守卫忽略
+    changeValue(dict, `${dict.value}\nnew-entry`)
+    expect(store.updateCalls).toHaveLength(0)
+    release()
+    await flush()
+    expect(dict.value).toBe('存储词典, /x/')
+    expect(store.updateCalls).toHaveLength(0)
+    expect(dict.disabled).toBe(false)
+  })
+})
+
+describe('重试恢复清理状态行残留（复审 P3）', () => {
+  it('重试成功：仍属于本次读取失败的提示立即清除（不等 6s 计时）', async () => {
+    const base = assemble()
+    const flaky = flakyGetChannel(base.request, 'reject')
+    const { root } = await mountPage(flaky.request)
+    const status = q(root, '[data-vet-status]')
+    expect(status.textContent).toContain(zhMessages.settingsTabs.loadFailedText) // 失败提示在场
+    flaky.recover()
+    q<HTMLButtonElement>(root, '[data-vet-action="retry-load"]').click()
+    await flush()
+    expect(q<HTMLElement>(root, '[data-vet-load-error]').hidden).toBe(true)
+    expect(status.textContent).toBe('') // 残留失败提示立即清除
+    expect(status.getAttribute('data-vet-status')).toBe('')
+  })
+
+  it('失败提示被规则通道更新消息覆盖后重试成功：规则消息存活不被误清', async () => {
+    const base = assemble()
+    const flaky = flakyGetChannel(base.request, 'reject')
+    const { root } = await mountPage(flaky.request)
+    // 规则分区经 hosts statusSink 写入更新消息（覆盖失败提示）
+    q<HTMLButtonElement>(root, '[data-vet-action="reset-all"]').click()
+    await flush()
+    const status = q(root, '[data-vet-status]')
+    expect(status.getAttribute('data-vet-status')).toBe('success') // 规则消息在场（非失败文案）
+    flaky.recover()
+    q<HTMLButtonElement>(root, '[data-vet-action="retry-load"]').click()
+    await flush()
+    expect(q<HTMLElement>(root, '[data-vet-load-error]').hidden).toBe(true)
+    expect(status.getAttribute('data-vet-status')).toBe('success') // 规则消息存活
+    expect(status.textContent).not.toBe('')
   })
 })
 

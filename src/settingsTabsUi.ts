@@ -26,6 +26,11 @@
 //   aria-describedby 说明）；spacing 分区用户级标注；写失败强制回滚键单槽
 //   扩集合；用户层视角的合并值提示（平台按层读取缺口过渡处置）。
 //
+// 【PR #59 第二轮复审】首读完成前普通设置明确不可编辑（装载窗口全行禁用
+//   + 首个有效快照强制回填 + 写入守卫三防线——防未知默认值经 change 覆盖
+//   已存配置、防仅聚焦挡首快照回填）；重试恢复时清理状态行仍挂着的本次
+//   失败提示（较新的规则通道消息不误清）。
+//
 // 【Tab 态】内存保存，默认编辑增强，页面卸载即复位（决策 5/6）。
 // switchTab 为受控切换 API（外部驱动面）；搜索定位经内部 activateTab
 // 同一受控路径切页。
@@ -204,7 +209,9 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
   )
   /** sources 快照（get 返回的来源分层 default/user/workspace；徽章驱动） */
   let currentSources: Readonly<Record<string, string>> = {}
-  /** 设置读取态（审查轮 R2-P2-2 三态）：loading（默认值在场）→ loaded /
+  /** 设置读取态（审查轮 R2-P2-2 三态 + PR #59 复审 P2 收紧）：loading
+   *  （默认值在场且全行禁用——首读完成前不可编辑，防未知默认值覆盖已存
+   *  配置）→ loaded（首个有效快照强制回填 + 联动接管后启用）/
    *  failed（首 get 拒绝或抛错 → 横幅 + 重试 + 行禁用，重试成功恢复）。
    *  已成功读取后的后续 get 失败不回 failed——保持既有静默语义（值是已读
    *  真值而非默认值，写失败路径另有状态行提示） */
@@ -385,10 +392,11 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
   }
 
   /** 联动置灰（决策 11，纯 UI 态不改变写入）：总开关关 → 自动格式化 Tab
-   *  下游行置灰；userDefinedRegExp 再受正则开关二级联动。装载失败锁定
-   *  期间（审查轮 R2-P2-2）联动让位——全部行已禁用，恢复后由本函数接管 */
+   *  下游行置灰；userDefinedRegExp 再受正则开关二级联动。首读完成前
+   *  （装载窗口 + 失败锁定，PR #59 复审 P2）联动不接管——全行已禁用，
+   *  联动提示会误导禁用归因；首个有效快照结算后由本函数接管禁用语义 */
   function applyLinkage(): void {
-    if (settingsLoadFailed) return
+    if (!settingsLoaded) return
     const masterOn = currentValues[MASTER_KEY] !== false
     const regSwitchOn = currentValues[REGEXP_SWITCH_KEY] !== false
     for (const key of masterDownstreamKeys) {
@@ -558,10 +566,15 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
   }
 
   // 控件创建即应用定义默认值（审查轮 R2-P2-2）：装载窗口（get 在途）与
-  // 首读失败期间不落浏览器原生初值（checkbox 未选 / enum 首项 / 空文本），
-  // 联动同步初始化；get 成功后由 refreshSettings 替换为存储真值
+  // 首读失败期间不落浏览器原生初值（checkbox 未选 / enum 首项 / 空文本）；
+  // get 成功后由 refreshSettings 替换为存储真值
   for (const entry of rows.values()) applyValue(entry, entry.def.default)
-  applyLinkage()
+  // 首读完成前普通设置不可编辑（PR #59 复审 P2）：装载窗口呈现定义默认值
+  // 但全部行禁用——防未知默认值经 change 提交覆盖已存配置（数据丢失），
+  // 也阻断「仅聚焦即挡首快照回填」的草稿误保护（disabled 控件无合法草稿）；
+  // 首个有效快照完成回填与联动后启用（refreshSettings 成功结算恢复，
+  // 失败态行禁用由 enterLoadFailedState 接管并补行级提示）
+  for (const entry of rows.values()) setRowDisabled(entry, true, null)
 
   // ===== 设置读写通道（决策 12：写后重拉刷新；目标层跟随作用域） =====
 
@@ -692,10 +705,19 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
     }
   }
 
-  /** 退出失败态：横幅隐藏 + 全行恢复可编辑（联动紧随其后接管禁用语义） */
+  /** 退出失败态：横幅隐藏 + 全行恢复可编辑（联动紧随其后接管禁用语义）。
+   *  状态行残留清理（PR #59 复审 P3）：仅当当前文本仍等于本次失败提示
+   *  文案（未被规则通道等较新消息覆盖）时立即清除并取消计时——不无条件
+   *  清空共享状态行（会抹掉规则通道较新的提示） */
   function exitLoadFailedState(): void {
     settingsLoadFailed = false
     loadError.hidden = true
+    if (status.textContent === t.loadFailedText) {
+      if (statusTimer !== null) cancel(statusTimer)
+      statusTimer = null
+      status.textContent = ''
+      status.setAttribute('data-vet-status', '')
+    }
     for (const entry of rows.values()) {
       setRowDisabled(entry, false, null)
     }
@@ -740,13 +762,16 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
         if (!settingsLoaded) enterLoadFailedState()
         return
       }
+      const isFirstSnapshot = !settingsLoaded
       settingsLoaded = true
       exitLoadFailedState()
       currentValues = effective as Readonly<Record<string, unknown>>
       const sources = snapshot?.sources
       currentSources = sources !== null && typeof sources === 'object' ? (sources as Readonly<Record<string, string>>) : {}
       for (const entry of rows.values()) {
-        applyValue(entry, currentValues[entry.def.key] ?? entry.def.default, pendingForceRollbackKeys.has(entry.def.key))
+        // 首个有效快照强制回填（PR #59 复审 P2）：首读前行全程禁用无合法
+        // 草稿，聚焦保护不适用——防「仅聚焦（无真实草稿）」挡存储真值回填
+        applyValue(entry, currentValues[entry.def.key] ?? entry.def.default, isFirstSnapshot || pendingForceRollbackKeys.has(entry.def.key))
       }
       pendingForceRollbackKeys.clear() // 失败对账强制回滚一次性消费（结算笔清空集合）
       applyLinkage()
@@ -787,6 +812,10 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
   }
 
   async function write(key: string, value: unknown): Promise<void> {
+    // 首读完成前忽略任何写入（PR #59 复审 P2 防御深度）：装载窗口/失败态
+    // 行已禁用，此处兜底程序化 change 等边缘路径——此刻显示的是定义默认值
+    // 而非存储真值，写入即以未知默认值覆盖已存配置
+    if (!settingsLoaded) return
     let outcome: Awaited<ReturnType<SettingsChannelLike['request']>>
     try {
       outcome = await options.channel.request(SETTINGS_TOPIC.update, { scope: writeScope(), patch: { [key]: value } })
