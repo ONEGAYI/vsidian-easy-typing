@@ -205,6 +205,25 @@ async function flush(times = 2): Promise<void> {
   }
 }
 
+// ===== 可控 rAF（PR #65 复审非阻断建议落地）=====
+// 滚动回放经 requestAnimationFrame 排帧；真实帧定时器让「回放机会已
+// 发生」依赖墙钟余量（曾以 60ms 真实等待兜底，与微任务 flush 在 CI
+// 上竞争）。替换为帧队列桩：注册即入队、advanceFrame() 显式推进——
+// 正向断言确定拿到回放结果，负向（守卫拦截）断言确定守卫路径已被
+// 真实执行，两侧都不再赌时间。src/ 内仅恢复路径一处消费 rAF
+// （settingsTabsUi.ts），替换无旁枝影响。
+const rafQueue: FrameRequestCallback[] = []
+window.requestAnimationFrame = (callback: FrameRequestCallback): number => {
+  rafQueue.push(callback)
+  return rafQueue.length
+}
+
+/** 推进一帧：执行当前已注册的全部帧回调（回调内新注册的帧归下一帧，不链式放行） */
+function advanceFrame(): void {
+  const callbacks = rafQueue.splice(0)
+  for (const callback of callbacks) callback(0)
+}
+
 /** 单次页面装载（等价 webview 内 defineAddonPage 工厂执行一次） */
 async function mountPage(
   request: ReturnType<typeof assembleHostBackend>['request'],
@@ -235,6 +254,8 @@ afterEach(() => {
   // jsdom 的 documentElement.scrollTop 跨用例持久（真实浏览器每次装载
   // 归零）——复位以对齐真实语义，避免滚动用例间串扰
   document.documentElement.scrollTop = 0
+  // 残留帧清空：未推进的回放帧不得泄入下一用例
+  rafQueue.length = 0
 })
 
 describe('Tab 浏览态跨 mount 保留（#63 宿主侧会话级 view-state）', () => {
@@ -388,6 +409,11 @@ describe('滚动位置随 view-state 保存与恢复（#63 扩展：超上游一
 
     first.view.dispose()
 
+    // 重开面板 = 全新 webview 装载：真实浏览器滚动位置归零——jsdom 的
+    // scrollTop 跨 mount 持久，须显式复位，否则断言被第一次滚动的残留
+    // 值污染（恢复缺失也恒绿，假阳性）
+    document.documentElement.scrollTop = 0
+
     const second = await mountPage(backend.request)
     expect(second.view.activeTab()).toBe('user-rules')
     await waitRestoreApplied()
@@ -433,7 +459,7 @@ describe('滚动位置随 view-state 保存与恢复（#63 扩展：超上游一
     // 回包挂起期间用户已切到 other
     page.root.querySelector<HTMLButtonElement>('[data-vet-tab="other"]')!.click()
     release()
-    await flush(6)
+    await waitRestoreApplied()
     expect(page.view.activeTab()).toBe('other')
     // 迟到的 {user-rules, 500} 不回放滚动
     expect(document.documentElement.scrollTop).toBe(0)
@@ -456,12 +482,14 @@ describe('滚动位置随 view-state 保存与恢复（#63 扩展：超上游一
 
   // ===== R1 审查 001：规则列表异步装载晚于 view-state 回包时不提前回放 =====
 
-  /** 等待滚动回放确定性落定（CI 时序加固）：规则装载 settle → 双信号
-   *  Promise.all → rAF 帧回调，链路含真实帧定时器——纯微任务 flush 不
-   *  保证帧回调已跑（CI 上 flush(6) 抢跑断言），补真实等待余量 */
+  /** 等待滚动回放确定性落定：微任务链（通道回包 → 双信号 Promise.all →
+   *  rAF 注册）有界推进至回放帧入队（正向场景帧已注册即提前出；负向
+   *  场景守卫在帧回调内，帧同样注册、推进后由守卫拦下——入口短路形
+   *  态帧不注册，跑满轮数即链路静止），再显式推进一帧——正反断言均
+   *  不依赖墙钟余量 */
   async function waitRestoreApplied(): Promise<void> {
-    await flush(4)
-    await new Promise((resolve) => setTimeout(resolve, 60))
+    for (let i = 0; i < 16 && rafQueue.length === 0; i += 1) await flush(1)
+    advanceFrame()
     await flush(2)
   }
 
@@ -490,7 +518,7 @@ describe('滚动位置随 view-state 保存与恢复（#63 扩展：超上游一
     // 等待窗口内用户切到 other（claimed）
     page.root.querySelector<HTMLButtonElement>('[data-vet-tab="other"]')!.click()
     releaseRules()
-    await flush(8)
+    await waitRestoreApplied()
     expect(page.view.activeTab()).toBe('other')
     expect(document.documentElement.scrollTop).toBe(0)
     page.view.dispose()
@@ -504,7 +532,7 @@ describe('滚动位置随 view-state 保存与恢复（#63 扩展：超上游一
     // 模拟平台切换分页：组件 DOM 从主区移出（mount 释放只清 parent，不等价 dispose）
     page.root.remove()
     releaseRules()
-    await flush(8)
+    await waitRestoreApplied()
     expect(document.documentElement.scrollTop).toBe(0)
     page.view.dispose()
   })
