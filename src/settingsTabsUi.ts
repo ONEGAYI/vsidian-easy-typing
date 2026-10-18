@@ -364,11 +364,22 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
       })
   }
 
+  /** 组件在场归属（R1 审查 002）：root 仍连接且属于解析出的滚动容器。
+   *  平台切到其他设置分页时组件 DOM 从共享主区移出（mount 释放只清
+   *  parent，装载常驻不等价 dispose）——脱离即失去对共享容器滚动的
+   *  记账权；重入（重新挂入主区）自然恢复 */
+  function ownsScroll(): boolean {
+    return root.isConnected && scrollEl.contains(root)
+  }
+
   function onAnyScroll(evt: Event): void {
-    if (evt.target !== scrollEl) return
+    if (evt.target !== scrollEl || !ownsScroll()) return
     if (scrollPushTimer !== null) cancel(scrollPushTimer)
     scrollPushTimer = schedule(() => {
       scrollPushTimer = null
+      // 尾沿到期时再校验归属：切离后到期的上报不提交（事件与到期之间
+      // 组件可能已离开共享主区）
+      if (!ownsScroll()) return
       pushViewState(active)
     }, SCROLL_THROTTLE_MS)
   }
@@ -973,16 +984,20 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
     },
   })
 
-  void refreshSettings()
+  const initialSettingsRefresh = refreshSettings()
 
   // view-state 恢复（#63）：mount 后拉宿主会话级 Tab 浏览位置与滚动偏移。
   // 先同步渲染默认 Tab、回包后切换（本地通道毫秒级，用户无感）；回包 tab 经
   // SETTINGS_TAB_IDS 合法性校验（非法/缺席保持默认），通道失败静默；回包
   // 前已有确定导航（viewStateClaimed，见 selectTab）则放弃恢复；dispose 后
   // 迟到的回包无操作。恢复切换不上送（值本就来自宿主侧，无回写必要）。
-  // 滚动偏移在内容起高后回放（rAF，定时器回退兜底）：Tab 恢复不发生时
+  // 滚动偏移在**真实内容起高后**回放（R1 审查 001）：等待「首帧设置刷新 +
+  // 规则分区初始装载」双信号（规则列表是页面内异步起高的主要分区——
+  // view-state 回包快于规则文件读取时，单帧回放会被未起高的内容钳掉），
+  // 再经 rAF 等布局落地（jsdom 无 rAF 时定时器回退）。Tab 恢复不发生时
   // （如宿主记忆 tab 即默认）同样应用——离开时停在默认 Tab 中部也属浏览
-  // 进度；超出内容高度由浏览器自然钳制。
+  // 进度；超出内容高度由浏览器自然钳制。回放前校验归属（R1 审查 002）：
+  // 等待期间组件已离开共享主区（平台切分页移出 DOM）则不写共享容器。
   void options.channel
     .request(VIEW_STATE_TOPIC.get, null)
     .then((outcome) => {
@@ -993,16 +1008,18 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
       if (tab !== active) activateTab(tab as SettingsTabId)
       if (typeof result?.scroll === 'number' && Number.isFinite(result.scroll) && result.scroll > 0) {
         const offset = result.scroll
-        const applyScroll = (): void => {
-          if (!disposed && !viewStateClaimed) scrollEl.scrollTop = offset
-        }
-        // rAF 等布局落地（jsdom 无 rAF 时定时器回退）；再次校验 claimed——
-        // 回包与帧回调之间用户仍可能抢先导航
-        if (typeof doc.defaultView?.requestAnimationFrame === 'function') {
-          doc.defaultView.requestAnimationFrame(applyScroll)
-        } else {
-          schedule(applyScroll, 0)
-        }
+        void Promise.all([initialSettingsRefresh, rulesView.ready]).then(() => {
+          const applyScroll = (): void => {
+            // 再次校验：等待与帧回调之间用户可能抢先导航（claimed）、组件
+            // 可能已离开共享主区（归属）或已释放（disposed）
+            if (!disposed && !viewStateClaimed && ownsScroll()) scrollEl.scrollTop = offset
+          }
+          if (typeof doc.defaultView?.requestAnimationFrame === 'function') {
+            doc.defaultView.requestAnimationFrame(applyScroll)
+          } else {
+            schedule(applyScroll, 0)
+          }
+        })
       }
     })
     .catch(() => {
