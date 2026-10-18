@@ -209,6 +209,9 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
   )
   /** sources 快照（get 返回的来源分层 default/user/workspace；徽章驱动） */
   let currentSources: Readonly<Record<string, string>> = {}
+  /** 用户默认层显式值（vsidian#590：get 快照可选 userValues；undefined =
+   *  旧宿主字段缺席 → 按层显示降级合并显示 + mergedHint 过渡提示） */
+  let currentUserValues: Readonly<Record<string, unknown>> | undefined
   /** 设置读取态（审查轮 R2-P2-2 三态 + PR #59 复审 P2 收紧）：loading
    *  （默认值在场且全行禁用——首读完成前不可编辑，防未知默认值覆盖已存
    *  配置）→ loaded（首个有效快照强制回填 + 联动接管后启用）/
@@ -397,8 +400,8 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
    *  联动提示会误导禁用归因；首个有效快照结算后由本函数接管禁用语义 */
   function applyLinkage(): void {
     if (!settingsLoaded) return
-    const masterOn = currentValues[MASTER_KEY] !== false
-    const regSwitchOn = currentValues[REGEXP_SWITCH_KEY] !== false
+    const masterOn = displayValueOf(MASTER_KEY, true) !== false
+    const regSwitchOn = displayValueOf(REGEXP_SWITCH_KEY, true) !== false
     for (const key of masterDownstreamKeys) {
       const entry = rows.get(key)
       if (!entry) continue
@@ -590,6 +593,19 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
    *  与来源徽章都随 layers 解析变化 */
   const unsubscribeScope = scopeFacet ? scopeFacet.onScopeChange(() => { void refreshSettings() }) : null
 
+  /** #60 按层显示：控件显示值随平台选中层计算——
+   *  - workspace 视角：合并 effective 即工作区视角（workspace 显式 > user > default）；
+   *  - user 视角且层值可用：用户层显式值，键未显式保存时出厂默认——不显示
+   *    被工作区覆盖的合并值；
+   *  - user 视角且层值缺席（旧宿主降级）：回落合并值（mergedHint 在场提示） */
+  function displayValueOf(key: string, fallback: unknown): unknown {
+    if (scopeFacet !== undefined && scopeFacet.scopeState().scope === 'user' && currentUserValues !== undefined) {
+      const layered = currentUserValues[key]
+      return layered !== undefined ? layered : fallback
+    }
+    return currentValues[key] ?? fallback
+  }
+
   // ===== 搜索定位接入（#55 切片 3）：平台只给 {kind, key} 落点，切页内
   // Tab 与定位控件是组件职责。平台刻意不做等值去重——重复目标重新滚动/
   // 高亮（幂等可重入）；null 清除高亮；页面重装载重放当前目标属正常。
@@ -689,7 +705,7 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
       const overridden = scopeUiEnabled && currentSources[entry.def.key] === 'workspace'
       entry.badge.hidden = !overridden
       entry.clearBtn.hidden = !overridden
-      entry.mergedHint.hidden = !(viewingUserScope && overridden)
+      entry.mergedHint.hidden = !(viewingUserScope && overridden && currentUserValues === undefined)
     }
   }
 
@@ -768,10 +784,14 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
       currentValues = effective as Readonly<Record<string, unknown>>
       const sources = snapshot?.sources
       currentSources = sources !== null && typeof sources === 'object' ? (sources as Readonly<Record<string, string>>) : {}
+      // #60 层值解析：userValues 为对象才采用（缺席/非法 → undefined 降级）
+      const layeredRaw = (snapshot as { userValues?: unknown } | null)?.userValues
+      currentUserValues = layeredRaw !== null && typeof layeredRaw === 'object' ? (layeredRaw as Readonly<Record<string, unknown>>) : undefined
       for (const entry of rows.values()) {
         // 首个有效快照强制回填（PR #59 复审 P2）：首读前行全程禁用无合法
-        // 草稿，聚焦保护不适用——防「仅聚焦（无真实草稿）」挡存储真值回填
-        applyValue(entry, currentValues[entry.def.key] ?? entry.def.default, isFirstSnapshot || pendingForceRollbackKeys.has(entry.def.key))
+        // 草稿，聚焦保护不适用——防「仅聚焦（无真实草稿）」挡存储真值回填；
+        // 显示值经 displayValueOf 按选中层计算（#60）
+        applyValue(entry, displayValueOf(entry.def.key, entry.def.default), isFirstSnapshot || pendingForceRollbackKeys.has(entry.def.key))
       }
       pendingForceRollbackKeys.clear() // 失败对账强制回滚一次性消费（结算笔清空集合）
       applyLinkage()

@@ -54,6 +54,9 @@ interface LayeredSettingsStore {
   failReason: string | null
   clearFailReason: string | null
   getCount: number
+  /** #60：get 响应是否透出 userValues 字段（vsidian#590 新宿主形态）；
+   *  false 模拟旧宿主（字段缺席 → 组件降级合并显示） */
+  layered: boolean
 }
 
 /** fake facet（对齐 vendor AddonSettingsContextFacet 全形状；set 即分发） */
@@ -108,6 +111,7 @@ function assemble() {
     failReason: null,
     clearFailReason: null,
     getCount: 0,
+    layered: true,
   }
   handlers.set(SETTINGS_TOPIC.get, () => {
     store.getCount += 1
@@ -116,7 +120,12 @@ function assemble() {
     for (const key of [...Object.keys(store.userValues), ...Object.keys(store.wsValues)]) {
       sources[key] = Object.prototype.hasOwnProperty.call(store.wsValues, key) ? 'workspace' : 'user'
     }
-    return { values, sources, effective: { ...DEFAULT_EFFECTIVE_SETTINGS, excludeFiles: [...DEFAULT_EFFECTIVE_SETTINGS.excludeFiles], ...values } }
+    return {
+      values,
+      sources,
+      effective: { ...DEFAULT_EFFECTIVE_SETTINGS, excludeFiles: [...DEFAULT_EFFECTIVE_SETTINGS.excludeFiles], ...values },
+      ...(store.layered ? { userValues: { ...store.userValues } } : {}),
+    }
   })
   handlers.set(SETTINGS_TOPIC.update, (raw: unknown) => {
     const payload = raw as { scope: string; patch: Record<string, unknown> }
@@ -390,7 +399,9 @@ describe('清除工作区覆盖（SETTINGS_TOPIC.clearOverride）', () => {
     const { store, request } = assemble()
     store.userValues.tabout = true
     store.wsValues.tabout = false
-    const fake = fakeFacet()
+    // workspace 视角起点（#60：user 视角显示用户层真值，覆盖生效的合并
+    // 形态在 workspace 视角下观察——清除后该视角合并回退用户层）
+    const fake = fakeFacet({ scope: 'workspace', hasWorkspace: true })
     const { root } = await mountPage(request, { facet: fake.facet })
     // workspace 覆盖生效（effective = false）
     expect((rowControl(root, 'tabout') as HTMLInputElement).checked).toBe(false)
@@ -424,14 +435,14 @@ describe('清除工作区覆盖（SETTINGS_TOPIC.clearOverride）', () => {
 
 // ===== 用户默认层下的工作区合并值提示（审查轮 R2-P2-1 平台缺口过渡处置）=====
 
-// 平台 SDK get() 仅合并语义（vendor AddonSettingsService.get → {values, sources}），
-// 用户层被工作区覆盖的原值不可读——按层读取依赖 ONEGAYI/vsidian#590
-// （「附加组件设置 SDK 暴露按层读取」）。过渡语义：scope=user 且
-// sources[key]=workspace 的行显示合并值 + 徽章 + 增强提示；本组测试钉住
-// 过渡形态，平台按层读取落地后随 #590 回收改写。
-describe('用户默认层下的工作区合并值提示（审查轮 R2-P2-1，待 ONEGAYI/vsidian#590）', () => {
+// ===== 合并值提示 = 旧宿主降级形态（#60 起仅在 get 无 userValues 字段时出现）=====
+// #60 按层显示落地（vsidian#590 供货）后：新宿主 user 视角显示用户层真值，
+// mergedHint 回收；仅旧宿主（字段缺席）降级合并显示 + 过渡提示在场。
+// 本组钉住降级形态；新宿主按层显示见「#60 按层显示」组。
+describe('用户默认层下的工作区合并值提示（旧宿主降级形态）', () => {
   it('scope=user：显示合并值 + 徽章 + 增强提示（user 层 true / workspace 层 false → 显示 false）', async () => {
     const { store, request } = assemble()
+    store.layered = false // 旧宿主：get 无 userValues 字段
     store.userValues.tabout = true
     store.wsValues.tabout = false
     const fake = fakeFacet() // scope: 'user'
@@ -458,6 +469,7 @@ describe('用户默认层下的工作区合并值提示（审查轮 R2-P2-1，�
 
   it('作用域切换驱动提示显隐：user→workspace 后提示隐藏（徽章保持）', async () => {
     const { store, request } = assemble()
+    store.layered = false // 旧宿主：get 无 userValues 字段（vsidian#590 前），组件降级合并显示
     store.userValues.tabout = true
     store.wsValues.tabout = false
     const fake = fakeFacet()
@@ -467,5 +479,99 @@ describe('用户默认层下的工作区合并值提示（审查轮 R2-P2-1，�
     await flush()
     expect(q(root, '[data-vet-setting-key="tabout"] [data-vet-merged-hint]').hidden).toBe(true)
     expect(q(root, '[data-vet-setting-key="tabout"] [data-vet-source-badge]').hidden).toBe(false)
+  })
+})
+
+// #60 按层显示（vsidian#590 落地后的组件侧消费）：控件显示值与联动随平台
+// 选中层计算——user 视角显示用户层显式值（否则出厂默认），不显示被工作区
+// 覆盖的合并值；workspace 视角合并值即工作区视角；层值字段缺席（旧宿主）
+// 回落合并显示 + mergedHint 过渡提示在场（降级形态）。
+describe('五 Tab 设置页 #60 按层显示', () => {
+  it('scope=user：工作区覆盖行显示用户层真值（非合并值），mergedHint 回收', async () => {
+    const { store, request } = assemble()
+    store.userValues.tabout = false
+    store.wsValues.tabout = true // 工作区覆盖：合并值 true
+    const fake = fakeFacet()
+    const { root } = await mountPage(request, { facet: fake.facet })
+    const control = rowControl(root, 'tabout') as HTMLInputElement
+    expect(control.checked).toBe(false) // 用户层真值，非合并 true
+    expect(q(root, '[data-vet-setting-key="tabout"] [data-vet-source-badge]').hidden).toBe(false)
+    expect(q(root, '[data-vet-setting-key="tabout"] [data-vet-merged-hint]').hidden).toBe(true)
+  })
+
+  it('scope=user：用户层未显式保存的键显示出厂默认（联动按层计算）', async () => {
+    const { store, request } = assemble()
+    store.wsValues.autoFormat = false // 覆盖关；user 层未保存
+    const fake = fakeFacet()
+    const { root } = await mountPage(request, { facet: fake.facet })
+    const master = rowControl(root, 'autoFormat') as HTMLInputElement
+    expect(master.checked).toBe(true) // 出厂默认，非合并 false
+    const downstream = rowControl(root, 'autoFormatPaste') as HTMLInputElement
+    expect(downstream.disabled).toBe(false) // 联动按用户层视角：总开关开 → 下游可编辑
+  })
+
+  it('scope=workspace：显示工作区覆盖值（合并即工作区视角）', async () => {
+    const { store, request } = assemble()
+    store.userValues.tabout = false
+    store.wsValues.tabout = true
+    const fake = fakeFacet({ scope: 'workspace', hasWorkspace: true })
+    const { root } = await mountPage(request, { facet: fake.facet })
+    expect((rowControl(root, 'tabout') as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('onScopeChange 切换后显示值跟随（同一存储，user→workspace→user）', async () => {
+    const { store, request } = assemble()
+    store.userValues.tabout = false
+    store.wsValues.tabout = true
+    const fake = fakeFacet()
+    const { root } = await mountPage(request, { facet: fake.facet })
+    const control = rowControl(root, 'tabout') as HTMLInputElement
+    expect(control.checked).toBe(false)
+    fake.apply({ scope: 'workspace', hasWorkspace: true })
+    await flush()
+    expect(control.checked).toBe(true)
+    fake.apply({ scope: 'user', hasWorkspace: true })
+    await flush()
+    expect(control.checked).toBe(false)
+  })
+
+  it('写 user 层后回显用户层新值（写入→重拉→按层显示对齐）', async () => {
+    const { store, request } = assemble()
+    const fake = fakeFacet()
+    const { root } = await mountPage(request, { facet: fake.facet })
+    const control = rowControl(root, 'smartPaste') as HTMLInputElement
+    expect(control.checked).toBe(true) // 默认开
+    changeValue(control, false)
+    await flush()
+    expect(store.updateCalls[0]?.scope).toBe('user')
+    expect(store.userValues.smartPaste).toBe(false)
+    expect(control.checked).toBe(false)
+  })
+
+  it('旧宿主降级（get 无 userValues）：user 视角显示合并值，mergedHint 在场', async () => {
+    const { store, request } = assemble()
+    store.layered = false
+    store.userValues.tabout = false
+    store.wsValues.tabout = true
+    const fake = fakeFacet()
+    const { root } = await mountPage(request, { facet: fake.facet })
+    expect((rowControl(root, 'tabout') as HTMLInputElement).checked).toBe(true) // 合并值
+    expect(q(root, '[data-vet-setting-key="tabout"] [data-vet-merged-hint]').hidden).toBe(false)
+  })
+
+  it('写失败强制回滚按层：聚焦控件失败后回滚到用户层显示值（非合并值）', async () => {
+    const { store, request } = assemble()
+    store.userValues.tabout = false
+    store.wsValues.tabout = true
+    store.failReason = 'rejected'
+    const fake = fakeFacet()
+    const { root } = await mountPage(request, { facet: fake.facet })
+    const control = rowControl(root, 'tabout') as HTMLInputElement
+    control.focus()
+    expect(document.activeElement).toBe(control)
+    changeValue(control, true) // 写失败（rejected）
+    await flush(3)
+    expect(control.checked).toBe(false) // 回滚到用户层显示值
+    expect(document.activeElement).toBe(control) // 不夺焦点
   })
 })
