@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url'
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 /** 当前快照锚定的 vsidian 提交（re-vendor 升级时随变更修改此常量并重跑） */
-const DEFAULT_COMMIT = '56e03882135dda7caf05da1e82dc5557718a837c'
+const DEFAULT_COMMIT = 'f7b80d6eda00d16f4fb7ead49aa86fcd41cb75c8'
 
 /**
  * vendor 入口：公开 API 面文件，保留完整导出类型面。
@@ -58,7 +58,7 @@ const HEADER_LINES = (commit, srcPath) => [
 // ---------------------------------------------------------------- CLI 参数
 
 function parseArgs(argv) {
-  const out = { check: false, source: null, commit: null }
+  const out = { check: false, source: null, commit: null, out: null }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--check') out.check = true
@@ -66,6 +66,8 @@ function parseArgs(argv) {
     else if (arg.startsWith('--source=')) out.source = arg.slice('--source='.length)
     else if (arg === '--commit') out.commit = argv[++i]
     else if (arg.startsWith('--commit=')) out.commit = arg.slice('--commit='.length)
+    else if (arg === '--out') out.out = argv[++i]
+    else if (arg.startsWith('--out=')) out.out = arg.slice('--out='.length)
     else {
       console.error(`[vendor] 未知参数 ${arg}`)
       process.exit(2)
@@ -313,6 +315,14 @@ function generateAll() {
     pending.clear()
     if (queue.length === 0) break
     for (const [srcPath, names] of queue) {
+      // 同轮竞态防护：后到请求可能在目标模块本轮处理前入队（其合并读取
+      // rooted 时目标尚未入表），下一轮 names 会缺既有名字——处理时并入
+      // 已定 roots，防止更小请求集整体覆盖闭包（回归：protocol 的
+      // SerChange 被 addonRefViews 轮的 HoverPreviewFailReason 覆盖）。
+      if (names !== null) {
+        const prev = rooted.get(srcPath)
+        if (prev) for (const n of prev.roots) names.add(n)
+      }
       const source = readSourceFile(srcPath)
       const result = transformFile(srcPath, source, names)
       if (names === null) {
@@ -347,7 +357,7 @@ function isSubset(small, big) {
 
 // ---------------------------------------------------------------- 输出/校验
 
-const outDir = path.join(repoRoot, 'types', 'vendor')
+const outDir = args.out ? path.resolve(args.out) : path.join(repoRoot, 'types', 'vendor')
 const toOutPath = (srcPath) => path.join(outDir, srcPath.replace(/^src\//, ''))
 
 function collectExistingFiles(dir, base = dir) {

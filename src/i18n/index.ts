@@ -29,6 +29,13 @@ export function pickMessages(language: string): Messages {
   return language.toLowerCase().startsWith('zh') ? zhMessages : enMessages
 }
 
+/** 页面内枚举档位/双语映射的取值标签（#55 五 Tab 设置页）：与
+ *  pickMessages 同一 zh* 检测——enumLabels 等 Record<'zh-cn'|'en',string>
+ *  形态的值在自绘页面按本标签选值 */
+export function localeTagFor(language: string): 'zh-cn' | 'en' {
+  return language.toLowerCase().startsWith('zh') ? 'zh-cn' : 'en'
+}
+
 /** 规则族注册名的双语映射（#45）：键形对齐 vsidian resolveAddonBehaviorName
  *  候选链——键规整 trim+小写，zh 系页面语言依次试 'zh-cn'→'zh'→'en'，
  *  非 zh 只试 'en'，故 'zh-cn' 与 'en' 两键即可全场景命中；返回形态结构化

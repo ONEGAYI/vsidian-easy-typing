@@ -44,7 +44,9 @@ describe('manifest 契约（vsidianAddon 清单与依赖锁定）', () => {
 
   it('vsidianAddon 声明：api 与 experimental 范围一律用 ^', () => {
     expect(pkg.vsidianAddon.manifestVersion).toBe(1)
-    expect(pkg.vsidianAddon.api).toBe('^1.0.0')
+    // #55 起 settings 页消费 sdk.settingsContext（settingsContext 自平台
+    // API 1.1.0 发行）——下界如实声明最低能力需求，^1.1.0 仍包含宿主 1.2.0
+    expect(pkg.vsidianAddon.api).toBe('^1.1.0')
     // #18 起消费 experimental.headingFold（folds() 折叠查询）；防御链拆除
     //（vsidian PR #432 对接线）起消费 experimental.viewIdentity（命令目标
     // 句柄与折叠寻址的反查面）；#5 起消费 experimental.syntax（行类型与

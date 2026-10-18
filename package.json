@@ -24,7 +24,7 @@
   "activationEvents": [],
   "vsidianAddon": {
     "manifestVersion": 1,
-    "api": "^1.0.0",
+    "api": "^1.1.0",
     "experimental": {
       "cm6": "^1.1.0",
       "headingFold": "^1.0.0",

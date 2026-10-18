@@ -592,3 +592,275 @@
   color: var(--vscode-input-foreground, #cccccc);
   font-size: 12px;
 }
+
+/* ===== 五 Tab 设置页（#55 切片 1）：hero / Tab 导航 / 面板 / 设置行 ===== */
+
+.vsidian-easy-typing-settings-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  border-radius: 8px;
+  background: var(--vscode-sideBar-background, transparent);
+}
+
+.vsidian-easy-typing-settings-hero-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.vsidian-easy-typing-settings-hero-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+.vsidian-easy-typing-settings-hero-link {
+  color: var(--vscode-textLink-foreground, #3794ff);
+}
+
+.vsidian-easy-typing-settings-hero-link:hover,
+.vsidian-easy-typing-settings-hero-link:focus {
+  color: var(--vscode-textLink-activeForeground, #3794ff);
+}
+
+/* Tab 导航（下划线式，对齐上游 et-settings-nav 形态） */
+.vsidian-easy-typing-settings-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+}
+
+.vsidian-easy-typing-settings-tab-btn {
+  padding: 6px 12px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.vsidian-easy-typing-settings-tab-btn:hover {
+  color: var(--vscode-foreground, #cccccc);
+}
+
+.vsidian-easy-typing-settings-tab-btn:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: -1px;
+}
+
+.vsidian-easy-typing-settings-tab-btn-active {
+  border-bottom-color: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-foreground, #cccccc);
+  font-weight: 600;
+}
+
+/* 面板容器（面板常驻 DOM、非活动 [hidden]——spacing 防御网时序不变） */
+.vsidian-easy-typing-settings-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.vsidian-easy-typing-settings-tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* hidden 自防（审查轮 R1-F1/B2）：上方 display:flex 覆盖 UA [hidden]
+ * 隐藏——平台 webview 全局 [hidden]{display:none!important} reset 在场时
+ * 由其兜底；本规则使组件隐藏机制不依赖该 reset（双保险：reset 在场两
+ * 者一致，reset 缺席时组件自身仍正确隐藏） */
+.vsidian-easy-typing-settings-tab-panel[hidden] {
+  display: none;
+}
+
+/* 规则分区挂载点（面板内按块排布） */
+.vsidian-easy-typing-settings-section-host {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 分组卡片（复用 -section 卡片基座，卡内行距收紧） */
+.vsidian-easy-typing-settings-card {
+  gap: 4px;
+}
+
+/* 设置行：左信息右控件 */
+.vsidian-easy-typing-setting-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 4px;
+  border-radius: 4px;
+}
+
+.vsidian-easy-typing-setting-row + .vsidian-easy-typing-setting-row {
+  border-top: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.15));
+}
+
+.vsidian-easy-typing-setting-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.vsidian-easy-typing-setting-name {
+  font-weight: 600;
+}
+
+.vsidian-easy-typing-setting-desc {
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  white-space: pre-line;
+}
+
+.vsidian-easy-typing-setting-control {
+  flex-shrink: 0;
+  width: 240px;
+  max-width: 45%;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.vsidian-easy-typing-setting-control .vsidian-easy-typing-select,
+.vsidian-easy-typing-setting-control input[type='text'] {
+  width: 100%;
+}
+
+.vsidian-easy-typing-setting-control .vsidian-easy-typing-toggle {
+  margin-top: 2px;
+}
+
+/* 多行/数组行：控件整行铺宽（textarea 在信息下方） */
+.vsidian-easy-typing-setting-row-wide {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.vsidian-easy-typing-setting-row-wide .vsidian-easy-typing-setting-control {
+  width: 100%;
+  max-width: none;
+}
+
+.vsidian-easy-typing-setting-row-wide .vsidian-easy-typing-textarea {
+  min-height: 56px;
+}
+
+/* 联动置灰（决策 11：纯 UI 态——aria-disabled + 类名，不改变写入） */
+.vsidian-easy-typing-setting-row-disabled {
+  opacity: 0.5;
+}
+
+.vsidian-easy-typing-setting-row-disabled .vsidian-easy-typing-setting-control {
+  cursor: default;
+}
+
+/* ===== #55 切片 2：规则分区用户级标注 ===== */
+.vsidian-easy-typing-rules-scope-note {
+  margin: 0;
+  padding: 6px 10px;
+  border-left: 2px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  font-size: 12px;
+}
+
+/* ===== #55 切片 2：行级来源徽章与清除覆盖 ===== */
+.vsidian-easy-typing-setting-name-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.vsidian-easy-typing-source-badge {
+  padding: 1px 8px;
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  border-radius: 9px;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  font-size: 11px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.vsidian-easy-typing-source-clear {
+  padding: 1px 6px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-textLink-foreground, #3794ff);
+  cursor: pointer;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.vsidian-easy-typing-source-clear:hover {
+  color: var(--vscode-textLink-activeForeground, #3794ff);
+  text-decoration: underline;
+}
+
+.vsidian-easy-typing-source-clear:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 1px;
+}
+
+/* ===== #55 切片 3：搜索定位高亮（data-located 标记的设置行/组首卡片） =====
+ * 口径对齐平台设置页 located 描边（outline + focusBorder，暗亮主题均可用）；
+ * 行距密集，offset 收窄到 2px 防止侵入相邻行 */
+.vsidian-easy-typing-located {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ===== 审查轮 R2-P2-2：首读失败横幅与重试 ===== */
+.vsidian-easy-typing-load-error {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+  border-radius: 4px;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  font-size: 12px;
+}
+
+/* hidden 自防（同 tab-panel 口径：display:flex 覆盖 UA [hidden]） */
+.vsidian-easy-typing-load-error[hidden] {
+  display: none;
+}
+
+.vsidian-easy-typing-load-error-retry {
+  padding: 2px 10px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 4px;
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #ffffff);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.vsidian-easy-typing-load-error-retry:hover {
+  background: var(--vscode-button-hoverBackground, #1177bb);
+}
+
+.vsidian-easy-typing-load-error-retry:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 1px;
+}
+
+/* ===== 审查轮 R2-P2-1：用户层合并值提示（徽章同排的行内说明） ===== */
+.vsidian-easy-typing-merged-hint {
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  font-size: 11px;
+  font-weight: 400;
+}

@@ -35,6 +35,14 @@
 
 vsidian behaviors 模型：同一次输入事务按**有效序**被多个已注册行为依次修饰，后续行为的快照读到前序修饰结果；默认序按完整键（`<addonId>#<行为局部ID>`）字典序，用户可在 Vsidian 设置页逐项关闭或调序。每段修饰按自己的 `history` 声明（`atomic` / `joinPrevious`）提交撤销项。上游多条规则在移植时可能合并为少量行为链节点。
 
+### 定位目标（AddonSettingsLocateTarget）
+
+平台全局设置搜索交付给自绘设置页的定位请求（`{kind: 'def' | 'group', key}`）：`def` 锚到单个设置键（注册键空间同源），`group` 锚到声明组。平台刻意不做等值去重（重复交付原样下发，消费方须幂等）、订阅即回放挂起目标、`null` 表示清除高亮。实施口径见[规格](docs/specs/settings-tabs.md)。
+
+### 作用域快照（AddonSettingsScopeSnapshot）
+
+平台设置页上下文（settingsContext facet）暴露的作用域只读面：`{scope: 'user' | 'workspace', hasWorkspace}`。scope 是**写入目标层依据**（组件写入跟随当前层，非显式切换）——作用域切换器由平台外壳持有，组件只消费观察面；规则/富结构存储为 globalStorage 语义用户级，不在该作用域体系内。实施口径见[规格](docs/specs/settings-tabs.md)。
+
 ### Tabout（Tab 跳出配对符）
 
 配对符号内部按 Tab 跳出到右侧闭合符之外（上游 `tabPairStringTabout` 分支，22 对配符）。光标场景经**栈匹配**（`taboutCursorInPairedString`，行内限定）找光标右侧第一个能闭合未闭配对的符号——紧贴则跳到闭合符之后，不贴则先跳到闭合符之前（两步越出）；选区场景只认「两侧紧贴同一对配对符」的直接包围（不做栈匹配），命中后光标折叠到右闭合符之后。实施口径见[规格](docs/specs/tabout.md)。

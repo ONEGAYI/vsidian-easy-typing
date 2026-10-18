@@ -50,6 +50,34 @@ export interface RulesSettingsViewOptions {
   /** 宿主行为禁用态只读面（#50 灰态；结构对齐 vendor AddonBehaviorStateFacet，
    *  入口注入便于测试。undefined = 面缺席（旧平台），不灰显） */
   behaviorState?: RulesBehaviorStateLike
+  /** 分区挂载宿主（#55 五 Tab 设置页；缺省 = 既有单页形态） */
+  hosts?: RulesSettingsViewHosts
+}
+
+/** hosts 模式挂载宿主（#55 五 Tab 自绘设置页）：四分区 / 状态行 / 编辑
+ * 浮层挂到宿主页面提供的容器，页标题与简介不再渲染（五 Tab 页面自带
+ * hero 形态），root 身份（class / data-vet-page）归宿主页面。分区 DOM
+ * 结构与交互两种模式完全一致，只是挂载位置不同。 */
+export interface RulesSettingsViewHosts {
+  /** 用户规则分区宿主（「自定义规则」panel） */
+  user?: HTMLElement
+  /** 内置规则分区宿主（「内置规则」panel） */
+  builtin?: HTMLElement
+  /** 语言间空格策略分区宿主（「自动格式化」panel 内） */
+  spacing?: HTMLElement
+  /** 数据目录展示分区宿主（「其他设置」panel 内） */
+  storage?: HTMLElement
+  /** 状态行宿主（页面级共享状态行；不传则自建并挂 root）。与 statusSink
+   *  并传时仅作元素占位（写入与计时全走 sink） */
+  status?: HTMLElement
+  /** 状态提示上交口（审查轮 P2-1 推荐形态）：在场时本视图的状态提示经此
+   *  上交宿主页面的状态行实现（含自动清除计时）——共享元素两侧各持计时器
+   *  会互相提前清除后到提示；本地不持计时器。缺省路径（自持元素+计时器）
+   *  行为不变 */
+  statusSink?: (kind: 'info' | 'failed' | 'success', text: string) => void
+  /** 编辑浮层宿主（不传挂 root 末位；fixed 定位与宿主位置无关）。对称
+   *  API 暂无消费方（页面形态浮层挂 root 即可），保留字段供后续宿主定制 */
+  overlay?: HTMLElement
 }
 
 /** 行为禁用态只读面的消费形状（#50；与 vendor AddonBehaviorStateFacet
@@ -137,15 +165,32 @@ export function mountRulesSettingsView(
   }
 
   // ===== 静态骨架 =====
+  // hosts 模式（#55）：四分区/状态行/浮层挂宿主容器、不渲染页标题与简介、
+  // 不接管 root 身份；缺省保持既有单页形态（rules-ui 既有测试消费缺省路径，
+  // 行为零变化）。
 
-  root.classList.add(`${CLS}-root`)
-  root.setAttribute('data-vet-page', 'rules')
+  const hosted = options.hosts !== undefined
+  /** 自建并自持的节点（dispose 时逐一移除；hosts 模式不动 root） */
+  const ownedNodes: HTMLElement[] = []
+  if (!hosted) {
+    root.classList.add(`${CLS}-root`)
+    root.setAttribute('data-vet-page', 'rules')
+    const title = el('h2', `${CLS}-page-title`, t.title)
+    const intro = el('p', `${CLS}-page-intro`, t.intro)
+    root.append(title, intro)
+    ownedNodes.push(title, intro)
+  }
 
-  const title = el('h2', `${CLS}-page-title`, t.title)
-  const intro = el('p', `${CLS}-page-intro`, t.intro)
-  const status = el('div', `${CLS}-status`)
-  status.setAttribute('data-vet-status', '')
-  status.setAttribute('role', 'status')
+  let status: HTMLElement
+  if (options.hosts?.status) {
+    status = options.hosts.status
+  } else {
+    status = el('div', `${CLS}-status`)
+    status.setAttribute('data-vet-status', '')
+    status.setAttribute('role', 'status')
+    root.append(status)
+    ownedNodes.push(status)
+  }
 
   const userSection = el('section', `${CLS}-section`)
   userSection.setAttribute('data-vet-section', 'user')
@@ -155,15 +200,26 @@ export function mountRulesSettingsView(
   spacingSection.setAttribute('data-vet-section', 'spacing')
   const storageSection = el('section', `${CLS}-section ${CLS}-storage`)
   storageSection.setAttribute('data-vet-section', 'storage')
-  root.append(title, intro, status, userSection, builtinSection, spacingSection, storageSection)
+  ;(options.hosts?.user ?? root).append(userSection)
+  ;(options.hosts?.builtin ?? root).append(builtinSection)
+  ;(options.hosts?.spacing ?? root).append(spacingSection)
+  ;(options.hosts?.storage ?? root).append(storageSection)
+  ownedNodes.push(userSection, builtinSection, spacingSection, storageSection)
 
-  /** 模态浮层容器（编辑表单；常驻 root 末位，hidden 切换） */
+  /** 模态浮层容器（编辑表单；常驻挂载末位，hidden 切换） */
   const overlay = el('div', classes(`${CLS}-modal`, `${CLS}-hidden`))
   overlay.setAttribute('data-vet-modal', '')
-  root.append(overlay)
+  ;(options.hosts?.overlay ?? root).append(overlay)
+  ownedNodes.push(overlay)
 
-  /** 状态行：kind = info/failed/success；6s 自动清除 */
+  /** 状态行：kind = info/failed/success；6s 自动清除。hosts.statusSink
+   *  在场时经 sink 上交（宿主页面单计时器，审查轮 P2-1），本地不持计时器 */
+  const statusSink = options.hosts?.statusSink
   function showStatus(kind: 'info' | 'failed' | 'success', text: string): void {
+    if (statusSink !== undefined) {
+      statusSink(kind, text)
+      return
+    }
     status.textContent = text
     status.setAttribute('data-vet-status', kind)
     if (statusTimer !== null) cancel(statusTimer)
@@ -1561,6 +1617,11 @@ export function mountRulesSettingsView(
       closeModal()
       unsubscribe()
       unsubscribeBehaviorState?.()
+      if (hosted) {
+        // hosts 模式只移除自建自持节点（状态行可能归宿主页面所有），root 归宿主
+        for (const node of ownedNodes) node.remove()
+        return
+      }
       root.textContent = ''
       root.classList.remove(`${CLS}-root`)
       root.removeAttribute('data-vet-page')

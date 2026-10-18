@@ -188,6 +188,52 @@ const zhMessages = {
     autoFormatToggledOff: '自动格式化已关闭',
     commandFileExcluded: '当前文件在排除清单（排除文件夹/文件）中，命令未执行',
   },
+  // 设置页五 Tab 文案（工单 #55）：Tab 名对照上游 locale headers.tabs
+  //（user-rules 按票面用「自定义规则」）；卡片标题对照上游设置页卡片结构；
+  // hero 为顶部项目名与上游来源链接块（MIT 双署名致敬）；联动置灰提示为
+  // 行 title 悬停文案（纯 UI 态，决策 11）
+  settingsTabs: {
+    tabs: {
+      editEnhance: '编辑增强',
+      autoFormat: '自动格式化',
+      builtinRules: '内置规则',
+      userRules: '自定义规则',
+      other: '其他设置',
+    },
+    heroTitle: 'Vsidian Easy Typing 输入体验增强',
+    heroSourceLabel: '基于上游项目（MIT 协议）：',
+    heroLinkText: 'easy-typing-obsidian',
+    cards: {
+      editEnhance: '增强编辑设置',
+      autoFormat: '自动格式化设置',
+      inlineSpace: '行内元素间空格',
+      prefixDict: '前缀词典',
+      customRegex: '自定义正则区块',
+      excludeFiles: '指定文件不自动格式化',
+      experimental: '实验功能',
+    },
+    hintDisabledByMaster: '「输入时自动格式化」总开关已关闭，此设置暂不可用',
+    hintDisabledByRegexSwitch: '「自定义正则表达式开关」已关闭，此设置暂不可用',
+    statusUpdateFailed: '设置写入失败',
+    // 作用域相关（#55 切片 2）：清除覆盖语义 = 恢复继承用户默认值（非恢复
+    // 出厂默认——vendor AddonSettingsContextApi.clearWorkspaceOverride 注释）
+    rulesScopeNote: '本页规则为用户级数据：全局共享，不随工作区隔离',
+    // spacing 分区标注（审查轮 R2-P2-3）：数据写全局 rule-state，与相邻按
+    // 作用域保存的设置行不同层，标注挂分区近旁不泛化整 Tab
+    spacingScopeNote: '本分区为用户级数据：全局共享，不随工作区隔离',
+    badgeWorkspaceOverride: '工作区覆盖',
+    clearOverrideAction: '清除覆盖',
+    clearOverrideTitle: '清除工作区覆盖：此设置恢复继承用户默认值（非恢复出厂默认）',
+    statusOverrideCleared: '已清除工作区覆盖，恢复继承用户默认',
+    statusClearOverrideFailed: '清除工作区覆盖失败',
+    // 首读失败三态（审查轮 R2-P2-2）：横幅错误提示 + 重试按钮 + 行级禁用提示
+    loadFailedText: '设置读取失败：当前显示默认值，暂不可编辑',
+    loadFailedRetry: '重试',
+    loadFailedRowHint: '设置读取失败，此设置暂不可编辑（读取成功后恢复）',
+    // 用户层合并值提示（审查轮 R2-P2-1 平台缺口过渡处置）：scope=user 且
+    // 工作区覆盖在场时行内提示；用户层原值按层读取待平台能力
+    mergedValueHint: '当前显示工作区覆盖后的合并值；用户层原值待平台支持按层读取',
+  },
   // 规则管理设置页文案（工单 #16）：对照上游 locale headers.toolTip.
   // ruleEditModal.dropdownOptions 词条，按平台自绘页形态改写
   rulesPage: {

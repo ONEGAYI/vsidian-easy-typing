@@ -1,4 +1,4 @@
-// vendored from ONEGAYI/vsidian@56e03882135dda7caf05da1e82dc5557718a837c — src/shared/contextMenu.ts
+// vendored from ONEGAYI/vsidian@f7b80d6eda00d16f4fb7ead49aa86fcd41cb75c8 — src/shared/contextMenu.ts
 // 类型快照：由 scripts/vendorSdkTypes.mjs 自动生成——仅保留类型声明与被
 // 类型引用的常量，值级导出（校验函数、运行时数据）已剥离。不要手改；
 // re-vendor：npm run vendor:sdk（升级锚定提交改脚本 DEFAULT_COMMIT 后重跑）。
@@ -17,6 +17,11 @@ export interface MenuContextSnapshot {
   blockTarget: ContextMenuBlockTarget | null
   /** 命中行段落结构（checked 谓词输入；结构敏感区采集中性态不点亮） */
   line: MenuLineStructure
+  /** 选区覆盖行的段落结构（#518 列表族勾选选区感知）：仅 zone='normal'
+   *  且有选区时采集，空行已过滤（与 quickActionState 的行集合同口径）；
+   *  全空行选区为空数组——谓词退回命中行。执行侧（runFormatOperation）
+   *  消费同一 selection.main，勾选与执行同数据面 */
+  selectionLines?: MenuLineStructure[]
   /** 表格命中负载（#436；仅 zone='table' 且解析树接管该表时在场） */
   table?: TableMenuHit
   /** 链接命中负载（#436；仅 zone='normal' 且命中链接时在场——代码上下文

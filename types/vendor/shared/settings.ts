@@ -1,4 +1,4 @@
-// vendored from ONEGAYI/vsidian@56e03882135dda7caf05da1e82dc5557718a837c — src/shared/settings.ts
+// vendored from ONEGAYI/vsidian@f7b80d6eda00d16f4fb7ead49aa86fcd41cb75c8 — src/shared/settings.ts
 // 类型快照：由 scripts/vendorSdkTypes.mjs 自动生成——仅保留类型声明与被
 // 类型引用的常量，值级导出（校验函数、运行时数据）已剥离。不要手改；
 // re-vendor：npm run vendor:sdk（升级锚定提交改脚本 DEFAULT_COMMIT 后重跑）。
