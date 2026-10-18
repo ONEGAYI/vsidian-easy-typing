@@ -81,7 +81,7 @@
 3. **作用范围**：沿用平台分层——工作区显式 > 用户默认 > 出厂默认；本组件不自建覆盖逻辑。
 4. **读写链路**：宿主 `setup` 中注册定义并挂 channel topic `easyTyping.settings.get` / `easyTyping.settings.update` / `easyTyping.settings.clearOverride`（setup scope——普通停用后仍可配置，供 #16 自绘设置页与诊断消费）；`onChanged` 实时刷新宿主内生效设置缓存，功能票经 `EasyTypingSettingsFacade` 读取，不直接触碰平台 API。
 5. **debug 门控**：`facade.onEffectiveChange` → `setDebugEnabled(effective.debug)`；日志输出统一经 `src/logging.ts` 的 `debugLog`（前缀 `[vsidian-easy-typing]`），宿主侧落扩展宿主控制台。
-6. **i18n**：设置 title/description 全部经 `src/i18n/`（zh 类型源 + en 同键集 + parity 测试）；语言检测宿主侧 `vscode.env.language`、页面侧 `navigator.language`，`pickMessages(languageTag)` 统一入口（`zh*` → 中，其余 → 英）。#19 在此结构上扩展，不另起炉灶。
+6. **i18n**：设置 title/description 全部经 `src/i18n/`（zh 类型源 + en 同键集 + parity 测试）；语言检测宿主侧 `vscode.env.language`、页面侧 #58 起经 `resolvePageLanguage`（SDK locale 优先——跟随主设置、`onChange` 通知就地切换；旧宿主回落 `navigator.language`），`pickMessages(languageTag)` 统一入口（`zh*` → 中，其余 → 英，空串=语言包未装配亦落英）。#19 在此结构上扩展，不另起炉灶。
 
 ## 六、已知边界
 

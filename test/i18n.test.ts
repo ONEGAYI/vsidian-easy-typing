@@ -4,7 +4,7 @@
 // #19 增：内置规则描述映射（builtinRuleDescriptions）完整性——键集必须
 // 覆盖全部内置规则 id（default-rules.ts 是单一事实源），防新增规则漏登记。
 import { describe, expect, it } from 'vitest'
-import { pickMessages, zhMessages, enMessages } from '../src/i18n'
+import { localeTagFor, pickMessages, resolvePageLanguage, zhMessages, enMessages } from '../src/i18n'
 import { BUILTIN_CATEGORIES } from '../src/formatting/scriptCategory'
 import { DEFAULT_BUILTIN_RULES } from '../src/rules/default-rules'
 
@@ -37,6 +37,33 @@ describe('语言检测（pickMessages）', () => {
   it('大小写不敏感（宿主 vscode.env.language / 页面 navigator.language 同入口）', () => {
     expect(pickMessages('ZH-CN')).toBe(zhMessages)
     expect(pickMessages('EN-us')).toBe(enMessages)
+  })
+})
+
+// ===== 页面语言源单一出口（#58：SDK locale 跟随主设置） =====
+
+describe('页面语言解析（resolvePageLanguage，#58）', () => {
+  // 语言链路契约：locale 面（vsidian#582）在场 → 平台快照优先（跟随主设置，
+  // 不读 OS 语言）；面缺席（旧宿主）→ 调用方回退值（页面侧 navigator.language，
+  // 保持 #58 前既有行为）。返回值统一经 pickMessages/localeTagFor 映射。
+  const facetOf = (value: string) => ({ get: () => value })
+
+  it('locale 面在场：取平台快照，不取回退值（首值经 get 读取）', () => {
+    expect(resolvePageLanguage(facetOf('en'), 'zh-CN')).toBe('en')
+    expect(resolvePageLanguage(facetOf('zh-cn'), 'en-US')).toBe('zh-cn')
+  })
+
+  it('locale 面缺席（旧宿主）：回落调用方回退值（降级路径钉住）', () => {
+    expect(resolvePageLanguage(undefined, 'zh-CN')).toBe('zh-CN')
+    expect(resolvePageLanguage(undefined, 'en-US')).toBe('en-US')
+  })
+
+  it('空串（平台语言包未装配）不回落 OS 语言：整链落英文，与平台无包兜底一致', () => {
+    // 空串若回落 navigator.language 会重现页面/平台交杂（票面诊断的病灶），
+    // 故钉死：facet 空串 → pickMessages 英文、localeTagFor 'en'
+    expect(resolvePageLanguage(facetOf(''), 'zh-CN')).toBe('')
+    expect(pickMessages(resolvePageLanguage(facetOf(''), 'zh-CN'))).toBe(enMessages)
+    expect(localeTagFor(resolvePageLanguage(facetOf(''), 'zh-CN'))).toBe('en')
   })
 })
 

@@ -34,7 +34,7 @@
 // 【Tab 态】内存保存，默认编辑增强，页面卸载即复位（决策 5/6）。
 // switchTab 为受控切换 API（外部驱动面）；搜索定位经内部 activateTab
 // 同一受控路径切页。
-import type { Messages } from './i18n'
+import { localeTagFor, pickMessages, type Messages } from './i18n'
 import type { AddonSettingDefinition } from '../types/vendor/shared/addonSettings'
 import type { AddonSettingsLocateTarget, AddonSettingsScopeSnapshot } from '../types/vendor/shared/addonSettingsContextApi'
 import { buildSettingDefinitions } from './settings/definitions'
@@ -48,6 +48,7 @@ import {
   cardsForTab,
   groupKeyToCardAnchor,
   settingKeyToTabId,
+  type SettingsCardKey,
   type SettingsCardSpec,
   type SettingsTabId,
 } from './settings/tabs-model'
@@ -77,7 +78,8 @@ export interface SettingsPageViewOptions {
   /** 设置读写通道（SETTINGS_TOPIC；规则通道由本装配内部建客户端复用） */
   channel: SettingsChannelLike
   messages: Messages
-  /** 枚举档位双语映射的取值标签（i18n.localeTagFor(navigator.language)） */
+  /** 枚举档位双语映射的取值标签（初始语言的 localeTagFor 结果；#58 语言
+   *  切换经 handle.setLanguage 就地更新，不重传本字段） */
   localeTag: 'zh-cn' | 'en'
   /** Document 注入（缺省全局 document；jsdom 测试用） */
   doc?: Document
@@ -113,6 +115,10 @@ export interface SettingsPageViewHandle {
   switchTab(tabId: SettingsTabId): void
   /** 当前活动 Tab */
   activeTab(): SettingsTabId
+  /** 就地切换语言（#58：SDK locale 通知驱动；映射经 pickMessages/
+   *  localeTagFor）：更新骨架/行/枚举/联动提示文案并委托规则分区，
+   *  活动 Tab 与控件显示值（含未提交草稿）保全 */
+  setLanguage(language: string): void
   /** 重拉 SETTINGS_TOPIC.get 并刷新控件与联动（重复调用无害） */
   refreshSettings(): Promise<void>
   /** 释放：规则分区、状态计时器与页面 DOM */
@@ -167,9 +173,12 @@ interface SettingRowEntry {
 
 export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOptions): SettingsPageViewHandle {
   const doc = options.doc ?? document
-  const m = options.messages
-  const t = m.settingsTabs
-  const localeTag = options.localeTag
+  // 语言态可变（#58 setLanguage 就地切换）：m/t/localeTag/defs/defByKey 为
+  // let，事件回调与懒取文案路径读当前引用；静态骨架文本经 setLanguage
+  // 逐节点刷新（节点引用见下方常量收集）
+  let m = options.messages
+  let t = m.settingsTabs
+  let localeTag = options.localeTag
   const schedule = options.setTimeout ?? ((fn, ms) => setTimeout(fn, ms))
   const cancel = options.clearTimeout ?? ((handle) => clearTimeout(handle as Parameters<typeof clearTimeout>[0]))
   let disposed = false
@@ -193,8 +202,8 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
   }
 
   // ===== 定义元数据（24 项控件形态的事实源；注册面零改动） =====
-  const defs = buildSettingDefinitions(m)
-  const defByKey = new Map(defs.map((def) => [def.key, def]))
+  let defs = buildSettingDefinitions(m)
+  let defByKey = new Map(defs.map((def) => [def.key, def]))
   const rows = new Map<string, SettingRowEntry>()
   /** 自动格式化 Tab 下下行（联动置灰对象；主控键除外） */
   const masterDownstreamKeys = cardsForTab('auto-format')
@@ -230,7 +239,8 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
   hero.setAttribute('data-vet-hero', '')
   const heroTitle = el('h1', `${CLS}-settings-hero-title`, t.heroTitle)
   const heroMeta = el('div', `${CLS}-settings-hero-meta`)
-  heroMeta.append(el('span', `${CLS}-settings-hero-label`, t.heroSourceLabel))
+  const heroSourceLabel = el('span', `${CLS}-settings-hero-label`, t.heroSourceLabel)
+  heroMeta.append(heroSourceLabel)
   const heroLink = el('a', `${CLS}-settings-hero-link`, t.heroLinkText)
   heroLink.href = UPSTREAM_REPO_URL
   heroLink.target = '_blank'
@@ -261,7 +271,8 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
   loadErrorRetry.addEventListener('click', () => {
     void refreshSettings()
   })
-  loadError.append(el('span', `${CLS}-load-error-text`, t.loadFailedText), loadErrorRetry)
+  const loadErrorText = el('span', `${CLS}-load-error-text`, t.loadFailedText)
+  loadError.append(loadErrorText, loadErrorRetry)
 
   const panelsWrap = el('div', `${CLS}-settings-panels`)
   root.append(hero, nav, status, loadError, panelsWrap)
@@ -893,6 +904,63 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
 
   void refreshSettings()
 
+  /** 就地切换语言（#58：SDK locale 通知驱动）。控件显示值（含未提交草稿）
+   *  与活动 Tab 不动；definitions 按新字典重建（title/description 换语言，
+   *  键集/默认值/枚举值结构不变），联动与失败态行级提示按新文案重放。
+   *  状态行残留的旧语言提示为 6s 瞬态，随既有计时清除（不追改）。规则
+   *  分区（含在场编辑浮层）委托 rulesView.setLanguage。 */
+  function setLanguage(language: string): void {
+    if (disposed) return
+    m = pickMessages(language)
+    t = m.settingsTabs
+    localeTag = localeTagFor(language)
+    defs = buildSettingDefinitions(m)
+    defByKey = new Map(defs.map((def) => [def.key, def]))
+    heroTitle.textContent = t.heroTitle
+    heroSourceLabel.textContent = t.heroSourceLabel
+    heroLink.textContent = t.heroLinkText
+    loadErrorText.textContent = t.loadFailedText
+    loadErrorRetry.textContent = t.loadFailedRetry
+    for (const [id, btn] of tabButtons) btn.textContent = t.tabs[TAB_LABEL_KEY[id]]
+    // 卡片分区标题挂载期一次性创建（buildCard），切换语言时按 cardKey 补刷
+    for (const card of root.querySelectorAll(`[data-vet-card]`)) {
+      const cardKey = card.getAttribute('data-vet-card') as SettingsCardKey | null
+      const title = card.querySelector<HTMLElement>(`.${CLS}-section-title`)
+      if (cardKey !== null && title !== null) title.textContent = t.cards[cardKey]
+    }
+    for (const entry of rows.values()) {
+      const nextDef = defByKey.get(entry.def.key)
+      if (!nextDef) continue // 键集由契约测试钉死；此处防御跳过缺位
+      entry.def = nextDef
+      const nameSpan = entry.row.querySelector<HTMLElement>(`.${CLS}-setting-name`)
+      if (nameSpan !== null) nameSpan.textContent = nextDef.title
+      const descSpan = entry.row.querySelector<HTMLElement>(`.${CLS}-setting-desc`)
+      if (descSpan !== null) descSpan.textContent = nextDef.description ?? ''
+      entry.badge.textContent = t.badgeWorkspaceOverride
+      entry.clearBtn.textContent = t.clearOverrideAction
+      entry.clearBtn.title = t.clearOverrideTitle
+      entry.clearBtn.setAttribute('aria-label', t.clearOverrideTitle)
+      entry.mergedHint.textContent = t.mergedValueHint
+      if (entry.control instanceof HTMLSelectElement) {
+        for (const option of Array.from(entry.control.options)) {
+          option.textContent = enumLabelText(nextDef, option.value, localeTag)
+        }
+      }
+    }
+    for (const note of root.querySelectorAll(`[data-vet-rules-scope]`)) {
+      note.textContent = t.rulesScopeNote
+    }
+    for (const note of root.querySelectorAll(`[data-vet-spacing-scope]`)) {
+      note.textContent = t.spacingScopeNote
+    }
+    if (settingsLoadFailed) {
+      for (const entry of rows.values()) setRowDisabled(entry, true, t.loadFailedRowHint)
+    } else {
+      applyLinkage()
+    }
+    rulesView.setLanguage(language)
+  }
+
   return {
     switchTab(tabId: SettingsTabId): void {
       if (!SETTINGS_TAB_IDS.includes(tabId)) throw new Error(`未知设置页 Tab：${tabId}`)
@@ -901,6 +969,7 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
     activeTab(): SettingsTabId {
       return active
     },
+    setLanguage,
     refreshSettings,
     dispose(): void {
       disposed = true

@@ -21,7 +21,7 @@ import { RULES_TOPIC } from '../src/rules/rules-protocol'
 import { setDebugEnabled } from '../src/logging'
 import type { SettingsTabId } from '../src/settings/tabs-model'
 import { DEFAULT_EFFECTIVE_SETTINGS } from '../src/settings/defaults'
-import { zhMessages } from '../src/i18n'
+import { zhMessages, enMessages } from '../src/i18n'
 import type { AddonChannelRegistry } from '../types/vendor/host/addons/addonRegistry'
 import type { AddonSettingDefinition } from '../types/vendor/shared/addonSettings'
 import type {
@@ -1114,5 +1114,187 @@ describe('失败回滚键集合（审查轮 R2-P3-5：单槽「焦点转移」�
     await flush()
     expect(a.checked).toBe(true)
     expect(b.checked).toBe(true)
+  })
+})
+
+// ===== 就地语言切换（#58：SDK locale 通知后 view.setLanguage 保全页面状态） =====
+
+describe('就地语言切换（view.setLanguage，#58）', () => {
+  it('骨架与设置行文案切换（hero/Tab/行标题/说明/枚举档位/分区标注），DOM 就地更新不重挂', async () => {
+    const { request } = assemble()
+    const { root, view } = await mountPage(request)
+    const navBefore = q(root, '[data-vet-tablist]')
+    expect(q(root, '[data-vet-hero] h1').textContent).toBe(zhMessages.settingsTabs.heroTitle)
+    view.setLanguage('en')
+    const en = enMessages.settingsTabs
+    expect(q(root, '[data-vet-hero] h1').textContent).toBe(en.heroTitle)
+    expect(q(root, '[data-vet-hero] a').textContent).toBe(en.heroLinkText)
+    expect(tabButton(root, 'user-rules').textContent).toBe(en.tabs.userRules)
+    // 卡片分区标题随语言切换（挂载期一次性创建，切换时须补刷）
+    expect(q(root, '[data-vet-card="editEnhance"] .vsidian-easy-typing-section-title').textContent).toBe(
+      en.cards.editEnhance,
+    )
+    expect(q(root, '[data-vet-card="excludeFiles"] .vsidian-easy-typing-section-title').textContent).toBe(
+      en.cards.excludeFiles,
+    )
+    // 行标题与说明（definitions 按新字典重建）
+    const row = q(root, '[data-vet-setting-key="autoFormat"]')
+    expect(q(row, '.vsidian-easy-typing-setting-name').textContent).toBe(enMessages.settings.autoFormat.name)
+    expect(q(row, '.vsidian-easy-typing-setting-desc').textContent).toBe(enMessages.settings.autoFormat.desc)
+    // 枚举档位标签随 localeTag 切换（按值对位断言）
+    const select = rowControl(root, 'inlineCodeSpaceMode') as HTMLSelectElement
+    for (const [value, label] of [
+      ['none', enMessages.enumLabels.spaceNone],
+      ['soft', enMessages.enumLabels.spaceSoft],
+      ['strict', enMessages.enumLabels.spaceStrict],
+    ] as const) {
+      const option = select.querySelector<HTMLOptionElement>(`option[value="${value}"]`)
+      expect(option?.textContent, value).toBe(label)
+    }
+    // 分区标注（规则区 ×2 实例 / spacing 区）
+    for (const note of root.querySelectorAll('[data-vet-rules-scope]')) {
+      expect(note.textContent).toBe(en.rulesScopeNote)
+    }
+    expect(q(root, '[data-vet-spacing-scope]').textContent).toBe(en.spacingScopeNote)
+    // 就地更新证据：tablist 节点未被重建（同一节点仍在 root 内）
+    expect(root.contains(navBefore)).toBe(true)
+  })
+
+  it('页面状态保全：活动 Tab 与控件显示值/草稿不被切换重置', async () => {
+    const { request } = assemble({ autoFormat: true })
+    const { root, view } = await mountPage(request)
+    view.switchTab('user-rules')
+    const master = rowControl(root, 'autoFormat') as HTMLInputElement
+    expect(master.checked).toBe(true) // 已存真值前置
+    // 未提交草稿（不派发 change）：excludeFiles 多行文本（general 组归自动格式化 Tab）
+    const draft = rowControl(root, 'excludeFiles') as HTMLTextAreaElement
+    draft.value = 'draft-line.md'
+    view.setLanguage('en')
+    expect(view.activeTab()).toBe('user-rules')
+    expect(panel(root, 'user-rules').hasAttribute('hidden')).toBe(false)
+    expect(master.checked).toBe(true) // 显示值不动（语言切换不触发数据重拉）
+    expect(draft.value).toBe('draft-line.md') // 草稿保全
+  })
+
+  it('联动禁用提示随语言刷新（applyLinkage 重跑，置灰语义不丢）', async () => {
+    const { request } = assemble({ autoFormat: false })
+    const { root, view } = await mountPage(request)
+    const downstream = q<HTMLElement>(root, '[data-vet-setting-key="autoFormatPaste"]')
+    expect(downstream.title).toBe(zhMessages.settingsTabs.hintDisabledByMaster)
+    view.setLanguage('en')
+    expect(downstream.title).toBe(enMessages.settingsTabs.hintDisabledByMaster)
+    expect(downstream.getAttribute('aria-disabled')).toBe('true')
+  })
+
+  it('规则分区标题与空态文案随语言重建（rulesView 委托）', async () => {
+    const { request } = assemble()
+    const { root, view } = await mountPage(request)
+    const userSection = q(root, '[data-vet-section="user"]')
+    expect(q(userSection, 'h3').textContent).toBe(zhMessages.rulesPage.userRules.title)
+    view.setLanguage('en')
+    expect(q(userSection, 'h3').textContent).toBe(enMessages.rulesPage.userRules.title)
+    expect(q(userSection, '[data-vet-user-list] .vsidian-easy-typing-empty').textContent).toBe(
+      enMessages.rulesPage.userRules.empty,
+    )
+  })
+
+  it('编辑浮层在场时切换：标题换语言，表单值/测试编辑器内容保全，焦点恢复', async () => {
+    const { request } = assemble()
+    const { root, view } = await mountPage(request)
+    view.switchTab('user-rules')
+    q<HTMLButtonElement>(q(root, '[data-vet-section="user"]'), '[data-vet-action="add-rule"]').click()
+    const modal = q(root, '[data-vet-modal]')
+    const trigger = q<HTMLInputElement>(modal, '[data-vet-input="trigger"]')
+    trigger.focus()
+    trigger.value = 'abcd'
+    trigger.dispatchEvent(new Event('input', { bubbles: true }))
+    q<HTMLTextAreaElement>(modal, '[data-vet-test-input]').value = 'x1'
+    view.setLanguage('en')
+    expect(q(modal, '.vsidian-easy-typing-modal-title').textContent).toBe(enMessages.rulesPage.form.addTitle)
+    const triggerAfter = q<HTMLInputElement>(modal, '[data-vet-input="trigger"]')
+    expect(triggerAfter.value).toBe('abcd') // 模型往返保全
+    expect(document.activeElement).toBe(triggerAfter) // 焦点恢复
+    expect(q<HTMLTextAreaElement>(modal, '[data-vet-test-input]').value).toBe('x1') // DOM 态显式回填
+  })
+
+  it('浮层焦点在测试编辑器上时切换语言：焦点与选区恢复（R1 审查 A3/B3）', async () => {
+    const { request } = assemble()
+    const { root, view } = await mountPage(request)
+    view.switchTab('user-rules')
+    q<HTMLButtonElement>(q(root, '[data-vet-section="user"]'), '[data-vet-action="add-rule"]').click()
+    const modal = q(root, '[data-vet-modal]')
+    const testInput = q<HTMLTextAreaElement>(modal, '[data-vet-test-input]')
+    testInput.value = 'x1y2'
+    testInput.focus()
+    testInput.setSelectionRange(2, 2)
+    view.setLanguage('en')
+    const next = q<HTMLTextAreaElement>(modal, '[data-vet-test-input]')
+    expect(next.value).toBe('x1y2')
+    expect(document.activeElement).toBe(next)
+    expect(next.selectionStart).toBe(2)
+  })
+
+  it('浮层原始草稿与选区保全：未归一化文本/空数字/反向选区双向切换零写入（审查 001）', async () => {
+    const { request, mock } = assemble()
+    const { root, view } = await mountPage(request)
+    view.switchTab('user-rules')
+    q<HTMLButtonElement>(q(root, '[data-vet-section="user"]'), '[data-vet-action="add-rule"]').click()
+    const modal = q(root, '[data-vet-modal]')
+    // 未提交草稿：DOM 原始值与归一化模型有意分叉（输入处理写模型，DOM 保持用户输入）
+    const trigger = q<HTMLInputElement>(modal, '[data-vet-input="trigger"]')
+    trigger.value = 'abcdef'
+    trigger.dispatchEvent(new Event('input', { bubbles: true }))
+    trigger.setSelectionRange(2, 4, 'backward')
+    const priority = q<HTMLInputElement>(modal, '[data-vet-input="priority"]')
+    priority.value = '' // 空数字被输入处理忽略，模型仍持种子值
+    priority.dispatchEvent(new Event('input', { bubbles: true }))
+    const lang = q<HTMLInputElement>(modal, '[data-vet-input="scopeLanguage"]')
+    lang.value = 'Python, ' // 模型归一化为 'python,'
+    lang.dispatchEvent(new Event('input', { bubbles: true }))
+    const flags = q<HTMLInputElement>(modal, '[data-vet-input="regexFlags"]')
+    flags.value = 'mmi' // 模型归一化为 'im'
+    flags.dispatchEvent(new Event('input', { bubbles: true }))
+    const filesBefore = JSON.stringify([...mock.files.entries()])
+    view.setLanguage('en')
+    view.setLanguage('zh-cn') // 双向切换
+    const nextTrigger = q<HTMLInputElement>(modal, '[data-vet-input="trigger"]')
+    expect(nextTrigger.value).toBe('abcdef')
+    expect(nextTrigger.selectionStart).toBe(2)
+    expect(nextTrigger.selectionEnd).toBe(4)
+    expect(nextTrigger.selectionDirection).toBe('backward')
+    expect(q<HTMLInputElement>(modal, '[data-vet-input="priority"]').value).toBe('')
+    expect(q<HTMLInputElement>(modal, '[data-vet-input="scopeLanguage"]').value).toBe('Python, ')
+    expect(q<HTMLInputElement>(modal, '[data-vet-input="regexFlags"]').value).toBe('mmi')
+    expect(JSON.stringify([...mock.files.entries()])).toBe(filesBefore) // 零写入
+  })
+
+  it('spacing 编辑保护期间新校验提示读当前语言，草稿保留（审查 002）', async () => {
+    const { request } = assemble()
+    const { root, view } = await mountPage(request)
+    view.switchTab('auto-format')
+    const newName = q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]')
+    newName.value = 'draft' // 置脏：编辑保护生效，切语言不重建本分区
+    newName.dispatchEvent(new Event('input', { bubbles: true }))
+    view.setLanguage('en')
+    q<HTMLButtonElement>(q(root, '[data-vet-section="spacing"]'), '[data-vet-action="add-category"]').click()
+    const status = q(root, '[data-vet-status]')
+    expect(status.getAttribute('data-vet-status')).toBe('failed')
+    expect(status.textContent).toBe(enMessages.rulesPage.spacing.categoryInvalid) // 新提示为当前语言
+    expect(q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]').value).toBe('draft') // 草稿保留
+  })
+
+  it('平台空串（语言包未装配）按解析链同口径落英文', async () => {
+    const { request } = assemble()
+    const { root, view } = await mountPage(request)
+    view.setLanguage('')
+    expect(q(root, '[data-vet-hero] h1').textContent).toBe(enMessages.settingsTabs.heroTitle)
+  })
+
+  it('dispose 后 setLanguage 为 no-op（不抛错、DOM 保持已清空）', async () => {
+    const { request } = assemble()
+    const { root, view } = await mountPage(request)
+    view.dispose()
+    expect(() => view.setLanguage('en')).not.toThrow()
+    expect(root.childElementCount).toBe(0)
   })
 })

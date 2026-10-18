@@ -13,7 +13,7 @@
 // 与恢复/重置入口，页头给引导文案。函数替换体（F 旗标）#17 解锁为预注册
 // 函数引用选择（ref 下拉 + 函数源码只读展示；函数本体编辑不在规则 JSON，
 // 自定义走组件化 fork，提示文案引导）。
-import type { Messages } from './i18n'
+import { pickMessages, type Messages } from './i18n'
 import { RuleEngine, RuleScope, RuleTriggerMode, RuleType, type SimpleRule } from './rules/rule-engine'
 import { coveringBehaviorLocalIds } from './rules/rule-family-ids'
 import { DEFAULT_BUILTIN_RULES } from './rules/default-rules'
@@ -93,6 +93,9 @@ export interface RulesBehaviorStateLike {
 export interface RulesSettingsViewHandle {
   /** 触发一次数据装载（装载失败走状态行；重复调用无害） */
   reload(): Promise<void>
+  /** 就地切换语言（#58：SDK locale 通知驱动；语言映射经 pickMessages）：
+   *  重建四分区与在场编辑浮层，选中态/表单模型/测试编辑器内容/焦点保全 */
+  setLanguage(language: string): void
   /** 释放：清计时器与 DOM（sdk.onDispose 时调用） */
   dispose(): void
 }
@@ -109,8 +112,10 @@ export function mountRulesSettingsView(
   options: RulesSettingsViewOptions,
 ): RulesSettingsViewHandle {
   const doc = options.doc ?? document
-  const m = options.messages
-  const t = m.rulesPage
+  // 语言态可变（#58 setLanguage 就地切换）：m/t 为 let，全部渲染路径读
+  // 当前引用——分区渲染函数每次调用重建文案，闭包内不缓存派生文案
+  let m = options.messages
+  let t = m.rulesPage
   const client = options.client
   const schedule = options.setTimeout ?? ((fn, ms) => setTimeout(fn, ms))
   const cancel = options.clearTimeout ?? ((handle) => clearTimeout(handle as Parameters<typeof clearTimeout>[0]))
@@ -803,7 +808,8 @@ export function mountRulesSettingsView(
     addPairBtn.setAttribute('data-vet-action', 'add-pair')
     addPairBtn.addEventListener('click', () => {
       if (!selA.value || !selB.value || selA.value === selB.value) {
-        showStatus('failed', sp.pairInvalid)
+        // 执行时读当前字典：编辑保护跳过重建时回调闭包持旧 sp（审查 002）
+        showStatus('failed', t.spacing.pairInvalid)
         return
       }
       // 入队时捕获选择值：前一笔写的写后刷新可能重建分区，执行时再读
@@ -885,7 +891,8 @@ export function mountRulesSettingsView(
       const name = newName.value.trim()
       const pattern = newPattern.value.trim()
       if (!name || !pattern) {
-        showStatus('failed', sp.categoryInvalid)
+        // 执行时读当前字典：编辑保护跳过重建时回调闭包持旧 sp（审查 002）
+        showStatus('failed', t.spacing.categoryInvalid)
         return
       }
       // 基面取 DOM 读面（含未刷新的行编辑——click 前的 blur/change 写在途，
@@ -1606,10 +1613,95 @@ export function mountRulesSettingsView(
     if (!ok && !disposed) showStatus('failed', t.status.loadFailed)
   }
 
+  /** 就地切换语言（#58）：更新字典引用后按既有渲染路径重建。状态保全：
+   *  - 选中规则/灰态/客户端数据为闭包态，重建不丢；
+   *  - 编辑浮层在场：表单值按切换前 DOM 原始草稿快照恢复（含选区与方向）
+   *    ——不从归一化模型重建：priority 空串被输入处理忽略、
+   *    scopeLanguage/regexFlags 模型已归一化，模型往返会覆盖未提交输入
+   *    （审查 001）；测试编辑器（DOM 态）同快照回填；焦点优先按
+   *    data-vet-input 名恢复，其次测试编辑器；浮层内其余无稳定名标记的
+   *    控件（pill/按钮）焦点不恢复；
+   *  - 分区头部与规则列表按钮（开关/编辑/删除等）重建后焦点回落 body，
+   *    属已知边界（低频切换事件，重新点击即可）；
+   *  - spacing 分区草稿守卫（spacingEditingInFlight）沿用写后刷新语义：
+   *    焦点/脏标记在场时本分区保持原语言，下一次无冲突渲染补齐；守卫
+   *    期间动作回调的校验提示执行时读当前字典（审查 002）。 */
+  function setLanguage(language: string): void {
+    if (disposed) return
+    m = pickMessages(language)
+    t = m.rulesPage
+    if (formContext !== null) {
+      const testInput = overlay.querySelector<HTMLTextAreaElement>('[data-vet-test-input]')
+      const testText = testInput?.value ?? null
+      const testFrom = testInput?.selectionStart ?? null
+      const testTo = testInput?.selectionEnd ?? null
+      const draft = new Map<
+        string,
+        {
+          value: string
+          checked: boolean
+          from: number | null
+          to: number | null
+          direction: SelectionDirection
+        }
+      >()
+      for (const field of overlay.querySelectorAll<
+        HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+      >('[data-vet-input]')) {
+        const name = field.getAttribute('data-vet-input')
+        if (name === null) continue
+        draft.set(name, {
+          value: field.value,
+          checked: field instanceof HTMLInputElement && field.type === 'checkbox' && field.checked,
+          from: field instanceof HTMLSelectElement ? null : field.selectionStart,
+          to: field instanceof HTMLSelectElement ? null : field.selectionEnd,
+          direction: field instanceof HTMLSelectElement ? 'none' : (field.selectionDirection ?? 'none'),
+        })
+      }
+      const activeElement =
+        doc.activeElement instanceof HTMLElement && overlay.contains(doc.activeElement)
+          ? doc.activeElement
+          : null
+      const focusName = activeElement?.getAttribute('data-vet-input') ?? null
+      const focusWasTestInput = activeElement?.hasAttribute('data-vet-test-input') ?? false
+      buildFormDom()
+      refreshFormVisibility()
+      for (const [name, snap] of draft) {
+        const field = overlay.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
+          `[data-vet-input="${name}"]`,
+        )
+        if (field === null) continue
+        if (field instanceof HTMLInputElement && field.type === 'checkbox') {
+          field.checked = snap.checked
+        } else if (field instanceof HTMLSelectElement) {
+          field.value = snap.value
+        } else {
+          field.value = snap.value
+          if (snap.from !== null && snap.to !== null) {
+            field.setSelectionRange(snap.from, snap.to, snap.direction)
+          }
+        }
+      }
+      const nextTestInput = overlay.querySelector<HTMLTextAreaElement>('[data-vet-test-input]')
+      if (nextTestInput !== null && testText !== null) {
+        nextTestInput.value = testText
+        if (testFrom !== null && testTo !== null) nextTestInput.setSelectionRange(testFrom, testTo)
+      }
+      if (focusName !== null) {
+        overlay.querySelector<HTMLElement>(`[data-vet-input="${focusName}"]`)?.focus()
+      } else if (focusWasTestInput) {
+        nextTestInput?.focus()
+      }
+      runTest()
+    }
+    render()
+  }
+
   void reload()
 
   return {
     reload,
+    setLanguage,
     dispose() {
       disposed = true
       if (statusTimer !== null) cancel(statusTimer)
