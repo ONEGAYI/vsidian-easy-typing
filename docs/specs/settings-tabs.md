@@ -7,7 +7,7 @@
 - **hero 顶部块**：项目名（`settingsTabs.heroTitle`）+ 上游来源链接（MIT 双署名致敬，链 Yaozhuwa/easy-typing-obsidian，`_blank` + `noreferrer noopener`）。
 - **Tab 框架**：`nav[role=tablist]` 五按钮 + 五 `section[role=tabpanel]`；aria 配对完整（`aria-selected` / `aria-controls` / `aria-labelledby`）；键盘导航左右/上下循环、Home/End、roving tabIndex（活动钮 0 其余 -1，焦点随键盘移动）。
 - **面板常驻、hidden 切换**：五个 panel 全部挂载在 DOM，非活动 panel `[hidden]` + `aria-hidden`——不因切 Tab 销毁重建。目的：spacing 分区防御网（串行写队列/脏标记/编辑保护/DOM 读面，见 rules-ui.md）在 Tab 化后时序不变；规则分区草稿/焦点不因切 Tab 丢失。
-- **页面级状态行**：`role=status`（`data-vet-status` 三态），设置写入提示与规则分区共享，6s 自动清除。
+- **页面级状态行**：`role=status`（`data-vet-status` 三态），设置写入提示与规则分区共享，6s 自动清除；计时器单所有者——规则分区的状态提示经 hosts `statusSink` 上交页面 `showStatus` 统一计时，后到提示不被先到提示的计时器提前清除。
 - **Tab 态**：内存保存，默认「编辑增强」，页面卸载即复位（上游同为内存态；平台关闭组件详情即卸载自绘页）。`switchTab` 为受控切换 API，搜索定位经同一内部路径切页。
 
 ## 五 Tab 归属表
@@ -28,7 +28,7 @@
 
 - **控件形态由定义元数据驱动**：boolean → checkbox；string enum → select（档位文案用 `enumLabels` 双语标签，缺失回退枚举值本身）；普通 string → text；`multiline` string 与 array → textarea（array 每行一项）。行文案用既有 `settings[key].name/desc`，不另造第二份。
 - **写入触发 = `change` 事件**（失焦/回车，非逐键——避免通道风暴）；excludeFiles 写入按行拆分、逐行 trim、丢弃空行。
-- **读写通道**：初值/回显经 `SETTINGS_TOPIC.get` 的 `effective`（默认回填后的生效值）；写入经 `SETTINGS_TOPIC.update`，载荷 `{scope, patch}`（scope 见下节作用域）；**写后重拉刷新**（成功同步存储真值，失败把控件拉回，失败 reason 经状态行提示——含 `no-workspace` 拒绝码）。
+- **读写通道**：初值/回显经 `SETTINGS_TOPIC.get` 的 `effective`（默认回填后的生效值）；写入经 `SETTINGS_TOPIC.update`，载荷 `{scope, patch}`（scope 见下节作用域）；**写后重拉刷新**（成功同步存储真值，失败把控件拉回，失败 reason 经状态行提示——含 `no-workspace` 拒绝码）。重拉两条确定性语义：**跳过聚焦中控件**（当前编辑中的草稿不被写后/作用域切换/清除覆盖的重拉覆盖，失焦后下一次重拉照常应用存储真值）与**到达序令牌**（并发重拉按发起序自增令牌结算，挂起旧快照迟到回包弃置，不覆盖新快照）。
 - **联动置灰（纯 UI 态，不改变写入）**：`autoFormat` 总开关关闭 → 自动格式化 Tab 下游**设置行**置灰（`aria-disabled` + 类名 + tooltip「总开关已关闭，此设置暂不可用」），总开关自身可用；`userDefinedRegExp` 再受 `userDefinedRegSwitch` 二级联动。打开总开关后下行随写后重拉恢复可用。
 
 ## 作用域语义（settingsContext facet 消费）
@@ -68,8 +68,8 @@
 
 ## 验收口径（票面映射）
 
-- **归属映射纯函数**：`test/settings-tabs-model.test.ts`——24 键全覆盖无遗漏、excludeFiles 特例归自动格式化、卡片键并集 = 24 键恰好一次、组路由与卡片锚点两套口径咬合、Tab 计数（6/14/4）、总开关是 autoFormat 卡首键。
-- **Tab 框架与设置行 DOM**：`test/settings-tabs-ui.test.ts`——hero 链接、tablist aria 配对与键盘导航、面板常驻 hidden 切换、24 行渲染与控件形态矩阵、行文案来自既有 i18n、初值经 effective、写入通道（scope user + 写后重拉 + change 触发 + excludeFiles 拆行）、写入失败状态行回滚、联动置灰矩阵（含二级联动与恢复）、规则四分区挂入对应 panel、dispose。
+- **归属映射纯函数**：`test/settings-tabs-model.test.ts`——24 键全覆盖无遗漏、excludeFiles 特例归自动格式化、卡片键并集 = 24 键恰好一次、组路由与卡片锚点两套口径咬合、Tab 计数（6/14/4）、总开关是 autoFormat 卡首键、组未映射的已注册定义判空降级不抛错。
+- **Tab 框架与设置行 DOM**：`test/settings-tabs-ui.test.ts`——hero 链接、tablist aria 配对与键盘导航、面板常驻 hidden 切换、24 行渲染与控件形态矩阵、行文案来自既有 i18n、初值经 effective、写入通道（scope user + 写后重拉 + change 触发 + excludeFiles 拆行）、写入失败状态行回滚、联动置灰矩阵（含二级联动与恢复）、规则四分区挂入对应 panel、dispose；审查轮加固——共享状态行单计时器（规则分区提示经 statusSink 上交，先到计时器不提前清除后到提示）、重拉跳过聚焦中控件（草稿保留，失焦后回真值）、并发重拉到达序令牌（旧快照迟到不覆盖新快照）、enumLabelText 直值形态（LocalizedText 直值字符串直返）。
 - **作用域接入**：`test/settings-tabs-scope.test.ts`——facet 判空降级（无作用域 UI + 写入固定 user）、写入目标层跟随 scopeState、onScopeChange 重拉对齐、dispose 退订、no-workspace 拒绝提示与控件回滚、规则 Tab 用户级标注（含降级形态仍在）、workspace 徽章显隐、清除覆盖成功（载荷/重拉/回退用户层）/失败（reason 提示、徽章保持）。
 - **搜索定位**：`test/settings-tabs-locate.test.ts`——首开回放（订阅回放 + 初值双投只落一次高亮）、已开立即交付（不触发重拉）、def/group 两类映射与组特例（general 锚排除文件卡）、未知键静默降级、重复目标重入、换目标清旧、null 清除（含排队丢弃）、get 挂起排队补投、dispose 退订、与作用域重拉共存、facet 缺席无定位消费痕迹。
 - **真实观感归人工清单**：暗/亮主题真实绘制、中英双语、长内容滚动、物理键盘 Tab 导航、作用域切换/清除覆盖实操、全局搜索定位实操（含重复点击重新滚动）、规则四分区回归——[manual-verification.md](../manual-verification.md) 二十二节（A83–A88）。
@@ -78,7 +78,7 @@
 ## 已知边界
 
 - **Tab 态不持久化**：内存态，页面卸载即复位默认「编辑增强」；搜索定位的订阅回放可覆盖首开主要 UX 损失。
-- **设置值无推送通道**：页面在每次写后/清除后/作用域切换后重拉 `SETTINGS_TOPIC.get` 刷新；跨窗口实时同步不做（平台作用域推送同款边界，见 settings-mapping.md §六）。写入失败（`no-workspace` 等 reason）经状态行提示。
+- **设置值无推送通道**：页面在每次写后/清除后/作用域切换后重拉 `SETTINGS_TOPIC.get` 刷新；跨窗口实时同步不做（平台作用域推送同款边界，见 settings-mapping.md §六）。写入失败（`no-workspace` 等 reason）经状态行提示。残余边界：重拉跳过聚焦中控件（保草稿语义），外部变更在焦点离开该控件前不呈现于该行——焦点离开后的下一次重拉（写后/清除后/作用域切换任一触发）对齐。
 - **spacing 卡片不随 autoFormat 总开关联动置灰**：语言间空格策略分区是规则域渲染（rulesUi spacing），与设置行（设置域）渲染分离；联动置灰仅覆盖自动格式化 Tab 的设置行。总开关关闭时 spacing 分区仍可编辑，其生效由引擎侧 autoFormat 总门把守。
 - **定位补投以首次 `get` 结算为闸**：get 结算成败皆算（失败时行以默认形态在场）；若通道挂起无响应（promise 永不落定），首开排队目标停留在排队态不投递——组件不为 get 另设超时，也不绕过结算直接投递。
 - **facet 缺席 = 降级形态**：旧宿主 / 编辑器页形态下无作用域相关 UI、无定位消费，写入目标层固定 `'user'`；页面其余功能完整可用（`^1.1.0` 下界保证发行宿主恒有 facet，降级形态仅为防御性兼容与测试注入面）。
