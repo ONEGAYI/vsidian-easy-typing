@@ -234,7 +234,7 @@ export const enMessages: Messages = {
     // User-layer merged-value hint (review round R2-P2-1, transitional until
     // the platform exposes per-layer reads): shown on user scope with a
     // workspace override present.
-    mergedValueHint: 'Shows the workspace-merged value; the user-layer value awaits per-layer read support',
+    mergedValueHint: 'Shows the workspace-merged value; this host does not support per-layer reads yet',
   },
   // Rules management settings page copy (issue #16): follows upstream locale
   // headers / toolTip / ruleEditModal / dropdownOptions entries, adapted to

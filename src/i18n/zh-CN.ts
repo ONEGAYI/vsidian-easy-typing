@@ -232,7 +232,7 @@ const zhMessages = {
     loadFailedRowHint: '设置读取失败，此设置暂不可编辑（读取成功后恢复）',
     // 用户层合并值提示（审查轮 R2-P2-1 平台缺口过渡处置）：scope=user 且
     // 工作区覆盖在场时行内提示；用户层原值按层读取待平台能力
-    mergedValueHint: '当前显示工作区覆盖后的合并值；用户层原值待平台支持按层读取',
+    mergedValueHint: '当前显示的是工作区覆盖后的合并值；此宿主版本暂不支持按层读取',
   },
   // 规则管理设置页文案（工单 #16）：对照上游 locale headers.toolTip.
   // ruleEditModal.dropdownOptions 词条，按平台自绘页形态改写
