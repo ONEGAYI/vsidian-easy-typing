@@ -592,3 +592,167 @@
   color: var(--vscode-input-foreground, #cccccc);
   font-size: 12px;
 }
+
+/* ===== 五 Tab 设置页（#55 切片 1）：hero / Tab 导航 / 面板 / 设置行 ===== */
+
+.vsidian-easy-typing-settings-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  border-radius: 8px;
+  background: var(--vscode-sideBar-background, transparent);
+}
+
+.vsidian-easy-typing-settings-hero-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.vsidian-easy-typing-settings-hero-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+.vsidian-easy-typing-settings-hero-link {
+  color: var(--vscode-textLink-foreground, #3794ff);
+}
+
+.vsidian-easy-typing-settings-hero-link:hover,
+.vsidian-easy-typing-settings-hero-link:focus {
+  color: var(--vscode-textLink-activeForeground, #3794ff);
+}
+
+/* Tab 导航（下划线式，对齐上游 et-settings-nav 形态） */
+.vsidian-easy-typing-settings-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+}
+
+.vsidian-easy-typing-settings-tab-btn {
+  padding: 6px 12px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.vsidian-easy-typing-settings-tab-btn:hover {
+  color: var(--vscode-foreground, #cccccc);
+}
+
+.vsidian-easy-typing-settings-tab-btn:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: -1px;
+}
+
+.vsidian-easy-typing-settings-tab-btn-active {
+  border-bottom-color: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-foreground, #cccccc);
+  font-weight: 600;
+}
+
+/* 面板容器（面板常驻 DOM、非活动 [hidden]——spacing 防御网时序不变） */
+.vsidian-easy-typing-settings-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.vsidian-easy-typing-settings-tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* 规则分区挂载点（面板内按块排布） */
+.vsidian-easy-typing-settings-section-host {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 分组卡片（复用 -section 卡片基座，卡内行距收紧） */
+.vsidian-easy-typing-settings-card {
+  gap: 4px;
+}
+
+/* 设置行：左信息右控件 */
+.vsidian-easy-typing-setting-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 4px;
+  border-radius: 4px;
+}
+
+.vsidian-easy-typing-setting-row + .vsidian-easy-typing-setting-row {
+  border-top: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.15));
+}
+
+.vsidian-easy-typing-setting-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.vsidian-easy-typing-setting-name {
+  font-weight: 600;
+}
+
+.vsidian-easy-typing-setting-desc {
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  white-space: pre-line;
+}
+
+.vsidian-easy-typing-setting-control {
+  flex-shrink: 0;
+  width: 240px;
+  max-width: 45%;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.vsidian-easy-typing-setting-control .vsidian-easy-typing-select,
+.vsidian-easy-typing-setting-control input[type='text'] {
+  width: 100%;
+}
+
+.vsidian-easy-typing-setting-control .vsidian-easy-typing-toggle {
+  margin-top: 2px;
+}
+
+/* 多行/数组行：控件整行铺宽（textarea 在信息下方） */
+.vsidian-easy-typing-setting-row-wide {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.vsidian-easy-typing-setting-row-wide .vsidian-easy-typing-setting-control {
+  width: 100%;
+  max-width: none;
+}
+
+.vsidian-easy-typing-setting-row-wide .vsidian-easy-typing-textarea {
+  min-height: 56px;
+}
+
+/* 联动置灰（决策 11：纯 UI 态——aria-disabled + 类名，不改变写入） */
+.vsidian-easy-typing-setting-row-disabled {
+  opacity: 0.5;
+}
+
+.vsidian-easy-typing-setting-row-disabled .vsidian-easy-typing-setting-control {
+  cursor: default;
+}

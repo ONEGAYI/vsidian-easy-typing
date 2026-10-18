@@ -188,6 +188,34 @@ const zhMessages = {
     autoFormatToggledOff: '自动格式化已关闭',
     commandFileExcluded: '当前文件在排除清单（排除文件夹/文件）中，命令未执行',
   },
+  // 设置页五 Tab 文案（工单 #55）：Tab 名对照上游 locale headers.tabs
+  //（user-rules 按票面用「自定义规则」）；卡片标题对照上游设置页卡片结构；
+  // hero 为顶部项目名与上游来源链接块（MIT 双署名致敬）；联动置灰提示为
+  // 行 title 悬停文案（纯 UI 态，决策 11）
+  settingsTabs: {
+    tabs: {
+      editEnhance: '编辑增强',
+      autoFormat: '自动格式化',
+      builtinRules: '内置规则',
+      userRules: '自定义规则',
+      other: '其他设置',
+    },
+    heroTitle: 'Vsidian Easy Typing 输入体验增强',
+    heroSourceLabel: '基于上游项目（MIT 协议）：',
+    heroLinkText: 'easy-typing-obsidian',
+    cards: {
+      editEnhance: '增强编辑设置',
+      autoFormat: '自动格式化设置',
+      inlineSpace: '行内元素间空格',
+      prefixDict: '前缀词典',
+      customRegex: '自定义正则区块',
+      excludeFiles: '指定文件不自动格式化',
+      experimental: '实验功能',
+    },
+    hintDisabledByMaster: '「输入时自动格式化」总开关已关闭，此设置暂不可用',
+    hintDisabledByRegexSwitch: '「自定义正则表达式开关」已关闭，此设置暂不可用',
+    statusUpdateFailed: '设置写入失败',
+  },
   // 规则管理设置页文案（工单 #16）：对照上游 locale headers.toolTip.
   // ruleEditModal.dropdownOptions 词条，按平台自绘页形态改写
   rulesPage: {

@@ -1,15 +1,16 @@
-// 设置页入口（工单 #16 规则管理 UI）：经 SDK 构建桥打成 chrome114 IIFE。
-// mountRoot 内自绘规则管理界面（src/rulesUi.ts——列表/编辑表单/导入导出/
-// 测试编辑器），读写全经 setup 生命周期注册的 RULES_TOPIC 通道
+// 设置页入口（工单 #16 起建；#55 切片 1 改为五 Tab 自绘设置页装配）：
+// 经 SDK 构建桥打成 chrome114 IIFE。mountRoot 内挂自绘设置页
+// （src/settingsTabsUi.ts——hero + 五页内 Tab + 24 项设置行 + 规则四分区
+// 挂入；Tab 归属映射见 src/settings/tabs-model.ts）。设置读写经 setup
+// 生命周期注册的 SETTINGS_TOPIC 通道，规则数据经 RULES_TOPIC 通道
 // （src/rulesHost.ts，与编辑器页同名 topic 各自注册不冲突）。面板 chrome
 // 与 dock 样式归平台；内容根内部样式归 src/settings.css（构建拷贝
 // dist/settings.css，extension.ts registerPage 登记）。
 import { defineAddonPage } from 'vsidian-addon-sdk'
 import type { VsidianAddonPageSdk } from '../types/vendor/shared/addonPage'
-import { pickMessages } from './i18n'
+import { localeTagFor, pickMessages } from './i18n'
 import { setDebugEnabled } from './logging'
-import { RulesSettingsClient } from './rules/rules-settings-client'
-import { mountRulesSettingsView } from './rulesUi'
+import { mountSettingsPage } from './settingsTabsUi'
 import { SETTINGS_TOPIC } from './settings/store'
 
 /** 本组件声明的扩展 ID（装载器按此核对入口身份） */
@@ -37,10 +38,10 @@ defineAddonPage(ADDON_ID, (sdk: VsidianAddonPageSdk) => {
     .catch(() => {
       // 通道异常静默（装载期一次性拉取，无重试面）
     })
-  const client = new RulesSettingsClient({ channel: sdk.channel })
-  const view = mountRulesSettingsView(root, {
-    client,
+  const view = mountSettingsPage(root, {
+    channel: sdk.channel,
     messages: pickMessages(navigator.language),
+    localeTag: localeTagFor(navigator.language),
     // #50 宿主行为禁用态只读面（设置页可用；旧平台 undefined → 不灰显）
     behaviorState: sdk.behaviorState,
   })

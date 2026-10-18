@@ -186,6 +186,35 @@ export const enMessages: Messages = {
     autoFormatToggledOff: 'Auto formatting disabled',
     commandFileExcluded: 'Current file is in the exclusion list (excluded folders/files); command not executed',
   },
+  // Five-tab settings page copy (issue #55): tab names follow the upstream
+  // locale headers.tabs (user-rules rendered per ticket wording); card titles
+  // follow the upstream settings page card structure; hero is the top project
+  // name and upstream source link block (MIT dual attribution); the disabled
+  // hints are row title tooltips (pure UI state, decision 11).
+  settingsTabs: {
+    tabs: {
+      editEnhance: 'Editing Enhancements',
+      autoFormat: 'Auto Formatting',
+      builtinRules: 'Built-in Rules',
+      userRules: 'Custom Rules',
+      other: 'Other Settings',
+    },
+    heroTitle: 'Vsidian Easy Typing',
+    heroSourceLabel: 'Based on the upstream project (MIT):',
+    heroLinkText: 'easy-typing-obsidian',
+    cards: {
+      editEnhance: 'Enhanced Editing',
+      autoFormat: 'Auto Formatting Settings',
+      inlineSpace: 'Spacing Around Inline Elements',
+      prefixDict: 'Prefix Dictionary',
+      customRegex: 'Custom Regex Blocks',
+      excludeFiles: 'Exclude Folders/Files from Auto Formatting',
+      experimental: 'Experimental Features',
+    },
+    hintDisabledByMaster: 'The "Auto formatting when typing" master switch is off; this setting is temporarily unavailable.',
+    hintDisabledByRegexSwitch: 'The "User Defined RegExp Switch" is off; this setting is temporarily unavailable.',
+    statusUpdateFailed: 'Failed to save setting',
+  },
   // Rules management settings page copy (issue #16): follows upstream locale
   // headers / toolTip / ruleEditModal / dropdownOptions entries, adapted to
   // the platform self-drawn page form.
