@@ -390,7 +390,7 @@ describe('滚动位置随 view-state 保存与恢复（#63 扩展：超上游一
 
     const second = await mountPage(backend.request)
     expect(second.view.activeTab()).toBe('user-rules')
-    await flush(4)
+    await waitRestoreApplied()
     // 滚动恢复在内容起高后回放（rAF/定时器回退）——离开时偏移原样回位
     expect(document.documentElement.scrollTop).toBe(400)
     second.view.dispose()
@@ -456,19 +456,28 @@ describe('滚动位置随 view-state 保存与恢复（#63 扩展：超上游一
 
   // ===== R1 审查 001：规则列表异步装载晚于 view-state 回包时不提前回放 =====
 
+  /** 等待滚动回放确定性落定（CI 时序加固）：规则装载 settle → 双信号
+   *  Promise.all → rAF 帧回调，链路含真实帧定时器——纯微任务 flush 不
+   *  保证帧回调已跑（CI 上 flush(6) 抢跑断言），补真实等待余量 */
+  async function waitRestoreApplied(): Promise<void> {
+    await flush(4)
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    await flush(2)
+  }
+
   it('规则装载跨过首帧后仍恢复偏移：回放等待规则内容起高（jsdom 无钳制，以顺序钉住）', async () => {
     const backend = assembleHostBackend()
     // 种入「规则 Tab + 中部偏移」记忆，规则装载挂起（模拟文件读取慢于 view-state 回包）
     await backend.request('easyTyping.viewState.update', { tab: 'builtin-rules', scroll: 500 })
     const releaseRules = backend.holdRulesGet()
     const page = await mountPage(backend.request)
-    await flush(6)
+    await waitRestoreApplied()
     expect(page.view.activeTab()).toBe('builtin-rules')
     // 规则装载在途：偏移不得提前应用（真宿主中此时尚未起高的内容会把 500 钳为 0）
     expect(document.documentElement.scrollTop).toBe(0)
 
     releaseRules()
-    await flush(6)
+    await waitRestoreApplied()
     expect(document.documentElement.scrollTop).toBe(500)
     page.view.dispose()
   })
