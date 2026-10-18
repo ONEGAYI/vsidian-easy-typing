@@ -214,6 +214,15 @@ export const enMessages: Messages = {
     hintDisabledByMaster: 'The "Auto formatting when typing" master switch is off; this setting is temporarily unavailable.',
     hintDisabledByRegexSwitch: 'The "User Defined RegExp Switch" is off; this setting is temporarily unavailable.',
     statusUpdateFailed: 'Failed to save setting',
+    // Scope-related (#55 slice 2): clearing an override restores inheritance
+    // from the user default (not the factory default — see the vendor
+    // AddonSettingsContextApi.clearWorkspaceOverride comment).
+    rulesScopeNote: 'Rules on this tab are user-level data: shared globally, not isolated per workspace.',
+    badgeWorkspaceOverride: 'Workspace override',
+    clearOverrideAction: 'Clear override',
+    clearOverrideTitle: 'Clear the workspace override: this setting falls back to the user default (not the factory default)',
+    statusOverrideCleared: 'Workspace override cleared; the setting inherits the user default again',
+    statusClearOverrideFailed: 'Failed to clear the workspace override',
   },
   // Rules management settings page copy (issue #16): follows upstream locale
   // headers / toolTip / ruleEditModal / dropdownOptions entries, adapted to

@@ -756,3 +756,12 @@
 .vsidian-easy-typing-setting-row-disabled .vsidian-easy-typing-setting-control {
   cursor: default;
 }
+
+/* ===== #55 切片 2：规则分区用户级标注 ===== */
+.vsidian-easy-typing-rules-scope-note {
+  margin: 0;
+  padding: 6px 10px;
+  border-left: 2px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  font-size: 12px;
+}

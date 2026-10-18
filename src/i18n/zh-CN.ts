@@ -215,6 +215,14 @@ const zhMessages = {
     hintDisabledByMaster: '「输入时自动格式化」总开关已关闭，此设置暂不可用',
     hintDisabledByRegexSwitch: '「自定义正则表达式开关」已关闭，此设置暂不可用',
     statusUpdateFailed: '设置写入失败',
+    // 作用域相关（#55 切片 2）：清除覆盖语义 = 恢复继承用户默认值（非恢复
+    // 出厂默认——vendor AddonSettingsContextApi.clearWorkspaceOverride 注释）
+    rulesScopeNote: '本页规则为用户级数据：全局共享，不随工作区隔离',
+    badgeWorkspaceOverride: '工作区覆盖',
+    clearOverrideAction: '清除覆盖',
+    clearOverrideTitle: '清除工作区覆盖：此设置恢复继承用户默认值（非恢复出厂默认）',
+    statusOverrideCleared: '已清除工作区覆盖，恢复继承用户默认值',
+    statusClearOverrideFailed: '清除工作区覆盖失败',
   },
   // 规则管理设置页文案（工单 #16）：对照上游 locale headers.toolTip.
   // ruleEditModal.dropdownOptions 词条，按平台自绘页形态改写

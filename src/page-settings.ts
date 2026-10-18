@@ -44,6 +44,9 @@ defineAddonPage(ADDON_ID, (sdk: VsidianAddonPageSdk) => {
     localeTag: localeTagFor(navigator.language),
     // #50 宿主行为禁用态只读面（设置页可用；旧平台 undefined → 不灰显）
     behaviorState: sdk.behaviorState,
+    // #55 切片 2 作用域观察面（设置页可用 facet；旧宿主/编辑器页形态
+    // undefined → 判空降级：无作用域相关 UI，写入目标层固定 'user'）
+    settingsContext: sdk.settingsContext,
   })
   sdk.onDispose(() => view.dispose())
 })

@@ -1,0 +1,327 @@
+// @vitest-environment jsdom
+// 五 Tab 设置页作用域接入测试（工单 #55 切片 2）：settingsContext facet
+// 消费（判空降级 = 无作用域相关 UI，页面其余功能完整）、写入目标层跟随
+// scopeState().scope、onScopeChange 分发后重拉对齐、规则 Tab 用户级标注
+// （决策 8：规则数据 globalStorage 语义用户级，无作用域 UI）。facet 注入
+// 用 fake（对齐 vendor AddonSettingsContextFacet 接口形状；locateTarget
+// 双面为切片 3 消费对象，fake 中给桩）。数据链装配对齐
+// test/settings-tabs-ui.test.ts（真实 HostRulesService + mock storage）；
+// 设置主题 mock 为两层存储模型（user / workspace 层合并出 values+sources）。
+import { afterEach, describe, expect, it } from 'vitest'
+import { mountSettingsPage, type SettingsChannelLike, type SettingsPageViewHandle } from '../src/settingsTabsUi'
+import { HostRulesService, registerRulesChannels } from '../src/rulesHost'
+import { SETTINGS_TOPIC } from '../src/settings/store'
+import { DEFAULT_EFFECTIVE_SETTINGS } from '../src/settings/defaults'
+import { zhMessages } from '../src/i18n'
+import type { AddonChannelRegistry } from '../types/vendor/host/addons/addonRegistry'
+import type { AddonSettingsContextFacet } from '../types/vendor/shared/addonSettingsContextApi'
+import type { AddonStorageFacet, AddonStorageWatchHandle } from '../types/vendor/shared/addonStorage'
+
+// ===== mock 设施 =====
+
+function mockStorage(initial: Record<string, string> = {}) {
+  const files = new Map<string, string>(Object.entries(initial))
+  const storage: AddonStorageFacet = {
+    uri: () => 'file:///globalStorage/vsidian/addons/ONEGAYI.vsidian-easy-typing/',
+    readFile: async (path) => {
+      const value = files.get(path)
+      return value === undefined ? { ok: false, reason: 'error', detail: 'not-found' } : { ok: true, value }
+    },
+    writeFile: async (path, content) => {
+      files.set(path, content)
+      return { ok: true, value: null }
+    },
+    list: async () => ({
+      ok: true,
+      entries: [...files.keys()].map((path) => ({ path, kind: 'file' as const })),
+    }),
+    deleteFile: async (path) => {
+      files.delete(path)
+      return { ok: true, value: null }
+    },
+    onDidChangeFile: (): AddonStorageWatchHandle => ({ dispose: () => {} }),
+  }
+  return { files, storage }
+}
+
+/** 两层设置存储模型（对齐平台 user=globalState / workspace=workspaceState 语义）：
+ *  values = user 层覆盖 workspace 层合并；sources = 逐键解析来源 */
+interface LayeredSettingsStore {
+  userValues: Record<string, unknown>
+  wsValues: Record<string, unknown>
+  updateCalls: Array<{ scope: string; patch: Record<string, unknown> }>
+  clearCalls: string[]
+  failReason: string | null
+  clearFailReason: string | null
+  getCount: number
+}
+
+/** fake facet（对齐 vendor AddonSettingsContextFacet 全形状；set 即分发） */
+function fakeFacet(initial: { scope: 'user' | 'workspace'; hasWorkspace: boolean } = { scope: 'user', hasWorkspace: true }) {
+  let state = initial
+  const listeners = new Set<(next: typeof initial) => void>()
+  const facet: AddonSettingsContextFacet = {
+    scopeState: () => state,
+    onScopeChange: (listener) => {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+    // 切片 3 消费对象；桩保持接口形状完整
+    locateTarget: () => null,
+    onLocateTarget: () => () => {},
+  }
+  return {
+    facet,
+    apply(next: { scope: 'user' | 'workspace'; hasWorkspace: boolean }): void {
+      state = next
+      for (const listener of listeners) listener(state)
+    },
+  }
+}
+
+/** 端到端装配：mock storage → 宿主规则服务 → 通道（规则 + 设置两层主题） */
+function assemble() {
+  const mock = mockStorage()
+  const service = new HostRulesService(mock.storage, {
+    now: () => 1_000_000,
+    setTimeout: (fn) => {
+      void fn() // 去抖即时
+      return 0
+    },
+    clearTimeout: () => {},
+  })
+  const handlers = new Map<string, (payload: unknown) => unknown | Promise<unknown>>()
+  const registry: AddonChannelRegistry = {
+    handle: (topic, handler) => {
+      handlers.set(topic, handler)
+      return { dispose: () => handlers.delete(topic) }
+    },
+  }
+  registerRulesChannels(registry, service)
+  const store: LayeredSettingsStore = {
+    userValues: {},
+    wsValues: {},
+    updateCalls: [],
+    clearCalls: [],
+    failReason: null,
+    clearFailReason: null,
+    getCount: 0,
+  }
+  handlers.set(SETTINGS_TOPIC.get, () => {
+    store.getCount += 1
+    const values = { ...store.userValues, ...store.wsValues }
+    const sources: Record<string, string> = {}
+    for (const key of [...Object.keys(store.userValues), ...Object.keys(store.wsValues)]) {
+      sources[key] = Object.prototype.hasOwnProperty.call(store.wsValues, key) ? 'workspace' : 'user'
+    }
+    return { values, sources, effective: { ...DEFAULT_EFFECTIVE_SETTINGS, excludeFiles: [...DEFAULT_EFFECTIVE_SETTINGS.excludeFiles], ...values } }
+  })
+  handlers.set(SETTINGS_TOPIC.update, (raw: unknown) => {
+    const payload = raw as { scope: string; patch: Record<string, unknown> }
+    store.updateCalls.push(payload)
+    if (store.failReason) return { ok: false, reason: store.failReason }
+    const target = payload.scope === 'workspace' ? store.wsValues : store.userValues
+    Object.assign(target, payload.patch)
+    return { ok: true }
+  })
+  handlers.set(SETTINGS_TOPIC.clearOverride, (raw: unknown) => {
+    const key = (raw as { key: string }).key
+    store.clearCalls.push(key)
+    if (store.clearFailReason) return { ok: false, reason: store.clearFailReason }
+    delete store.wsValues[key]
+    return { ok: true }
+  })
+  const request = async (
+    topic: string,
+    payload: unknown,
+  ): Promise<{ ok: true; result: unknown } | { ok: false; reason: string }> => {
+    const handler = handlers.get(topic)
+    if (!handler) return { ok: false, reason: 'rejected' }
+    try {
+      return { ok: true, result: await handler(payload) }
+    } catch {
+      return { ok: false, reason: 'rejected' }
+    }
+  }
+  return { mock, service, store, request }
+}
+
+async function flush(times = 2): Promise<void> {
+  for (let i = 0; i < times; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+}
+
+interface MountOptions {
+  facet?: AddonSettingsContextFacet
+}
+
+/** 挂载五 Tab 设置页（装载链冲刷后返回） */
+async function mountPage(request: SettingsChannelLike['request'], mountOptions: MountOptions = {}): Promise<{
+  view: SettingsPageViewHandle
+  root: HTMLElement
+}> {
+  const root = document.createElement('div')
+  document.body.append(root)
+  const view = mountSettingsPage(root, {
+    channel: { request },
+    messages: zhMessages,
+    localeTag: 'zh-cn',
+    doc: document,
+    setTimeout: () => 0,
+    clearTimeout: () => {},
+    settingsContext: mountOptions.facet,
+  })
+  await flush()
+  return { view, root }
+}
+
+function q<T extends Element>(root: ParentNode, selector: string): T {
+  const node = root.querySelector<T>(selector)
+  if (!node) throw new Error(`selector not found: ${selector}`)
+  return node
+}
+
+function panel(root: ParentNode, tabId: string): HTMLElement {
+  return q(root, `[data-vet-panel="${tabId}"]`)
+}
+
+function rowControl(root: ParentNode, key: string): HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement {
+  const row = q(root, `[data-vet-setting-key="${key}"]`)
+  return q<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(row, 'input, select, textarea')
+}
+
+function changeValue(
+  control: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement,
+  value: string | boolean,
+): void {
+  if (typeof value === 'boolean') {
+    ;(control as HTMLInputElement).checked = value
+  } else {
+    control.value = value
+  }
+  control.dispatchEvent(new Event('change', { bubbles: true }))
+}
+
+afterEach(() => {
+  document.body.textContent = ''
+})
+
+// ===== settingsContext facet 判空降级 =====
+
+describe('settingsContext facet 判空降级（旧宿主 / 编辑器页形态）', () => {
+  it('无 facet：页面其余功能完整（24 行渲染 + 写入可用），写入 scope 固定 user', async () => {
+    const { store, request } = assemble()
+    const { root } = await mountPage(request)
+    expect(root.querySelectorAll('[data-vet-setting-key]')).toHaveLength(24)
+    changeValue(rowControl(root, 'tabout'), false)
+    await flush()
+    expect(store.updateCalls).toEqual([{ scope: 'user', patch: { tabout: false } }])
+    expect(store.userValues.tabout).toBe(false)
+  })
+
+  it('无 facet：workspace 层来源也不渲染徽章/清除入口（无作用域相关 UI）', async () => {
+    const { store, request } = assemble()
+    store.wsValues.tabout = true
+    const { root } = await mountPage(request)
+    expect(root.querySelector('[data-vet-source-badge]')).toBeNull()
+    expect(root.querySelector('[data-vet-clear-override]')).toBeNull()
+  })
+})
+
+// ===== 写入目标层跟随作用域 =====
+
+describe('写入目标层跟随作用域（scopeState 只读面）', () => {
+  it('scopeState=workspace：写入 scope 跟随为 workspace，落 workspace 层', async () => {
+    const { store, request } = assemble()
+    const fake = fakeFacet({ scope: 'workspace', hasWorkspace: true })
+    const { root } = await mountPage(request, { facet: fake.facet })
+    changeValue(rowControl(root, 'tabout'), false)
+    await flush()
+    expect(store.updateCalls).toEqual([{ scope: 'workspace', patch: { tabout: false } }])
+    expect(store.wsValues.tabout).toBe(false)
+    expect(store.userValues.tabout).toBeUndefined()
+  })
+
+  it('scopeState=user（facet 在场）：写入仍落 user 层', async () => {
+    const { store, request } = assemble()
+    const fake = fakeFacet()
+    const { root } = await mountPage(request, { facet: fake.facet })
+    changeValue(rowControl(root, 'smartPaste'), false)
+    await flush()
+    expect(store.updateCalls).toEqual([{ scope: 'user', patch: { smartPaste: false } }])
+    expect(store.userValues.smartPaste).toBe(false)
+  })
+
+  it('onScopeChange 分发后重拉对齐显示（getCount 增加，控件值刷新）', async () => {
+    const { store, request } = assemble()
+    const fake = fakeFacet()
+    const { root } = await mountPage(request, { facet: fake.facet })
+    expect((rowControl(root, 'tabout') as HTMLInputElement).checked).toBe(true)
+    store.userValues.tabout = false
+    const before = store.getCount
+    fake.apply({ scope: 'workspace', hasWorkspace: true })
+    await flush()
+    expect(store.getCount).toBeGreaterThan(before)
+    expect((rowControl(root, 'tabout') as HTMLInputElement).checked).toBe(false)
+  })
+
+  it('dispose 退订 onScopeChange（分发不再触发重拉）', async () => {
+    const { store, request } = assemble()
+    const fake = fakeFacet()
+    const { view } = await mountPage(request, { facet: fake.facet })
+    view.dispose()
+    store.userValues.tabout = false
+    const before = store.getCount
+    fake.apply({ scope: 'workspace', hasWorkspace: true })
+    await flush()
+    expect(store.getCount).toBe(before)
+  })
+
+  it('workspace 层写入被宿主拒绝（no-workspace）：状态行提示 reason，控件重拉回滚', async () => {
+    const { store, request } = assemble()
+    const fake = fakeFacet({ scope: 'workspace', hasWorkspace: false })
+    const { root } = await mountPage(request, { facet: fake.facet })
+    store.failReason = 'no-workspace'
+    changeValue(rowControl(root, 'tabout'), false)
+    await flush()
+    const status = q(root, '[data-vet-status]')
+    expect(status.getAttribute('data-vet-status')).toBe('failed')
+    expect(status.textContent).toContain('no-workspace')
+    // 拒绝后控件回滚为 effective 真值（默认 true）
+    expect((rowControl(root, 'tabout') as HTMLInputElement).checked).toBe(true)
+  })
+})
+
+// ===== 规则 Tab 用户级标注（决策 8） =====
+
+describe('规则 Tab 用户级标注', () => {
+  it('内置规则/自定义规则 panel 有用户级标注（用户级、全局共享、不随工作区隔离）', async () => {
+    const { request } = assemble()
+    const { root } = await mountPage(request)
+    const notes = root.querySelectorAll('[data-vet-rules-scope="user"]')
+    expect(notes).toHaveLength(2)
+    expect(panel(root, 'builtin-rules').contains(notes[0])).toBe(true)
+    expect(panel(root, 'user-rules').contains(notes[1])).toBe(true)
+    for (const note of notes) {
+      expect(note.textContent).toContain('用户级')
+      expect(note.textContent).toContain('不随工作区隔离')
+    }
+  })
+
+  it('其他 panel（自动格式化/其他设置）不出现规则作用域标注', async () => {
+    const { request } = assemble()
+    const { root } = await mountPage(request)
+    expect(panel(root, 'auto-format').querySelector('[data-vet-rules-scope]')).toBeNull()
+    expect(panel(root, 'other').querySelector('[data-vet-rules-scope]')).toBeNull()
+    expect(panel(root, 'edit-enhance').querySelector('[data-vet-rules-scope]')).toBeNull()
+  })
+
+  it('无 facet（降级形态）规则标注仍在（静态数据级说明，非作用域 UI）', async () => {
+    const { request } = assemble()
+    const { root } = await mountPage(request)
+    expect(root.querySelectorAll('[data-vet-rules-scope="user"]')).toHaveLength(2)
+  })
+})

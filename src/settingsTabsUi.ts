@@ -1,13 +1,19 @@
-// 五 Tab 自绘设置页装配（工单 #55 切片 1）：hero 顶部块 + 页内 Tab 框架
-// + 24 项设置行（definitions 元数据驱动）+ 规则四分区挂入。
+// 五 Tab 自绘设置页装配（工单 #55）：hero 顶部块 + 页内 Tab 框架
+// + 24 项设置行（definitions 元数据驱动）+ 规则四分区挂入 + 平台作用域
+// 接入（切片 2）。
 //
 // 【分层】零 SDK 依赖（入口 src/page-settings.ts 注入 channel / messages /
-// localeTag / behaviorState，jsdom 承载交互测试）：
+// localeTag / behaviorState / settingsContext，jsdom 承载交互测试）：
 // - Tab 归属与卡片分区：src/settings/tabs-model.ts 纯函数（切片 3 搜索
 //   定位复用同一映射面）；
-// - 设置读写：SETTINGS_TOPIC.get（effective 初值/回显）与 .update（scope
-//   暂固定 'user'——作用域 UI 是切片 2；写后重拉刷新，通道失败经状态行
+// - 设置读写：SETTINGS_TOPIC.get（effective 初值/回显 + sources 来源分层）
+//   与 .update（scope 取 settingsContext.scopeState().scope——facet 缺席
+//   的旧宿主/编辑器页形态固定 'user'；写后重拉刷新，通道失败经状态行
 //   提示，决策 12）；页面 SDK 无 channel.handle，一切写走既有 topic；
+// - 作用域观察面：settingsContext（可选 facet，仅设置页提供）——
+//   onScopeChange 分发后 refreshSettings 对齐显示；组件不自绘作用域
+//   切换器（平台外壳持有选择器，本组件只消费；等值不分发归平台）；
+//   facet 缺席 = 无作用域相关 UI，页面其余功能完整可用（降级形态）；
 // - 规则四分区：rulesUi 的 hosts 模式挂入对应 panel（分区 DOM 结构与
 //   交互不变，spacing 防御网时序不变——面板常驻 DOM、非活动 [hidden]）。
 //
@@ -15,6 +21,7 @@
 // switchTab 为受控切换 API，切片 3 搜索定位经此切页。
 import type { Messages } from './i18n'
 import type { AddonSettingDefinition } from '../types/vendor/shared/addonSettings'
+import type { AddonSettingsScopeSnapshot } from '../types/vendor/shared/addonSettingsContextApi'
 import { buildSettingDefinitions } from './settings/definitions'
 import { SETTINGS_TOPIC } from './settings/store'
 import { mountRulesSettingsView, type RulesBehaviorStateLike, type RulesSettingsViewHandle } from './rulesUi'
@@ -61,6 +68,21 @@ export interface SettingsPageViewOptions {
   clearTimeout?: (handle: unknown) => void
   /** 宿主行为禁用态只读面（#50 灰态；入口注入，undefined = 不灰显） */
   behaviorState?: RulesBehaviorStateLike
+  /** 设置页上下文观察面（#55 切片 2 作用域；入口注入 sdk.settingsContext，
+   *  undefined = facet 缺席（旧宿主 / 编辑器页形态）→ 无作用域相关 UI，
+   *  写入目标层固定 'user'，页面其余功能完整可用） */
+  settingsContext?: SettingsContextFacetLike
+}
+
+/** 设置页上下文观察面的消费形状（#55 切片 2；结构对齐 vendor
+ *  AddonSettingsContextFacet 的作用域子面——视图层保持零 SDK 依赖，入口
+ *  把 sdk.settingsContext 直接传入（结构子集可赋值），jsdom 测试注入
+ *  fake。切片 3 搜索定位再扩展 locateTarget/onLocateTarget 两成员） */
+export interface SettingsContextFacetLike {
+  /** 当前作用域快照（拉取式；scope = 写入目标层依据） */
+  scopeState(): AddonSettingsScopeSnapshot
+  /** 订阅作用域/工作区状态变化（平台等值不分发）；返回退订函数 */
+  onScopeChange(listener: (state: AddonSettingsScopeSnapshot) => void): () => void
 }
 
 export interface SettingsPageViewHandle {
@@ -378,6 +400,15 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
   const spacingHost = el('div', `${CLS}-settings-section-host`)
   const storageHost = el('div', `${CLS}-settings-section-host`)
 
+  /** 规则分区用户级标注（决策 8）：规则/富结构存储是 globalStorage 语义
+   *  用户级（无工作区作用域），panel 顶部明确标注；规则区不出现任何
+   *  作用域 UI。静态数据级说明——facet 降级形态下仍在。 */
+  function buildRulesScopeNote(): HTMLElement {
+    const note = el('p', `${CLS}-rules-scope-note`, t.rulesScopeNote)
+    note.setAttribute('data-vet-rules-scope', 'user')
+    return note
+  }
+
   for (const tabId of SETTINGS_TAB_IDS) {
     const panelEl = panels.get(tabId)
     if (!panelEl) continue
@@ -393,10 +424,10 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
         }
         break
       case 'builtin-rules':
-        panelEl.append(builtinHost)
+        panelEl.append(buildRulesScopeNote(), builtinHost)
         break
       case 'user-rules':
-        panelEl.append(userHost)
+        panelEl.append(buildRulesScopeNote(), userHost)
         break
       case 'other':
         for (const card of cardsForTab(tabId)) panelEl.append(buildCard(card))
@@ -406,7 +437,19 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
     }
   }
 
-  // ===== 设置读写通道（决策 12：写后重拉刷新；scope 暂固定 user） =====
+  // ===== 设置读写通道（决策 12：写后重拉刷新；目标层跟随作用域） =====
+
+  /** 写入目标层（拉取式快照）：facet 在场取 scopeState().scope；缺席
+   *  （旧宿主/编辑器页）固定 'user'——平台外壳持有作用域选择器，本组件
+   *  只消费观察面，不自绘切换器 */
+  const scopeFacet = options.settingsContext
+  function writeScope(): 'user' | 'workspace' {
+    return scopeFacet ? scopeFacet.scopeState().scope : 'user'
+  }
+
+  /** 作用域切换（平台等值不分发，到达即变化）：重拉对齐显示——effective
+   *  与来源徽章都随 layers 解析变化 */
+  const unsubscribeScope = scopeFacet ? scopeFacet.onScopeChange(() => { void refreshSettings() }) : null
 
   async function refreshSettings(): Promise<void> {
     let outcome: Awaited<ReturnType<SettingsChannelLike['request']>>
@@ -428,7 +471,7 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
   async function write(key: string, value: unknown): Promise<void> {
     let outcome: Awaited<ReturnType<SettingsChannelLike['request']>>
     try {
-      outcome = await options.channel.request(SETTINGS_TOPIC.update, { scope: 'user', patch: { [key]: value } })
+      outcome = await options.channel.request(SETTINGS_TOPIC.update, { scope: writeScope(), patch: { [key]: value } })
     } catch {
       if (!disposed) showStatus('failed', `${t.statusUpdateFailed}：io-failed`)
       await refreshSettings()
@@ -479,6 +522,7 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
       disposed = true
       if (statusTimer !== null) cancel(statusTimer)
       statusTimer = null
+      unsubscribeScope?.()
       rulesView.dispose()
       root.textContent = ''
       root.classList.remove(`${CLS}-root`)
