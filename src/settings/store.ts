@@ -59,8 +59,12 @@ const STRING_ENUM_KEYS: Readonly<Record<string, readonly string[]>> = {
 }
 
 /** 快照值按定义类型校验（一层边界内的本组件 24 键形态——23 上游映射键
- *  + #13 新增 newLineBelow；目标类型以默认值事实源的键类型为基准） */
-function pickValidValue(key: string, value: unknown): AddonSettingValue | undefined {
+ *  + #13 新增 newLineBelow；目标类型以默认值事实源的键类型为基准）。
+ *  消费面：readEffectiveSettings 的 fail-safe 回退，以及设置页用户层
+ *  显示归一化（#60 审查 P2：userValues 原始显式存储不按定义校验，
+ *  settingsTabsUi.displayValueOf 经本函数归一——合法 → 用、非法 → 回
+ *  出厂默认，与 effective 语义同源，不另建校验副本） */
+export function pickValidValue(key: string, value: unknown): AddonSettingValue | undefined {
   if (key === 'excludeFiles') {
     if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) return undefined
     return [...value]

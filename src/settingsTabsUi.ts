@@ -38,7 +38,7 @@ import type { Messages } from './i18n'
 import type { AddonSettingDefinition } from '../types/vendor/shared/addonSettings'
 import type { AddonSettingsLocateTarget, AddonSettingsScopeSnapshot } from '../types/vendor/shared/addonSettingsContextApi'
 import { buildSettingDefinitions } from './settings/definitions'
-import { SETTINGS_TOPIC } from './settings/store'
+import { pickValidValue, SETTINGS_TOPIC } from './settings/store'
 import { debugLog } from './logging'
 import { mountRulesSettingsView, type RulesBehaviorStateLike, type RulesSettingsViewHandle } from './rulesUi'
 import { RulesSettingsClient } from './rules/rules-settings-client'
@@ -595,13 +595,21 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
 
   /** #60 按层显示：控件显示值随平台选中层计算——
    *  - workspace 视角：合并 effective 即工作区视角（workspace 显式 > user > default）；
-   *  - user 视角且层值可用：用户层显式值，键未显式保存时出厂默认——不显示
-   *    被工作区覆盖的合并值；
+   *  - user 视角且层值可用：用户层显式值经按定义校验归一化（审查 P2：
+   *    userValues 是原始显式存储、不按定义校验，遗留值可为合法存储标量
+   *    却不匹配当前 boolean/enum/数组定义——复用 store.pickValidValue，
+   *    与 effective fail-safe 同一规则源）：合法 → 用，非法 → 回出厂默认
+   *    def.default（不回 merged 合并值；联动调用点传 fallback true 与
+   *    MASTER_KEY/REGEXP_SWITCH_KEY 的 def.default 同值，无分歧），键未
+   *    显式保存时同样出厂默认——不显示被工作区覆盖的合并值；
    *  - user 视角且层值缺席（旧宿主降级）：回落合并值（mergedHint 在场提示） */
   function displayValueOf(key: string, fallback: unknown): unknown {
     if (scopeFacet !== undefined && scopeFacet.scopeState().scope === 'user' && currentUserValues !== undefined) {
       const layered = currentUserValues[key]
-      return layered !== undefined ? layered : fallback
+      if (layered === undefined) return fallback
+      const valid = pickValidValue(key, layered)
+      if (valid !== undefined) return valid
+      return defByKey.get(key)?.default ?? fallback
     }
     return currentValues[key] ?? fallback
   }

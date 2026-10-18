@@ -574,4 +574,45 @@ describe('五 Tab 设置页 #60 按层显示', () => {
     expect(control.checked).toBe(false) // 回滚到用户层显示值
     expect(document.activeElement).toBe(control) // 不夺焦点
   })
+
+  // 审查 P2：userValues 是原始显式存储（vsidian#590 不按定义校验），遗留值
+  // 可以是合法存储标量却已不匹配当前定义（boolean 存字符串 / 枚举存已退役
+  // 取值 / 数组项非字符串 / 文本键存数字）。用户层显示须经按定义校验归一
+  // 化：合法 → 用，非法 → 回出厂默认（与 effective fail-safe 语义一致），
+  // 不回退被工作区覆盖的合并值。
+  it('scope=user：用户层存量布尔失配值归一化——总开关显示出厂默认且联动一致', async () => {
+    const { store, request } = assemble()
+    store.userValues.autoFormat = 'false' // 字符串：合法存储标量，不匹配 boolean 定义
+    const fake = fakeFacet()
+    const { root } = await mountPage(request, { facet: fake.facet })
+    const master = rowControl(root, 'autoFormat') as HTMLInputElement
+    expect(master.checked).toBe(true) // 出厂默认开，非 raw 字符串透传（checked = 'false' === true → false）
+    // 联动同一路由归一化：总开关默认开 → 下游可编辑（raw 透传时显示关/下游开互相矛盾）
+    expect((rowControl(root, 'autoFormatPaste') as HTMLInputElement).disabled).toBe(false)
+  })
+
+  it('scope=user：用户层存量枚举失配值归一化——下拉显示出厂默认，无空选项', async () => {
+    const { store, request } = assemble()
+    store.userValues.inlineCodeSpaceMode = 'retired-mode' // 已退役取值：越界枚举
+    const fake = fakeFacet()
+    const { root } = await mountPage(request, { facet: fake.facet })
+    const select = rowControl(root, 'inlineCodeSpaceMode') as HTMLSelectElement
+    expect(select.value).toBe('soft') // 出厂默认，非 raw 透传（无匹配选项 → value 空）
+    expect(select.selectedIndex).toBeGreaterThanOrEqual(0) // 选中项在场：不出现空选项
+  })
+
+  it('scope=user：用户层存量数组/文本失配值归一化——控件回退出厂默认', async () => {
+    const { store, request } = assemble()
+    // 数组非法取可观测形态（项非字符串）：纯非数组值（如 42）当前就渲染
+    // 空串、与出厂默认 [] 显示无异，无红信号；归一化路由对两种非法形态
+    // 同一（pickValidValue 按定义拒绝）
+    store.userValues.excludeFiles = [42, 'a.md']
+    store.userValues.prefixDictionary = 42 // 文本型键存数字
+    const fake = fakeFacet()
+    const { root } = await mountPage(request, { facet: fake.facet })
+    const exclude = rowControl(root, 'excludeFiles') as HTMLTextAreaElement
+    expect(exclude.value).toBe('') // 出厂默认空清单，非失配数组中字符串项的局部透出（'a.md'）
+    const dict = rowControl(root, 'prefixDictionary') as HTMLTextAreaElement
+    expect(dict.value).toBe(DEFAULT_EFFECTIVE_SETTINGS.prefixDictionary) // 出厂默认词典，非 String(42)
+  })
 })
