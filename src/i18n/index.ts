@@ -2,8 +2,9 @@
 // 扩展指引）：
 // - zh 字典是类型源（Messages = typeof zhMessages），en 以编译期类型对齐
 //   键集，parity 测试（test/i18n.test.ts）运行时双保险；
-// - 语言检测：宿主侧 vscode.env.language、页面侧 navigator.language，
-//   统一经 pickMessages(languageTag)——zh* 取中文，其余（含空串）回落英文
+// - 语言检测：宿主侧 vscode.env.language、页面侧经 resolvePageLanguage
+//   （#58：SDK locale 优先，旧宿主回落 navigator.language），统一经
+//   pickMessages(languageTag)——zh* 取中文，其余（含空串）回落英文
 //   （上游 moment.locale 检测的 VSCode 平台等价物；本仓无 moment 依赖）；
 // - builtinRuleDescriptions（#19）：内置规则描述按规则 id 的本地化映射，
 //   消费点在规则管理页列表预览（previewRuleText 查表优先），数据态
@@ -34,6 +35,16 @@ export function pickMessages(language: string): Messages {
  *  形态的值在自绘页面按本标签选值 */
 export function localeTagFor(language: string): 'zh-cn' | 'en' {
   return language.toLowerCase().startsWith('zh') ? 'zh-cn' : 'en'
+}
+
+/** 页面语言源单一出口（#58）：locale 面（vsidian#582，与平台生效语言
+ *  同源、跟随主设置）在场则取其快照——首值经 get() 读取，onChange 只
+ *  通知变化；空串 = 平台语言包未装配，保持空串交 pickMessages 落英文
+ *  （与平台无包时的英文兜底一致；回落 OS 语言会重现页面/平台交杂）。
+ *  面缺席（旧宿主）回落 fallback——页面侧传 navigator.language，保持
+ *  #58 前既有降级行为。结构化入参不引入 SDK 依赖（宿主/页面双侧可用） */
+export function resolvePageLanguage(locale: { get(): string } | undefined, fallback: string): string {
+  return locale !== undefined ? locale.get() : fallback
 }
 
 /** 规则族注册名的双语映射（#45）：键形对齐 vsidian resolveAddonBehaviorName

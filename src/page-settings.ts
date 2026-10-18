@@ -6,9 +6,12 @@
 // （src/rulesHost.ts，与编辑器页同名 topic 各自注册不冲突）。面板 chrome
 // 与 dock 样式归平台；内容根内部样式归 src/settings.css（构建拷贝
 // dist/settings.css，extension.ts registerPage 登记）。
+// #58 语言源：经 resolvePageLanguage 消费 sdk.locale（跟随 VSCode 主设置，
+// vsidian#582；旧宿主回落 navigator.language），onChange 通知驱动
+// view.setLanguage 就地切换文案。
 import { defineAddonPage } from 'vsidian-addon-sdk'
 import type { VsidianAddonPageSdk } from '../types/vendor/shared/addonPage'
-import { localeTagFor, pickMessages } from './i18n'
+import { localeTagFor, pickMessages, resolvePageLanguage } from './i18n'
 import { setDebugEnabled } from './logging'
 import { mountSettingsPage } from './settingsTabsUi'
 import { SETTINGS_TOPIC } from './settings/store'
@@ -39,15 +42,29 @@ defineAddonPage(ADDON_ID, (sdk: VsidianAddonPageSdk) => {
     .catch(() => {
       // 通道异常静默（装载期一次性拉取，无重试面）
     })
+  // #58 语言源单一出口（resolvePageLanguage）：locale facet 在场取平台
+  // 快照（与主设置 general.language 同源；空串 = 语言包未装配 → pickMessages
+  // 落英文，与平台无包兜底一致）；旧宿主无 facet（undefined）回落
+  // navigator.language——保持本票前既有降级行为，与 #61 mergedHint 的
+  // 可选消费口径一致（清单 api 范围不升）。
   const view = mountSettingsPage(root, {
     channel: sdk.channel,
-    messages: pickMessages(navigator.language),
-    localeTag: localeTagFor(navigator.language),
+    messages: pickMessages(resolvePageLanguage(sdk.locale, navigator.language)),
+    localeTag: localeTagFor(resolvePageLanguage(sdk.locale, navigator.language)),
     // #50 宿主行为禁用态只读面（设置页可用；旧平台 undefined → 不灰显）
     behaviorState: sdk.behaviorState,
     // #55 切片 2 作用域观察面（设置页可用 facet；旧宿主/编辑器页形态
     // undefined → 判空降级：无作用域相关 UI，写入目标层固定 'user'）
     settingsContext: sdk.settingsContext,
   })
-  sdk.onDispose(() => view.dispose())
+  // #58 平台语言变化即时通知（vsidian#582）：onChange 只通知变化不回放
+  // 首值——首值已在上方消费；通知驱动 view.setLanguage 就地切换文案，
+  // 不重载工厂、保全页面状态（Tab/草稿/规则表单）
+  const unsubscribeLocale = sdk.locale?.onChange((locale) => view.setLanguage(locale))
+  sdk.onDispose(() => {
+    // 先退订再释放视图：迟到的语言通知不触达已释放视图（facet 代次释放
+    // 自动回收之外的双保险；退订幂等）
+    unsubscribeLocale?.()
+    view.dispose()
+  })
 })

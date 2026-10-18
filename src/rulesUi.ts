@@ -13,7 +13,7 @@
 // 与恢复/重置入口，页头给引导文案。函数替换体（F 旗标）#17 解锁为预注册
 // 函数引用选择（ref 下拉 + 函数源码只读展示；函数本体编辑不在规则 JSON，
 // 自定义走组件化 fork，提示文案引导）。
-import type { Messages } from './i18n'
+import { pickMessages, type Messages } from './i18n'
 import { RuleEngine, RuleScope, RuleTriggerMode, RuleType, type SimpleRule } from './rules/rule-engine'
 import { coveringBehaviorLocalIds } from './rules/rule-family-ids'
 import { DEFAULT_BUILTIN_RULES } from './rules/default-rules'
@@ -93,6 +93,9 @@ export interface RulesBehaviorStateLike {
 export interface RulesSettingsViewHandle {
   /** 触发一次数据装载（装载失败走状态行；重复调用无害） */
   reload(): Promise<void>
+  /** 就地切换语言（#58：SDK locale 通知驱动；语言映射经 pickMessages）：
+   *  重建四分区与在场编辑浮层，选中态/表单模型/测试编辑器内容/焦点保全 */
+  setLanguage(language: string): void
   /** 释放：清计时器与 DOM（sdk.onDispose 时调用） */
   dispose(): void
 }
@@ -109,8 +112,10 @@ export function mountRulesSettingsView(
   options: RulesSettingsViewOptions,
 ): RulesSettingsViewHandle {
   const doc = options.doc ?? document
-  const m = options.messages
-  const t = m.rulesPage
+  // 语言态可变（#58 setLanguage 就地切换）：m/t 为 let，全部渲染路径读
+  // 当前引用——分区渲染函数每次调用重建文案，闭包内不缓存派生文案
+  let m = options.messages
+  let t = m.rulesPage
   const client = options.client
   const schedule = options.setTimeout ?? ((fn, ms) => setTimeout(fn, ms))
   const cancel = options.clearTimeout ?? ((handle) => clearTimeout(handle as Parameters<typeof clearTimeout>[0]))
@@ -1606,10 +1611,45 @@ export function mountRulesSettingsView(
     if (!ok && !disposed) showStatus('failed', t.status.loadFailed)
   }
 
+  /** 就地切换语言（#58）：更新字典引用后按既有渲染路径重建。状态保全：
+   *  - 选中规则/灰态/客户端数据为闭包态，重建不丢；
+   *  - 编辑浮层在场：表单值经 formContext.model 往返，测试编辑器（DOM 态）
+   *    显式回填，焦点按 data-vet-input 名恢复；
+   *  - spacing 分区草稿守卫（spacingEditingInFlight）沿用写后刷新语义：
+   *    焦点/脏标记在场时本分区保持原语言，下一次无冲突渲染补齐。 */
+  function setLanguage(language: string): void {
+    if (disposed) return
+    m = pickMessages(language)
+    t = m.rulesPage
+    if (formContext !== null) {
+      const testInput = overlay.querySelector<HTMLTextAreaElement>('[data-vet-test-input]')
+      const testText = testInput?.value ?? null
+      const testFrom = testInput?.selectionStart ?? null
+      const testTo = testInput?.selectionEnd ?? null
+      const focusName =
+        doc.activeElement instanceof HTMLElement && overlay.contains(doc.activeElement)
+          ? doc.activeElement.getAttribute('data-vet-input')
+          : null
+      buildFormDom()
+      refreshFormVisibility()
+      const nextTestInput = overlay.querySelector<HTMLTextAreaElement>('[data-vet-test-input]')
+      if (nextTestInput !== null && testText !== null) {
+        nextTestInput.value = testText
+        if (testFrom !== null && testTo !== null) nextTestInput.setSelectionRange(testFrom, testTo)
+      }
+      if (focusName !== null) {
+        overlay.querySelector<HTMLElement>(`[data-vet-input="${focusName}"]`)?.focus()
+      }
+      runTest()
+    }
+    render()
+  }
+
   void reload()
 
   return {
     reload,
+    setLanguage,
     dispose() {
       disposed = true
       if (statusTimer !== null) cancel(statusTimer)
