@@ -803,3 +803,12 @@
   outline: 1px solid var(--vscode-focusBorder, #007fd4);
   outline-offset: 1px;
 }
+
+/* ===== #55 切片 3：搜索定位高亮（data-located 标记的设置行/组首卡片） =====
+ * 口径对齐平台设置页 located 描边（outline + focusBorder，暗亮主题均可用）；
+ * 行距密集，offset 收窄到 2px 防止侵入相邻行 */
+.vsidian-easy-typing-located {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 2px;
+  border-radius: 4px;
+}

@@ -5,9 +5,10 @@
 // 规则」两 Tab 无声明设置行，由规则分区（rulesUi）承载。
 //
 // 【消费方】切片 1 的 Tab 框架与 24 项设置行渲染、切片 3 的搜索定位
-// （{kind:'def', key} → 切 Tab）——导出形态保持纯函数 + 只读数据，供
-// 后续切片复用，不携带 DOM 依赖。组键 kebab-case 与 i18n 键 camelCase
-// 两套拼写并存的既有惯例见 A 笔记风险 10。
+// （{kind:'def', key} → settingKeyToTabId 切 Tab 定位行；{kind:'group',
+//  key} → groupKeyToCardAnchor 切 Tab 定位组首卡片）——导出形态保持纯
+// 函数 + 只读数据，供后续切片复用，不携带 DOM 依赖。组键 kebab-case 与
+// i18n 键 camelCase 两套拼写并存的既有惯例见 A 笔记风险 10。
 
 /** 页内 Tab id（与上游五 Tab 同名同序） */
 export const SETTINGS_TAB_IDS = ['edit-enhance', 'auto-format', 'builtin-rules', 'user-rules', 'other'] as const
@@ -25,11 +26,36 @@ const GROUP_TO_TAB: Readonly<Record<string, SettingsTabId>> = {
   experimental: 'other',
 }
 
-/** 声明组键 → 页内 Tab；未知组键抛错（配置错误保持可闻，静默回落会掩盖注册面失配） */
+/** 组键路由表查询（不抛错形态；groupKeyToTabId 与 groupKeyToCardAnchor 共用） */
+function lookupGroupTab(groupKey: string): SettingsTabId | undefined {
+  return GROUP_TO_TAB[groupKey]
+}
+
+/** 声明组键 → 页内 Tab 路由（general 特例：excludeFiles 卡片随上游归自动格式化） */
 export function groupKeyToTabId(groupKey: string): SettingsTabId {
-  const tab = GROUP_TO_TAB[groupKey]
+  const tab = lookupGroupTab(groupKey)
   if (!tab) throw new Error(`未知设置组键：${groupKey}`)
   return tab
+}
+
+/** 组定位落点：组键 → 组首卡片（组内定义键按卡片声明序首个命中的卡片；
+ *  组的多卡场景锚到组的入口卡，如 auto-format 组锚总开关卡）。未知组键 /
+ *  组内无注册定义 / 组键不落任何卡片均返回 null——搜索定位消费方判空
+ *  静默降级，不抛错（与 groupKeyToTabId 的抛错口径分工：后者守配置错误，
+ *  前者守运行期外来输入）。 */
+export function groupKeyToCardAnchor(
+  groupKey: string,
+  defs: readonly SettingDefLike[],
+): { tabId: SettingsTabId; cardKey: SettingsCardKey } | null {
+  const tabId = lookupGroupTab(groupKey)
+  if (!tabId) return null
+  const groupKeys = new Set(defs.filter((def) => def.group === groupKey).map((def) => def.key))
+  if (groupKeys.size === 0) return null
+  for (const card of SETTINGS_TAB_CARDS) {
+    if (card.tabId !== tabId) continue
+    if (card.settingKeys.some((key) => groupKeys.has(key))) return { tabId, cardKey: card.cardKey }
+  }
+  return null
 }
 
 /** 定义的最小消费形状（AddonSettingDefinition 的结构子集——vendor 侧

@@ -1,11 +1,11 @@
 // 五 Tab 自绘设置页装配（工单 #55）：hero 顶部块 + 页内 Tab 框架
 // + 24 项设置行（definitions 元数据驱动）+ 规则四分区挂入 + 平台作用域
-// 接入（切片 2）。
+// 接入（切片 2）+ 全局设置搜索定位接入（切片 3）。
 //
 // 【分层】零 SDK 依赖（入口 src/page-settings.ts 注入 channel / messages /
 // localeTag / behaviorState / settingsContext，jsdom 承载交互测试）：
-// - Tab 归属与卡片分区：src/settings/tabs-model.ts 纯函数（切片 3 搜索
-//   定位复用同一映射面）；
+// - Tab 归属与卡片分区：src/settings/tabs-model.ts 纯函数（搜索定位
+//   def/group 两类映射复用同一映射面）；
 // - 设置读写：SETTINGS_TOPIC.get（effective 初值/回显 + sources 来源分层）
 //   与 .update（scope 取 settingsContext.scopeState().scope——facet 缺席
 //   的旧宿主/编辑器页形态固定 'user'；写后重拉刷新，通道失败经状态行
@@ -14,14 +14,19 @@
 //   onScopeChange 分发后 refreshSettings 对齐显示；组件不自绘作用域
 //   切换器（平台外壳持有选择器，本组件只消费；等值不分发归平台）；
 //   facet 缺席 = 无作用域相关 UI，页面其余功能完整可用（降级形态）；
+// - 搜索定位（切片 3）：onLocateTarget（订阅即回放）+ locateTarget()
+//   初值；{kind:'def'|'group', key} → 切 Tab + 滚动 + data-located 高亮；
+//   重复目标幂等重入，null 清除；目标早于首次渲染（get 未返回）排队
+//   至渲染结算后补投；
 // - 规则四分区：rulesUi 的 hosts 模式挂入对应 panel（分区 DOM 结构与
 //   交互不变，spacing 防御网时序不变——面板常驻 DOM、非活动 [hidden]）。
 //
 // 【Tab 态】内存保存，默认编辑增强，页面卸载即复位（决策 5/6）。
-// switchTab 为受控切换 API，切片 3 搜索定位经此切页。
+// switchTab 为受控切换 API（外部驱动面）；搜索定位经内部 activateTab
+// 同一受控路径切页。
 import type { Messages } from './i18n'
 import type { AddonSettingDefinition } from '../types/vendor/shared/addonSettings'
-import type { AddonSettingsScopeSnapshot } from '../types/vendor/shared/addonSettingsContextApi'
+import type { AddonSettingsLocateTarget, AddonSettingsScopeSnapshot } from '../types/vendor/shared/addonSettingsContextApi'
 import { buildSettingDefinitions } from './settings/definitions'
 import { SETTINGS_TOPIC } from './settings/store'
 import { mountRulesSettingsView, type RulesBehaviorStateLike, type RulesSettingsViewHandle } from './rulesUi'
@@ -30,6 +35,8 @@ import {
   DEFAULT_SETTINGS_TAB,
   SETTINGS_TAB_IDS,
   cardsForTab,
+  groupKeyToCardAnchor,
+  settingKeyToTabId,
   type SettingsCardSpec,
   type SettingsTabId,
 } from './settings/tabs-model'
@@ -74,19 +81,24 @@ export interface SettingsPageViewOptions {
   settingsContext?: SettingsContextFacetLike
 }
 
-/** 设置页上下文观察面的消费形状（#55 切片 2；结构对齐 vendor
- *  AddonSettingsContextFacet 的作用域子面——视图层保持零 SDK 依赖，入口
- *  把 sdk.settingsContext 直接传入（结构子集可赋值），jsdom 测试注入
- *  fake。切片 3 搜索定位再扩展 locateTarget/onLocateTarget 两成员） */
+/** 设置页上下文观察面的消费形状（#55 切片 2 作用域 + 切片 3 搜索定位；
+ *  结构对齐 vendor AddonSettingsContextFacet 全形状——视图层保持零 SDK
+ *  依赖，入口把 sdk.settingsContext 直接传入（结构等形），jsdom 测试注入
+ *  fake） */
 export interface SettingsContextFacetLike {
   /** 当前作用域快照（拉取式；scope = 写入目标层依据） */
   scopeState(): AddonSettingsScopeSnapshot
   /** 订阅作用域/工作区状态变化（平台等值不分发）；返回退订函数 */
   onScopeChange(listener: (state: AddonSettingsScopeSnapshot) => void): () => void
+  /** 当前未消费的定位目标（null = 无挂起目标） */
+  locateTarget(): AddonSettingsLocateTarget | null
+  /** 订阅定位目标交付：订阅时如有挂起目标先回放一次（补投），此后每次
+   *  交付（含 null 清除）通知；返回退订函数（重复退订无害） */
+  onLocateTarget(listener: (target: AddonSettingsLocateTarget | null) => void): () => void
 }
 
 export interface SettingsPageViewHandle {
-  /** 受控切换 Tab（切片 3 搜索定位消费；未知 id 抛错保持可闻） */
+  /** 受控切换 Tab（外部驱动面；未知 id 抛错保持可闻） */
   switchTab(tabId: SettingsTabId): void
   /** 当前活动 Tab */
   activeTab(): SettingsTabId
@@ -474,6 +486,89 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
    *  与来源徽章都随 layers 解析变化 */
   const unsubscribeScope = scopeFacet ? scopeFacet.onScopeChange(() => { void refreshSettings() }) : null
 
+  // ===== 搜索定位接入（#55 切片 3）：平台只给 {kind, key} 落点，切页内
+  // Tab 与定位控件是组件职责。平台刻意不做等值去重——重复目标重新滚动/
+  // 高亮（幂等可重入）；null 清除高亮；页面重装载重放当前目标属正常。
+  // facet 缺席 = 不消费定位，页面其余功能完整（降级形态）。
+
+  /** 当前高亮节点（data-located + 样式类；全局单高亮，换目标先清旧） */
+  let locatedMark: HTMLElement | null = null
+  /** 排队中的定位目标（首开回放时序：首次渲染未结算先排队，结算后补投） */
+  let queuedLocate: AddonSettingsLocateTarget | null = null
+  let hasQueuedLocate = false
+  /** 首次渲染是否结算（首次 refreshSettings 调用完毕——get 成败皆算，
+   *  失败时行以默认形态在场；此后到达的目标立即交付） */
+  let firstRenderSettled = false
+
+  function clearLocatedMark(): void {
+    if (locatedMark === null) return
+    locatedMark.removeAttribute('data-located')
+    locatedMark.classList.remove(`${CLS}-located`)
+    locatedMark = null
+  }
+
+  /** 目标 → DOM 锚点（def = 设置行；group = 组首卡片）；未知键返回 null
+   *  （静默降级：不报错、不排队——与平台注册 keys 同空间的外来输入） */
+  function findLocateAnchor(target: AddonSettingsLocateTarget): { tabId: SettingsTabId; element: HTMLElement } | null {
+    if (target.kind === 'def') {
+      const entry = rows.get(target.key)
+      const tabId = settingKeyToTabId(target.key, defs)
+      if (!entry || !tabId) return null
+      return { tabId, element: entry.row }
+    }
+    const card = groupKeyToCardAnchor(target.key, defs)
+    if (!card) return null
+    const cardEl = root.querySelector<HTMLElement>(`[data-vet-card="${card.cardKey}"]`)
+    if (!cardEl) return null
+    return { tabId: card.tabId, element: cardEl }
+  }
+
+  function applyLocateTarget(target: AddonSettingsLocateTarget): void {
+    const anchor = findLocateAnchor(target)
+    if (!anchor) return
+    activateTab(anchor.tabId)
+    clearLocatedMark()
+    anchor.element.setAttribute('data-located', `${target.kind}:${target.key}`)
+    anchor.element.classList.add(`${CLS}-located`)
+    locatedMark = anchor.element
+    // 真实浏览器滚动进可视区；jsdom 无实现，可选调用防御（对齐 rulesUi 惯例）
+    anchor.element.scrollIntoView?.({ block: 'nearest' })
+  }
+
+  /** 首次渲染结算：补投排队目标（排队期间收到 null 已被丢弃则无操作） */
+  function settleFirstRender(): void {
+    if (firstRenderSettled) return
+    firstRenderSettled = true
+    if (!hasQueuedLocate || disposed) return
+    hasQueuedLocate = false
+    const target = queuedLocate
+    queuedLocate = null
+    if (target) applyLocateTarget(target)
+  }
+
+  function handleLocateTarget(target: AddonSettingsLocateTarget | null): void {
+    if (disposed) return
+    if (target === null) {
+      // null = 清除：丢弃排队目标并清除既有高亮
+      hasQueuedLocate = false
+      queuedLocate = null
+      clearLocatedMark()
+      return
+    }
+    if (!firstRenderSettled) {
+      // 首开回放早于首次渲染（get 未返回）：先排队，渲染结算后补投——
+      // 避免高亮/滚动落在值尚未应用的行上，也避免目标丢失
+      hasQueuedLocate = true
+      queuedLocate = target
+      return
+    }
+    applyLocateTarget(target)
+  }
+
+  const unsubscribeLocate = scopeFacet ? scopeFacet.onLocateTarget(handleLocateTarget) : null
+  // 装配初值拉取（订阅回放之外的双保险；与回放重复到达由幂等吸收）
+  if (scopeFacet) handleLocateTarget(scopeFacet.locateTarget())
+
   /** 来源徽章显隐（写后/清除后/作用域切换后的重拉统一走此处）：仅
    *  facet 在场且 sources[key] === 'workspace' 的行呈现徽章与清除入口。
    *  hasWorkspace === false 时平台快照不会出现 workspace 来源（工作区层
@@ -488,24 +583,29 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
   }
 
   async function refreshSettings(): Promise<void> {
-    let outcome: Awaited<ReturnType<SettingsChannelLike['request']>>
     try {
-      outcome = await options.channel.request(SETTINGS_TOPIC.get, null)
-    } catch {
-      return // 通道异常静默（初值回落默认；后续写入失败有状态行提示面）
+      let outcome: Awaited<ReturnType<SettingsChannelLike['request']>>
+      try {
+        outcome = await options.channel.request(SETTINGS_TOPIC.get, null)
+      } catch {
+        return // 通道异常静默（初值回落默认；后续写入失败有状态行提示面）
+      }
+      if (disposed || outcome.ok !== true) return
+      const snapshot = outcome.result as { effective?: unknown; sources?: unknown } | null
+      const effective = snapshot?.effective
+      if (effective === null || typeof effective !== 'object') return
+      currentValues = effective as Readonly<Record<string, unknown>>
+      const sources = snapshot?.sources
+      currentSources = sources !== null && typeof sources === 'object' ? (sources as Readonly<Record<string, string>>) : {}
+      for (const entry of rows.values()) {
+        applyValue(entry, currentValues[entry.def.key] ?? entry.def.default)
+      }
+      applyLinkage()
+      applySources()
+    } finally {
+      // 首次渲染结算（get 结束——成败皆算）：补投排队中的定位目标
+      settleFirstRender()
     }
-    if (disposed || outcome.ok !== true) return
-    const snapshot = outcome.result as { effective?: unknown; sources?: unknown } | null
-    const effective = snapshot?.effective
-    if (effective === null || typeof effective !== 'object') return
-    currentValues = effective as Readonly<Record<string, unknown>>
-    const sources = snapshot?.sources
-    currentSources = sources !== null && typeof sources === 'object' ? (sources as Readonly<Record<string, string>>) : {}
-    for (const entry of rows.values()) {
-      applyValue(entry, currentValues[entry.def.key] ?? entry.def.default)
-    }
-    applyLinkage()
-    applySources()
   }
 
   /** 清除工作区覆盖（恢复继承用户默认值，非恢复出厂）；清除后重拉 */
@@ -588,6 +688,8 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
       if (statusTimer !== null) cancel(statusTimer)
       statusTimer = null
       unsubscribeScope?.()
+      unsubscribeLocate?.()
+      locatedMark = null
       rulesView.dispose()
       root.textContent = ''
       root.classList.remove(`${CLS}-root`)

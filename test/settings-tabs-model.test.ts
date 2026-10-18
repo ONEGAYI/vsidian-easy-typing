@@ -11,6 +11,7 @@ import {
   DEFAULT_SETTINGS_TAB,
   SETTINGS_TAB_CARDS,
   SETTINGS_TAB_IDS,
+  groupKeyToCardAnchor,
   groupKeyToTabId,
   settingKeyToTabId,
   settingKeysByTab,
@@ -67,6 +68,39 @@ describe('声明组键 → 页内 Tab 路由', () => {
 
   it('未知组键抛错（保持配置错误可闻）', () => {
     expect(() => groupKeyToTabId('unknown-group')).toThrow()
+  })
+})
+
+describe('组键 → 组卡片锚点（切片 3 搜索定位 group 落点）', () => {
+  it('四组锚到组首卡片：auto-format 组锚总开关卡、general 组锚排除文件卡（特例同 Tab）', () => {
+    expect(groupKeyToCardAnchor('edit-enhance', defs)).toEqual({ tabId: 'edit-enhance', cardKey: 'editEnhance' })
+    expect(groupKeyToCardAnchor('auto-format', defs)).toEqual({ tabId: 'auto-format', cardKey: 'autoFormat' })
+    expect(groupKeyToCardAnchor('general', defs)).toEqual({ tabId: 'auto-format', cardKey: 'excludeFiles' })
+    expect(groupKeyToCardAnchor('experimental', defs)).toEqual({ tabId: 'other', cardKey: 'experimental' })
+  })
+
+  it('锚点 tabId 与组路由一致（两套口径咬合）', () => {
+    for (const groupKey of ['edit-enhance', 'auto-format', 'general', 'experimental']) {
+      expect(groupKeyToCardAnchor(groupKey, defs)?.tabId, groupKey).toBe(groupKeyToTabId(groupKey))
+    }
+  })
+
+  it('锚点卡片真实存在于卡片总表且属该 Tab（防御漂移）', () => {
+    for (const groupKey of ['edit-enhance', 'auto-format', 'general', 'experimental']) {
+      const anchor = groupKeyToCardAnchor(groupKey, defs)
+      expect(anchor, groupKey).not.toBeNull()
+      const card = SETTINGS_TAB_CARDS.find((c) => c.cardKey === anchor?.cardKey)
+      expect(card, groupKey).toBeDefined()
+      expect(card?.tabId, groupKey).toBe(anchor?.tabId)
+    }
+  })
+
+  it('未知组键返回 null（定位消费方静默降级，不抛错）', () => {
+    expect(groupKeyToCardAnchor('unknown-group', defs)).toBeNull()
+  })
+
+  it('空 defs（组内无注册定义）返回 null', () => {
+    expect(groupKeyToCardAnchor('edit-enhance', [])).toBeNull()
   })
 })
 
