@@ -111,6 +111,25 @@ export interface SettingsPageViewHandle {
 /** 状态行自动清除延迟（对齐 rulesUi 既有节奏） */
 const STATUS_AUTO_CLEAR_MS = 6000
 
+/** 枚举档位文案（纯函数，导出供测试直测）：vendor LocalizedText 两形态
+ *  ——直值字符串直返；多语言映射取当前语言档位；缺失键/缺失语言回退
+ *  枚举值本身（呈现层回退，不参与值校验） */
+export function enumLabelText(
+  def: AddonSettingDefinition,
+  value: string,
+  localeTag: 'zh-cn' | 'en',
+): string {
+  if (def.type !== 'string') return value
+  const label = def.enumLabels?.[value]
+  // 直值形态（LocalizedText = string）：不随语言切换，原样直返
+  if (typeof label === 'string') return label
+  if (label !== undefined) {
+    const picked = label[localeTag]
+    if (typeof picked === 'string') return picked
+  }
+  return value
+}
+
 /** Tab id → i18n settingsTabs.tabs 键（两套拼写并存惯例：tab id kebab-case） */
 const TAB_LABEL_KEY: Readonly<Record<SettingsTabId, keyof Messages['settingsTabs']['tabs']>> = {
   'edit-enhance': 'editEnhance',
@@ -286,17 +305,6 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
 
   // ===== 24 项设置行（元数据驱动控件形态） =====
 
-  function enumLabelText(def: AddonSettingDefinition, value: string): string {
-    if (def.type !== 'string') return value
-    const label = def.enumLabels?.[value]
-    // LocalizedText = 直值或多语言映射（vendor 形状；缺失键回退枚举值本身）
-    if (label !== undefined && typeof label !== 'string') {
-      const picked = label[localeTag]
-      if (typeof picked === 'string') return picked
-    }
-    return value
-  }
-
   function readControlValue(def: AddonSettingDefinition, control: SettingRowEntry['control']): unknown {
     if (def.type === 'boolean') return (control as HTMLInputElement).checked
     if (def.type === 'array') {
@@ -310,6 +318,10 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
 
   function applyValue(entry: SettingRowEntry, raw: unknown): void {
     const { def, control } = entry
+    // 聚焦中控件跳过回写（审查轮 P2-2）：保留正在编辑的未提交草稿——
+    // 写后/作用域切换/清除覆盖的重拉不覆盖用户当前输入；失焦后的下一次
+    // 重拉照常应用存储真值
+    if (doc.activeElement === control) return
     if (def.type === 'boolean') {
       ;(control as HTMLInputElement).checked = raw === true
       return
@@ -385,7 +397,7 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
     } else if (def.type === 'string' && def.enum) {
       const select = el('select', `${CLS}-select`) as HTMLSelectElement
       for (const value of def.enum) {
-        const option = el('option', undefined, enumLabelText(def, value)) as HTMLOptionElement
+        const option = el('option', undefined, enumLabelText(def, value, localeTag)) as HTMLOptionElement
         option.value = value
         select.append(option)
       }
@@ -508,12 +520,15 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
   }
 
   /** 目标 → DOM 锚点（def = 设置行；group = 组首卡片）；未知键返回 null
-   *  （静默降级：不报错、不排队——与平台注册 keys 同空间的外来输入） */
+   *  （静默降级：不报错、不排队——与平台注册 keys 同空间的外来输入；
+   *  def 路径先判行在场再算 Tab，组路由缺口经 settingKeyToTabId 判空吸收，
+   *  不让抛错形态触达平台回调——审查轮 P2-5） */
   function findLocateAnchor(target: AddonSettingsLocateTarget): { tabId: SettingsTabId; element: HTMLElement } | null {
     if (target.kind === 'def') {
       const entry = rows.get(target.key)
+      if (!entry) return null
       const tabId = settingKeyToTabId(target.key, defs)
-      if (!entry || !tabId) return null
+      if (!tabId) return null
       return { tabId, element: entry.row }
     }
     const card = groupKeyToCardAnchor(target.key, defs)
@@ -582,7 +597,12 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
     }
   }
 
+  /** 重拉发起序（到达序令牌，审查轮 P2-3）：结算时只应用最新一笔——
+   *  跨笔乱序回包（旧 get 迟到）不覆盖新快照 */
+  let refreshSeq = 0
+
   async function refreshSettings(): Promise<void> {
+    const seq = ++refreshSeq
     try {
       let outcome: Awaited<ReturnType<SettingsChannelLike['request']>>
       try {
@@ -591,6 +611,7 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
         return // 通道异常静默（初值回落默认；后续写入失败有状态行提示面）
       }
       if (disposed || outcome.ok !== true) return
+      if (seq !== refreshSeq) return // 本笔挂起期间有更新刷新发起：陈旧快照弃置
       const snapshot = outcome.result as { effective?: unknown; sources?: unknown } | null
       const effective = snapshot?.effective
       if (effective === null || typeof effective !== 'object') return
@@ -669,6 +690,9 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
       spacing: spacingHost,
       storage: storageHost,
       status,
+      // 状态提示上交页面单计时器（审查轮 P2-1）：规则分区提示与设置写入
+      // 提示共用状态行时由页面统一持有自动清除计时，互不提前清除
+      statusSink: showStatus,
     },
   })
 

@@ -15,6 +15,7 @@ import {
   groupKeyToTabId,
   settingKeyToTabId,
   settingKeysByTab,
+  type SettingDefLike,
   type SettingsTabId,
 } from '../src/settings/tabs-model'
 
@@ -123,8 +124,16 @@ describe('设置键 → 页内 Tab（24 键全覆盖）', () => {
     expect(settingKeyToTabId('no-such-key', defs)).toBeNull()
   })
 
+  it('组未映射的已注册定义返回 null 不抛错（审查轮 P2-5：定位 def 路径静默降级）', () => {
+    // 「已注册但组未映射」定义经平台定位回调可触达 def 路径——组路由缺口
+    // 属运行期防御面（配置错误的守门在 groupKeyToTabId 抛错口径，不变）
+    const defsOrphan: SettingDefLike[] = [{ key: 'orphan', group: 'unmapped-group' }]
+    expect(() => settingKeyToTabId('orphan', defsOrphan)).not.toThrow()
+    expect(settingKeyToTabId('orphan', defsOrphan)).toBeNull()
+  })
+
   it('Tab 归属计数：编辑增强 6 / 自动格式化 14 / 其他设置 4（内置/自定义规则 Tab 无设置行）', () => {
-    const byTab = settingKeysByTab(defs)
+    const byTab = settingKeysByTab()
     expect(byTab['edit-enhance']).toHaveLength(6)
     expect(byTab['auto-format']).toHaveLength(14)
     expect(byTab.other).toHaveLength(4)
@@ -133,7 +142,7 @@ describe('设置键 → 页内 Tab（24 键全覆盖）', () => {
   })
 
   it('Tab 键清单并集 = 24 键全集且互不重叠', () => {
-    const byTab = settingKeysByTab(defs)
+    const byTab = settingKeysByTab()
     const all = SETTINGS_TAB_IDS.flatMap((tab) => [...byTab[tab]])
     expect(new Set(all).size).toBe(EXPECTED_KEYS.length)
     expect([...all].sort()).toEqual([...EXPECTED_KEYS].sort())
@@ -166,13 +175,13 @@ describe('卡片分区（对照上游设置页卡片结构）', () => {
   })
 
   it('settingKeysByTab 与卡片分区同源（顺序 = 卡片声明序）', () => {
-    const byTab = settingKeysByTab(defs)
+    const byTab = settingKeysByTab()
     for (const tab of ['edit-enhance', 'auto-format', 'other'] as const) {
       const fromCards = SETTINGS_TAB_CARDS.filter((c) => c.tabId === tab).flatMap((c) => [...c.settingKeys])
       expect(byTab[tab]).toEqual(fromCards)
     }
     // 稳定性：重复计算结果一致（纯函数）
-    expect(settingKeysByTab(defs)).toEqual(byTab)
+    expect(settingKeysByTab()).toEqual(byTab)
   })
 
   it('类型收窄：SettingsTabId 是五字面量联合', () => {

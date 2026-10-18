@@ -65,11 +65,13 @@ export interface SettingDefLike {
   group?: string
 }
 
-/** 设置键 → 页内 Tab；未注册键 / 无组定义返回 null（定位消费方判空降级，不抛错） */
+/** 设置键 → 页内 Tab；未注册键 / 无组定义 / 组未映射均返回 null（定位
+ *  消费方判空降级，不抛错——组路由缺口属运行期防御面，可经平台定位回调
+ *  触达；配置错误的守门在 groupKeyToTabId 的抛错口径，两者分工不变） */
 export function settingKeyToTabId(key: string, defs: readonly SettingDefLike[]): SettingsTabId | null {
   const def = defs.find((d) => d.key === key)
   if (!def || def.group === undefined) return null
-  return groupKeyToTabId(def.group)
+  return lookupGroupTab(def.group) ?? null
 }
 
 /** 卡片分区键（对照上游设置页卡片标题；i18n 键 camelCase 惯例） */
@@ -137,10 +139,10 @@ export const SETTINGS_TAB_CARDS: readonly SettingsCardSpec[] = [
 
 /**
  * 五 Tab 归属总表（tabId → 键清单，序 = 卡片声明序）。由卡片分区折叠
- * 而来（单一事实源）；内置/自定义规则两 Tab 恒为空数组（规则分区承载）。
+ * 而来（单一事实源，无参纯函数）；内置/自定义规则两 Tab 恒为空数组
+ * （规则分区承载）。
  */
-export function settingKeysByTab(defs: readonly SettingDefLike[]): Readonly<Record<SettingsTabId, readonly string[]>> {
-  void defs // 参数保留：与 settingKeyToTabId 消费面同形，切片 3 可换用带校验实现
+export function settingKeysByTab(): Readonly<Record<SettingsTabId, readonly string[]>> {
   const result = Object.fromEntries(SETTINGS_TAB_IDS.map((tab) => [tab, [] as string[]])) as Record<
     SettingsTabId,
     string[]

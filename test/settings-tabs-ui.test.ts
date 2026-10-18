@@ -7,6 +7,7 @@
 // handler。真实观感归 #21 人工清单。
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  enumLabelText,
   mountSettingsPage,
   type SettingsChannelLike,
   type SettingsPageViewHandle,
@@ -16,6 +17,7 @@ import { SETTINGS_TOPIC } from '../src/settings/store'
 import { DEFAULT_EFFECTIVE_SETTINGS } from '../src/settings/defaults'
 import { zhMessages } from '../src/i18n'
 import type { AddonChannelRegistry } from '../types/vendor/host/addons/addonRegistry'
+import type { AddonSettingDefinition } from '../types/vendor/shared/addonSettings'
 import type {
   AddonStorageFacet,
   AddonStorageWatchHandle,
@@ -48,7 +50,8 @@ function mockStorage(initial: Record<string, string> = {}) {
   return { files, storage }
 }
 
-/** 设置主题的可变后端（get/update handler 共享；failReason 模拟写入拒绝） */
+/** 设置主题的可变后端（get/update handler 共享；failReason 模拟写入拒绝）。
+ *  get 快照在调用时捕获；holdNextGet 可挂起下一笔 get（驱动跨笔乱序回包） */
 interface SettingsStore {
   values: Record<string, unknown>
   updateCalls: Array<{ scope: string; patch: Record<string, unknown> }>
@@ -80,9 +83,15 @@ function assemble(initialSettings: Record<string, unknown> = {}) {
   }
   registerRulesChannels(registry, service)
   const store: SettingsStore = { values: { ...initialSettings }, updateCalls: [], failReason: null, getCount: 0 }
-  handlers.set(SETTINGS_TOPIC.get, () => {
+  let nextGetGate: Promise<void> | null = null
+  handlers.set(SETTINGS_TOPIC.get, async () => {
     store.getCount += 1
-    return { values: { ...store.values }, sources: {}, effective: effectiveOf(store.values) }
+    // 快照在调用时捕获（挂起门只延迟结算，不改变快照内容——驱动乱序回包）
+    const snapshot = { values: { ...store.values }, sources: {}, effective: effectiveOf(store.values) }
+    const gate = nextGetGate
+    nextGetGate = null
+    if (gate) await gate
+    return snapshot
   })
   handlers.set(SETTINGS_TOPIC.update, (raw: unknown) => {
     const payload = raw as { scope: string; patch: Record<string, unknown> }
@@ -103,7 +112,15 @@ function assemble(initialSettings: Record<string, unknown> = {}) {
       return { ok: false, reason: 'rejected' }
     }
   }
-  return { mock, service, store, request }
+  /** 挂起下一笔 get（返回放行函数；快照仍按调用时值捕获） */
+  function holdNextGet(): () => void {
+    let release!: () => void
+    nextGetGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    return release
+  }
+  return { mock, service, store, request, holdNextGet }
 }
 
 /** 宏任务边界冲刷（覆盖装载/写后刷新链） */
@@ -483,5 +500,125 @@ describe('规则四分区挂入对应 panel', () => {
     expect(root.textContent).toBe('')
     expect(root.classList.contains('vsidian-easy-typing-root')).toBe(false)
     expect(root.hasAttribute('data-vet-page')).toBe(false)
+  })
+})
+
+// ===== 审查轮修复（#55 集成分支 code review）=====
+
+/** 可控计时器：捕获回调句柄（cancel 置标记，fire 按 canceled 跳过） */
+function capturingTimers() {
+  const timers: Array<{ fn: () => void; canceled: boolean }> = []
+  return {
+    timers,
+    schedule: (fn: () => void) => {
+      const handle = { fn, canceled: false }
+      timers.push(handle)
+      return handle
+    },
+    cancel: (handle: unknown) => {
+      ;(handle as { canceled: boolean }).canceled = true
+    },
+    fire: (handle: unknown) => {
+      const h = handle as { fn: () => void; canceled: boolean }
+      if (!h.canceled) h.fn()
+    },
+  }
+}
+
+describe('共享状态行单计时器（审查轮 P2-1）', () => {
+  it('规则分区先到的提示计时器不提前清除页面后到的提示（单计时器所有者）', async () => {
+    const { store, request } = assemble()
+    const timers = capturingTimers()
+    const root = document.createElement('div')
+    document.body.append(root)
+    mountSettingsPage(root, {
+      channel: { request },
+      messages: zhMessages,
+      localeTag: 'zh-cn',
+      doc: document,
+      setTimeout: timers.schedule,
+      clearTimeout: timers.cancel,
+    })
+    await flush()
+    // 规则分区提示（hosts 模式）：重置内置规则成功 → success
+    expect(timers.timers).toHaveLength(0) // 装载成功路径不产生状态计时器
+    q<HTMLButtonElement>(root, '[data-vet-action="reset-all"]').click()
+    await flush()
+    const rulesTimer = timers.timers[0]
+    const status = q(root, '[data-vet-status]')
+    expect(status.getAttribute('data-vet-status')).toBe('success')
+    // 页面侧后到提示：设置写入失败 → failed（覆盖前者的展示）
+    store.failReason = 'no-workspace'
+    changeValue(rowControl(root, 'tabout'), false)
+    await flush()
+    const pageTimer = timers.timers[1]
+    expect(status.getAttribute('data-vet-status')).toBe('failed')
+    expect(status.textContent).toContain('no-workspace')
+    // 规则侧先到提示的计时器到期：已被取消（单计时器所有者），不清除后到提示
+    timers.fire(rulesTimer)
+    expect(status.getAttribute('data-vet-status')).toBe('failed')
+    expect(status.textContent).toContain('no-workspace')
+    // 后到提示自身的计时器到期：正常清除
+    timers.fire(pageTimer)
+    expect(status.getAttribute('data-vet-status')).toBe('')
+    expect(status.textContent).toBe('')
+  })
+})
+
+describe('写后重拉与并发刷新（审查轮 P2-2 / P2-3）', () => {
+  it('重拉跳过聚焦中控件：草稿保留，其余控件照常刷新；失焦后回到存储真值', async () => {
+    const { store, request } = assemble()
+    const { view, root } = await mountPage(request)
+    view.switchTab('auto-format') // prefixDictionary 在自动格式化面板（hidden 面板内 jsdom 不接受聚焦）
+    const draft = rowControl(root, 'prefixDictionary') as HTMLTextAreaElement
+    draft.focus()
+    expect(document.activeElement).toBe(draft) // 聚焦成立前置（防御测试自身失效）
+    draft.value = '草稿, /未提交/'
+    store.values.prefixDictionary = '存储真值, /x/'
+    store.values.softSpaceLeftSymbols = '——外部新值'
+    await view.refreshSettings()
+    await flush()
+    expect(draft.value).toBe('草稿, /未提交/')
+    expect((rowControl(root, 'softSpaceLeftSymbols') as HTMLInputElement).value).toBe('——外部新值')
+    draft.blur()
+    await view.refreshSettings()
+    await flush()
+    expect(draft.value).toBe('存储真值, /x/')
+  })
+
+  it('并发重拉乱序回包：挂起旧快照迟到结算不覆盖新快照（到达序令牌）', async () => {
+    const { store, request, holdNextGet } = assemble()
+    const { view, root } = await mountPage(request)
+    // 第一笔重拉挂起（快照在调用时捕获为旧值）
+    store.values.softSpaceLeftSymbols = '——陈旧'
+    const releaseStale = holdNextGet()
+    const staleRefresh = view.refreshSettings()
+    // 第二笔重拉（新值）立即结算
+    store.values.softSpaceLeftSymbols = '——新鲜'
+    await view.refreshSettings()
+    await flush()
+    expect((rowControl(root, 'softSpaceLeftSymbols') as HTMLInputElement).value).toBe('——新鲜')
+    // 旧快照迟到结算：弃置，不覆盖新快照
+    releaseStale()
+    await staleRefresh
+    await flush()
+    expect((rowControl(root, 'softSpaceLeftSymbols') as HTMLInputElement).value).toBe('——新鲜')
+  })
+})
+
+describe('enumLabelText 纯函数（审查轮 P2-4：vendor LocalizedText 两形态）', () => {
+  const base: AddonSettingDefinition = { key: 'demo', title: 'demo', type: 'string', enum: ['a', 'b'], default: 'a' }
+
+  it('直值形态：档位显示直值原文，不回退枚举原始值', () => {
+    const def: AddonSettingDefinition = { ...base, enumLabels: { a: '直值标签' } }
+    expect(enumLabelText(def, 'a', 'zh-cn')).toBe('直值标签')
+    expect(enumLabelText(def, 'a', 'en')).toBe('直值标签')
+  })
+
+  it('映射形态：取当前语言档位；缺失键回退枚举值本身', () => {
+    const def: AddonSettingDefinition = { ...base, enumLabels: { a: { 'zh-cn': '甲', en: 'A' } } }
+    expect(enumLabelText(def, 'a', 'zh-cn')).toBe('甲')
+    expect(enumLabelText(def, 'a', 'en')).toBe('A')
+    expect(enumLabelText(def, 'b', 'zh-cn')).toBe('b')
   })
 })
