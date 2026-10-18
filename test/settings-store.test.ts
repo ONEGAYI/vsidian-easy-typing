@@ -2,14 +2,17 @@
 // onChanged 实时刷新、update/clearWorkspaceOverride 转发、dispose 释放。
 // 承载票面验收「改值→生效→重开回显」的可自动化部分：改值 → onChanged →
 // effective 刷新（真实设置页观感归 #21 人工验证）。
+// #63 追加：设置页 UI 浏览态通道（VIEW_STATE_TOPIC + registerViewStateChannels）
+// 宿主侧契约——get 初值 / update 回读 / 不落盘面。
 import { describe, expect, it, vi } from 'vitest'
 import type {
+  AddonChannelRegistry,
   AddonSettingsChangeEventData,
   AddonSettingsContextApi,
 } from '../types/vendor/host/addons/addonRegistry'
 import type { AddonRegistrationHandle } from '../types/vendor/host/addons/addonRegistry'
 import type { AddonSettingsUpdateResult } from '../types/vendor/host/addons/addonSettingsService'
-import { attachSettings } from '../src/settings/store'
+import { attachSettings, registerViewStateChannels, VIEW_STATE_TOPIC } from '../src/settings/store'
 import { DEFAULT_EFFECTIVE_SETTINGS } from '../src/settings/defaults'
 
 type Listener = (change: AddonSettingsChangeEventData) => void
@@ -181,5 +184,90 @@ describe('dispose', () => {
     const facade = attachSettings(api)
     facade.dispose()
     facade.dispose()
+  })
+})
+
+// ===== #63 设置页 UI 浏览态通道（宿主侧契约） =====
+
+/** 通道注册面最小 mock：handlers Map（与页面侧装配测试同形态） */
+function mockChannelRegistry() {
+  const handlers = new Map<string, (payload: unknown) => unknown | Promise<unknown>>()
+  const registry: AddonChannelRegistry = {
+    handle: (topic, handler) => {
+      handlers.set(topic, handler)
+      return { dispose: () => handlers.delete(topic) } as AddonRegistrationHandle
+    },
+  }
+  async function call(topic: string, payload: unknown): Promise<unknown> {
+    const handler = handlers.get(topic)
+    if (!handler) throw new Error(`topic 未注册：${topic}`)
+    return handler(payload)
+  }
+  return { handlers, registry, call }
+}
+
+describe('设置页 UI 浏览态通道（#63 VIEW_STATE_TOPIC）', () => {
+  it('topic 常量形状：双端共引的字符串面钉住（宿主 extension 与设置页共用）', () => {
+    expect(VIEW_STATE_TOPIC.get).toBe('easyTyping.viewState.get')
+    expect(VIEW_STATE_TOPIC.update).toBe('easyTyping.viewState.update')
+  })
+
+  it('get 初值：{ tab: null, scroll: null }（会话内尚无浏览记录）', async () => {
+    const { registry, call } = mockChannelRegistry()
+    registerViewStateChannels(registry)
+    await expect(call(VIEW_STATE_TOPIC.get, null)).resolves.toEqual({ tab: null, scroll: null })
+  })
+
+  it('update 后 get 回读：字符串即存（Tab 语义校验归页面侧 SETTINGS_TAB_IDS）', async () => {
+    const { registry, call } = mockChannelRegistry()
+    registerViewStateChannels(registry)
+    await expect(call(VIEW_STATE_TOPIC.update, { tab: 'user-rules' })).resolves.toEqual({ ok: true })
+    // 任意字符串（含非 Tab id）照存：宿主侧无 Tab 语义知识，恢复侧自行校验
+    await expect(call(VIEW_STATE_TOPIC.update, { tab: 'not-a-tab-id' })).resolves.toEqual({ ok: true })
+    await expect(call(VIEW_STATE_TOPIC.get, null)).resolves.toEqual({ tab: 'not-a-tab-id', scroll: null })
+  })
+
+  it('update 带 scroll 回读：有限非负数即存（页面侧负责取整与钳制语义）', async () => {
+    const { registry, call } = mockChannelRegistry()
+    registerViewStateChannels(registry)
+    await expect(call(VIEW_STATE_TOPIC.update, { tab: 'user-rules', scroll: 412 })).resolves.toEqual({ ok: true })
+    await expect(call(VIEW_STATE_TOPIC.get, null)).resolves.toEqual({ tab: 'user-rules', scroll: 412 })
+    // 覆盖更新（新值替换旧值）；scroll 缺席的后续上报（滚动未变路径）不清除既有记忆
+    await expect(call(VIEW_STATE_TOPIC.update, { tab: 'user-rules', scroll: 0 })).resolves.toEqual({ ok: true })
+    await expect(call(VIEW_STATE_TOPIC.get, null)).resolves.toEqual({ tab: 'user-rules', scroll: 0 })
+    await expect(call(VIEW_STATE_TOPIC.update, { tab: 'other' })).resolves.toEqual({ ok: true })
+    await expect(call(VIEW_STATE_TOPIC.get, null)).resolves.toEqual({ tab: 'other', scroll: 0 })
+  })
+
+  it('update 非法 scroll（负数 / 非有限 / 非数字）整条拒绝且状态不变', async () => {
+    const { registry, call } = mockChannelRegistry()
+    registerViewStateChannels(registry)
+    await expect(call(VIEW_STATE_TOPIC.update, { tab: 'user-rules', scroll: 100 })).resolves.toEqual({ ok: true })
+    for (const scroll of [-1, Number.POSITIVE_INFINITY, Number.NaN, '400' as unknown, null as unknown]) {
+      await expect(call(VIEW_STATE_TOPIC.update, { tab: 'other', scroll })).resolves.toEqual({ ok: false, reason: 'invalid-payload' })
+    }
+    await expect(call(VIEW_STATE_TOPIC.get, null)).resolves.toEqual({ tab: 'user-rules', scroll: 100 })
+  })
+
+  it('update 非法载荷（缺席 / 非字符串 / 空串）拒绝且状态不变', async () => {
+    const { registry, call } = mockChannelRegistry()
+    registerViewStateChannels(registry)
+    await expect(call(VIEW_STATE_TOPIC.update, null)).resolves.toEqual({ ok: false, reason: 'invalid-payload' })
+    await expect(call(VIEW_STATE_TOPIC.update, { tab: 42 })).resolves.toEqual({ ok: false, reason: 'invalid-payload' })
+    await expect(call(VIEW_STATE_TOPIC.update, { tab: '' })).resolves.toEqual({ ok: false, reason: 'invalid-payload' })
+    await expect(call(VIEW_STATE_TOPIC.get, null)).resolves.toEqual({ tab: null, scroll: null })
+  })
+
+  it('会话级内存态：注册面仅 channel registry（无 storage 形参即无落盘面）', async () => {
+    // 不落盘由构造保证：registerViewStateChannels 唯一参数是通道注册面，
+    // 无 storage facet 可传；get/update 为同步内存读写，activate 生命周期
+    // 即会话级（setup 闭包持态），重启 / 代次重注册复位。两次注册互不
+    // 共享（闭包持态，非模块级单例）——一处更新不串到另一处。
+    const first = mockChannelRegistry()
+    const second = mockChannelRegistry()
+    registerViewStateChannels(first.registry)
+    registerViewStateChannels(second.registry)
+    await expect(first.call(VIEW_STATE_TOPIC.update, { tab: 'user-rules' })).resolves.toEqual({ ok: true })
+    await expect(second.call(VIEW_STATE_TOPIC.get, null)).resolves.toEqual({ tab: null, scroll: null })
   })
 })

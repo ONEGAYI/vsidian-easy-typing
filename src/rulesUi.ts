@@ -91,6 +91,10 @@ export interface RulesBehaviorStateLike {
 }
 
 export interface RulesSettingsViewHandle {
+  /** 初始装载完成信号（#63 滚动恢复等待面，PR #65 R1 审查 001）：settled
+   *  即算——装载失败也 resolve（失败态走状态行呈现，等待方不该悬置）。
+   *  规则列表是页面内异步起高的主要分区，滚动回放须等本信号后应用 */
+  readonly ready: Promise<void>
   /** 触发一次数据装载（装载失败走状态行；重复调用无害） */
   reload(): Promise<void>
   /** 就地切换语言（#58：SDK locale 通知驱动；语言映射经 pickMessages）：
@@ -1697,9 +1701,12 @@ export function mountRulesSettingsView(
     render()
   }
 
-  void reload()
+  // 初始装载完成信号：捕获 settle（含失败路径——失败态走状态行，信号
+  // 仍 resolve，滚动恢复等待方不悬置）
+  const ready = reload().catch(() => {})
 
   return {
+    ready,
     reload,
     setLanguage,
     dispose() {
