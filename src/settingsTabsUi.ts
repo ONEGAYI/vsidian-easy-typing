@@ -108,11 +108,15 @@ const TAB_LABEL_KEY: Readonly<Record<SettingsTabId, keyof Messages['settingsTabs
   other: 'other',
 }
 
-/** 单行控件登记（渲染后按 key 索引，供初值应用/写后刷新/联动置灰） */
+/** 单行控件登记（渲染后按 key 索引，供初值应用/写后刷新/联动置灰/来源徽章） */
 interface SettingRowEntry {
   def: AddonSettingDefinition
   row: HTMLElement
   control: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+  /** 工作区覆盖徽章（sources 驱动显隐；仅 facet 在场时呈现） */
+  badge: HTMLElement
+  /** 清除工作区覆盖动作（恢复继承用户默认；与徽章同显隐） */
+  clearBtn: HTMLButtonElement
 }
 
 export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOptions): SettingsPageViewHandle {
@@ -127,6 +131,8 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
   let active: SettingsTabId = DEFAULT_SETTINGS_TAB
   /** effective 快照（get 返回；写后重拉替换） */
   let currentValues: Readonly<Record<string, unknown>> = {}
+  /** sources 快照（get 返回的来源分层 default/user/workspace；徽章驱动） */
+  let currentSources: Readonly<Record<string, string>> = {}
 
   /** DOM 构造糖（与 rulesUi 同款；模块内自有副本避免跨模块导出内部糖） */
   function el<K extends keyof HTMLElementTagNameMap>(
@@ -334,7 +340,24 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
     const row = el('div', classes(`${CLS}-setting-row`, isWideControl && `${CLS}-setting-row-wide`))
     row.setAttribute('data-vet-setting-key', def.key)
     const info = el('div', `${CLS}-setting-info`)
-    info.append(el('div', `${CLS}-setting-name`, def.title))
+    const nameLine = el('div', `${CLS}-setting-name-line`)
+    nameLine.append(el('span', `${CLS}-setting-name`, def.title))
+    // 工作区覆盖徽章 + 清除动作（sources 驱动；facet 缺席恒隐藏——降级
+    // 形态无作用域相关 UI。清除语义 = 恢复继承用户默认，非恢复出厂）
+    const badge = el('span', `${CLS}-source-badge`, t.badgeWorkspaceOverride)
+    badge.setAttribute('data-vet-source-badge', 'workspace')
+    badge.hidden = true
+    const clearBtn = el('button', `${CLS}-source-clear`, t.clearOverrideAction) as HTMLButtonElement
+    clearBtn.type = 'button'
+    clearBtn.title = t.clearOverrideTitle
+    clearBtn.setAttribute('aria-label', t.clearOverrideTitle)
+    clearBtn.setAttribute('data-vet-clear-override', def.key)
+    clearBtn.hidden = true
+    clearBtn.addEventListener('click', () => {
+      void clearOverride(def.key)
+    })
+    nameLine.append(badge, clearBtn)
+    info.append(nameLine)
     if (def.description !== undefined) info.append(el('div', `${CLS}-setting-desc`, def.description))
     row.append(info)
     const controlWrap = el('div', `${CLS}-setting-control`)
@@ -378,7 +401,7 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
     control.addEventListener('change', () => {
       void write(def.key, readControlValue(def, control))
     })
-    rows.set(def.key, { def, row, control })
+    rows.set(def.key, { def, row, control, badge, clearBtn })
     return row
   }
 
@@ -451,6 +474,19 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
    *  与来源徽章都随 layers 解析变化 */
   const unsubscribeScope = scopeFacet ? scopeFacet.onScopeChange(() => { void refreshSettings() }) : null
 
+  /** 来源徽章显隐（写后/清除后/作用域切换后的重拉统一走此处）：仅
+   *  facet 在场且 sources[key] === 'workspace' 的行呈现徽章与清除入口。
+   *  hasWorkspace === false 时平台快照不会出现 workspace 来源（工作区层
+   *  不可用），入口自然不出现；写入/清除遭 no-workspace 拒绝经状态行兜底 */
+  function applySources(): void {
+    const scopeUiEnabled = scopeFacet !== undefined
+    for (const entry of rows.values()) {
+      const overridden = scopeUiEnabled && currentSources[entry.def.key] === 'workspace'
+      entry.badge.hidden = !overridden
+      entry.clearBtn.hidden = !overridden
+    }
+  }
+
   async function refreshSettings(): Promise<void> {
     let outcome: Awaited<ReturnType<SettingsChannelLike['request']>>
     try {
@@ -459,13 +495,42 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
       return // 通道异常静默（初值回落默认；后续写入失败有状态行提示面）
     }
     if (disposed || outcome.ok !== true) return
-    const effective = (outcome.result as { effective?: unknown } | null)?.effective
+    const snapshot = outcome.result as { effective?: unknown; sources?: unknown } | null
+    const effective = snapshot?.effective
     if (effective === null || typeof effective !== 'object') return
     currentValues = effective as Readonly<Record<string, unknown>>
+    const sources = snapshot?.sources
+    currentSources = sources !== null && typeof sources === 'object' ? (sources as Readonly<Record<string, string>>) : {}
     for (const entry of rows.values()) {
       applyValue(entry, currentValues[entry.def.key] ?? entry.def.default)
     }
     applyLinkage()
+    applySources()
+  }
+
+  /** 清除工作区覆盖（恢复继承用户默认值，非恢复出厂）；清除后重拉 */
+  async function clearOverride(key: string): Promise<void> {
+    let outcome: Awaited<ReturnType<SettingsChannelLike['request']>>
+    try {
+      outcome = await options.channel.request(SETTINGS_TOPIC.clearOverride, { key })
+    } catch {
+      if (!disposed) showStatus('failed', `${t.statusClearOverrideFailed}：io-failed`)
+      await refreshSettings()
+      return
+    }
+    if (disposed) return
+    if (outcome.ok !== true) {
+      showStatus('failed', `${t.statusClearOverrideFailed}：${outcome.reason ?? 'rejected'}`)
+    } else {
+      const inner = outcome.result as { ok?: boolean; reason?: string } | null
+      if (inner?.ok === false) {
+        showStatus('failed', `${t.statusClearOverrideFailed}：${inner.reason ?? 'store-write-failed'}`)
+      } else {
+        showStatus('success', t.statusOverrideCleared)
+      }
+    }
+    // 清除后重拉（徽章消失 + effective 回退用户层；失败时保持原状）
+    await refreshSettings()
   }
 
   async function write(key: string, value: unknown): Promise<void> {

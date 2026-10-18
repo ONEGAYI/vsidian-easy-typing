@@ -178,7 +178,7 @@ async function mountPage(request: SettingsChannelLike['request'], mountOptions: 
   return { view, root }
 }
 
-function q<T extends Element>(root: ParentNode, selector: string): T {
+function q<T extends HTMLElement>(root: ParentNode, selector: string): T {
   const node = root.querySelector<T>(selector)
   if (!node) throw new Error(`selector not found: ${selector}`)
   return node
@@ -226,8 +226,10 @@ describe('settingsContext facet 判空降级（旧宿主 / 编辑器页形态）
     const { store, request } = assemble()
     store.wsValues.tabout = true
     const { root } = await mountPage(request)
-    expect(root.querySelector('[data-vet-source-badge]')).toBeNull()
-    expect(root.querySelector('[data-vet-clear-override]')).toBeNull()
+    // 降级形态钉「不可见」而非「不在 DOM」：徽章节点常驻（hidden 隐藏，
+    // 不进可访问树），facet 缺席时 sources 不驱动任何作用域 UI 呈现
+    expect(root.querySelectorAll('[data-vet-source-badge]:not([hidden])')).toHaveLength(0)
+    expect(root.querySelectorAll('[data-vet-clear-override]:not([hidden])')).toHaveLength(0)
   })
 })
 
@@ -323,5 +325,86 @@ describe('规则 Tab 用户级标注', () => {
     const { request } = assemble()
     const { root } = await mountPage(request)
     expect(root.querySelectorAll('[data-vet-rules-scope="user"]')).toHaveLength(2)
+  })
+})
+
+// ===== 行级来源徽章与清除工作区覆盖 =====
+
+describe('行级来源徽章（sources 驱动，仅 workspace 覆盖行）', () => {
+  it('workspace 覆盖行显示徽章 + 清除按钮；user 层行不显示', async () => {
+    const { store, request } = assemble()
+    store.wsValues.tabout = true
+    store.userValues.smartPaste = false
+    const fake = fakeFacet()
+    const { root } = await mountPage(request, { facet: fake.facet })
+    const taboutRow = q(root, '[data-vet-setting-key="tabout"]')
+    const badge = q(taboutRow, '[data-vet-source-badge="workspace"]')
+    expect(badge.textContent).toBe(zhMessages.settingsTabs.badgeWorkspaceOverride)
+    expect(badge.hidden).toBe(false)
+    expect(q(taboutRow, '[data-vet-clear-override="tabout"]').hidden).toBe(false)
+    const smartRow = q(root, '[data-vet-setting-key="smartPaste"]')
+    expect(smartRow.querySelector<HTMLElement>('[data-vet-source-badge]')?.hidden ?? true).toBe(true)
+    expect(smartRow.querySelector<HTMLElement>('[data-vet-clear-override]')?.hidden ?? true).toBe(true)
+    // 其余未覆盖行无可见徽章
+    expect(root.querySelectorAll('[data-vet-source-badge]:not([hidden])')).toHaveLength(1)
+  })
+
+  it('写入 workspace 层后徽章出现（写后重拉 sources 生效）', async () => {
+    const { request } = assemble()
+    const fake = fakeFacet({ scope: 'workspace', hasWorkspace: true })
+    const { root } = await mountPage(request, { facet: fake.facet })
+    const taboutRow = q(root, '[data-vet-setting-key="tabout"]')
+    expect(taboutRow.querySelector('[data-vet-source-badge]')).not.toBeNull()
+    expect(q(taboutRow, '[data-vet-source-badge]').hidden).toBe(true)
+    changeValue(rowControl(root, 'tabout'), false)
+    await flush()
+    expect(q(taboutRow, '[data-vet-source-badge]').hidden).toBe(false)
+  })
+
+  it('清除按钮 title 写准语义：恢复继承用户默认，非恢复出厂', async () => {
+    const { store, request } = assemble()
+    store.wsValues.tabout = true
+    const fake = fakeFacet()
+    const { root } = await mountPage(request, { facet: fake.facet })
+    const btn = q<HTMLButtonElement>(q(root, '[data-vet-setting-key="tabout"]'), '[data-vet-clear-override]')
+    expect(btn.title).toContain('用户默认')
+    expect(btn.title).toContain('非恢复出厂')
+  })
+})
+
+describe('清除工作区覆盖（SETTINGS_TOPIC.clearOverride）', () => {
+  it('点击清除：载荷 {key}，成功后重拉 + 状态行 success + 徽章消失 + 值回退用户层', async () => {
+    const { store, request } = assemble()
+    store.userValues.tabout = true
+    store.wsValues.tabout = false
+    const fake = fakeFacet()
+    const { root } = await mountPage(request, { facet: fake.facet })
+    // workspace 覆盖生效（effective = false）
+    expect((rowControl(root, 'tabout') as HTMLInputElement).checked).toBe(false)
+    const before = store.getCount
+    q<HTMLButtonElement>(q(root, '[data-vet-setting-key="tabout"]'), '[data-vet-clear-override]').click()
+    await flush()
+    expect(store.clearCalls).toEqual(['tabout'])
+    expect(store.getCount).toBeGreaterThan(before)
+    const status = q(root, '[data-vet-status]')
+    expect(status.getAttribute('data-vet-status')).toBe('success')
+    expect(status.textContent).toContain(zhMessages.settingsTabs.statusOverrideCleared)
+    expect(q(root, '[data-vet-setting-key="tabout"] [data-vet-source-badge]').hidden).toBe(true)
+    expect((rowControl(root, 'tabout') as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('清除失败（no-workspace）：状态行 failed 含 reason，徽章保持', async () => {
+    const { store, request } = assemble()
+    store.wsValues.tabout = true
+    store.clearFailReason = 'no-workspace'
+    const fake = fakeFacet()
+    const { root } = await mountPage(request, { facet: fake.facet })
+    q<HTMLButtonElement>(q(root, '[data-vet-setting-key="tabout"]'), '[data-vet-clear-override]').click()
+    await flush()
+    const status = q(root, '[data-vet-status]')
+    expect(status.getAttribute('data-vet-status')).toBe('failed')
+    expect(status.textContent).toContain(zhMessages.settingsTabs.statusClearOverrideFailed)
+    expect(status.textContent).toContain('no-workspace')
+    expect(q(root, '[data-vet-setting-key="tabout"] [data-vet-source-badge]').hidden).toBe(false)
   })
 })

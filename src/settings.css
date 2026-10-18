@@ -765,3 +765,41 @@
   color: var(--vscode-descriptionForeground, #9d9d9d);
   font-size: 12px;
 }
+
+/* ===== #55 切片 2：行级来源徽章与清除覆盖 ===== */
+.vsidian-easy-typing-setting-name-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.vsidian-easy-typing-source-badge {
+  padding: 1px 8px;
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  border-radius: 9px;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  font-size: 11px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.vsidian-easy-typing-source-clear {
+  padding: 1px 6px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-textLink-foreground, #3794ff);
+  cursor: pointer;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.vsidian-easy-typing-source-clear:hover {
+  color: var(--vscode-textLink-activeForeground, #3794ff);
+  text-decoration: underline;
+}
+
+.vsidian-easy-typing-source-clear:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 1px;
+}
