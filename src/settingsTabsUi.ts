@@ -48,6 +48,7 @@ import {
   cardsForTab,
   groupKeyToCardAnchor,
   settingKeyToTabId,
+  type SettingsCardKey,
   type SettingsCardSpec,
   type SettingsTabId,
 } from './settings/tabs-model'
@@ -921,6 +922,12 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
     loadErrorText.textContent = t.loadFailedText
     loadErrorRetry.textContent = t.loadFailedRetry
     for (const [id, btn] of tabButtons) btn.textContent = t.tabs[TAB_LABEL_KEY[id]]
+    // 卡片分区标题挂载期一次性创建（buildCard），切换语言时按 cardKey 补刷
+    for (const card of root.querySelectorAll(`[data-vet-card]`)) {
+      const cardKey = card.getAttribute('data-vet-card') as SettingsCardKey | null
+      const title = card.querySelector<HTMLElement>(`.${CLS}-section-title`)
+      if (cardKey !== null && title !== null) title.textContent = t.cards[cardKey]
+    }
     for (const entry of rows.values()) {
       const nextDef = defByKey.get(entry.def.key)
       if (!nextDef) continue // 键集由契约测试钉死；此处防御跳过缺位

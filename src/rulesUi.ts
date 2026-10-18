@@ -1614,7 +1614,11 @@ export function mountRulesSettingsView(
   /** 就地切换语言（#58）：更新字典引用后按既有渲染路径重建。状态保全：
    *  - 选中规则/灰态/客户端数据为闭包态，重建不丢；
    *  - 编辑浮层在场：表单值经 formContext.model 往返，测试编辑器（DOM 态）
-   *    显式回填，焦点按 data-vet-input 名恢复；
+   *    显式回填，焦点优先按 data-vet-input 名恢复，其次测试编辑器（其值
+   *    与选区随回填恢复）；浮层内其余无稳定名标记的控件（pill/按钮）焦点
+   *    不恢复；
+   *  - 分区头部与规则列表按钮（开关/编辑/删除等）重建后焦点回落 body，
+   *    属已知边界（低频切换事件，重新点击即可）；
    *  - spacing 分区草稿守卫（spacingEditingInFlight）沿用写后刷新语义：
    *    焦点/脏标记在场时本分区保持原语言，下一次无冲突渲染补齐。 */
   function setLanguage(language: string): void {
@@ -1626,10 +1630,12 @@ export function mountRulesSettingsView(
       const testText = testInput?.value ?? null
       const testFrom = testInput?.selectionStart ?? null
       const testTo = testInput?.selectionEnd ?? null
-      const focusName =
+      const activeElement =
         doc.activeElement instanceof HTMLElement && overlay.contains(doc.activeElement)
-          ? doc.activeElement.getAttribute('data-vet-input')
+          ? doc.activeElement
           : null
+      const focusName = activeElement?.getAttribute('data-vet-input') ?? null
+      const focusWasTestInput = activeElement?.hasAttribute('data-vet-test-input') ?? false
       buildFormDom()
       refreshFormVisibility()
       const nextTestInput = overlay.querySelector<HTMLTextAreaElement>('[data-vet-test-input]')
@@ -1639,6 +1645,8 @@ export function mountRulesSettingsView(
       }
       if (focusName !== null) {
         overlay.querySelector<HTMLElement>(`[data-vet-input="${focusName}"]`)?.focus()
+      } else if (focusWasTestInput) {
+        nextTestInput?.focus()
       }
       runTest()
     }

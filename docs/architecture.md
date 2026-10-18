@@ -37,7 +37,7 @@ L0 纯逻辑内核    rules/（rule-engine / default-rules / function-table /
                  rule-store / rules-ui-model——零平台依赖，契约钉住）
 ```
 
-横切两件（被各层消费）：`src/i18n/`（zh 字典为类型源，en 编译期键集对齐 + parity 测试；宿主侧 `vscode.env.language`、页面侧经 `resolvePageLanguage`——#58 起 SDK locale 优先（跟随主设置），旧宿主回落 `navigator.language`——统一经 `pickMessages`）、`src/logging.ts`（debug 门控，业务代码统一 `debugLog`，不直接碰 console）。
+横切两件（被各层消费）：`src/i18n/`（zh 字典为类型源，en 编译期键集对齐 + parity 测试；宿主侧 `vscode.env.language`、设置页侧经 `resolvePageLanguage`——#58 起 SDK locale 优先（跟随主设置），旧宿主回落 `navigator.language`——统一经 `pickMessages`；编辑器页命令标题暂仍随 OS 语言（`navigator.language`），与设置页语言源的统一归后续票）、`src/logging.ts`（debug 门控，业务代码统一 `debugLog`，不直接碰 console）。
 
 各层的边界判据与示例：
 

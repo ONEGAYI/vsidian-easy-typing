@@ -1130,6 +1130,13 @@ describe('就地语言切换（view.setLanguage，#58）', () => {
     expect(q(root, '[data-vet-hero] h1').textContent).toBe(en.heroTitle)
     expect(q(root, '[data-vet-hero] a').textContent).toBe(en.heroLinkText)
     expect(tabButton(root, 'user-rules').textContent).toBe(en.tabs.userRules)
+    // 卡片分区标题随语言切换（挂载期一次性创建，切换时须补刷）
+    expect(q(root, '[data-vet-card="editEnhance"] .vsidian-easy-typing-section-title').textContent).toBe(
+      en.cards.editEnhance,
+    )
+    expect(q(root, '[data-vet-card="excludeFiles"] .vsidian-easy-typing-section-title').textContent).toBe(
+      en.cards.excludeFiles,
+    )
     // 行标题与说明（definitions 按新字典重建）
     const row = q(root, '[data-vet-setting-key="autoFormat"]')
     expect(q(row, '.vsidian-easy-typing-setting-name').textContent).toBe(enMessages.settings.autoFormat.name)
@@ -1208,6 +1215,23 @@ describe('就地语言切换（view.setLanguage，#58）', () => {
     expect(triggerAfter.value).toBe('abcd') // 模型往返保全
     expect(document.activeElement).toBe(triggerAfter) // 焦点恢复
     expect(q<HTMLTextAreaElement>(modal, '[data-vet-test-input]').value).toBe('x1') // DOM 态显式回填
+  })
+
+  it('浮层焦点在测试编辑器上时切换语言：焦点与选区恢复（R1 审查 A3/B3）', async () => {
+    const { request } = assemble()
+    const { root, view } = await mountPage(request)
+    view.switchTab('user-rules')
+    q<HTMLButtonElement>(q(root, '[data-vet-section="user"]'), '[data-vet-action="add-rule"]').click()
+    const modal = q(root, '[data-vet-modal]')
+    const testInput = q<HTMLTextAreaElement>(modal, '[data-vet-test-input]')
+    testInput.value = 'x1y2'
+    testInput.focus()
+    testInput.setSelectionRange(2, 2)
+    view.setLanguage('en')
+    const next = q<HTMLTextAreaElement>(modal, '[data-vet-test-input]')
+    expect(next.value).toBe('x1y2')
+    expect(document.activeElement).toBe(next)
+    expect(next.selectionStart).toBe(2)
   })
 
   it('平台空串（语言包未装配）按解析链同口径落英文', async () => {
