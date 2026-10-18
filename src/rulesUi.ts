@@ -808,7 +808,8 @@ export function mountRulesSettingsView(
     addPairBtn.setAttribute('data-vet-action', 'add-pair')
     addPairBtn.addEventListener('click', () => {
       if (!selA.value || !selB.value || selA.value === selB.value) {
-        showStatus('failed', sp.pairInvalid)
+        // 执行时读当前字典：编辑保护跳过重建时回调闭包持旧 sp（审查 002）
+        showStatus('failed', t.spacing.pairInvalid)
         return
       }
       // 入队时捕获选择值：前一笔写的写后刷新可能重建分区，执行时再读
@@ -890,7 +891,8 @@ export function mountRulesSettingsView(
       const name = newName.value.trim()
       const pattern = newPattern.value.trim()
       if (!name || !pattern) {
-        showStatus('failed', sp.categoryInvalid)
+        // 执行时读当前字典：编辑保护跳过重建时回调闭包持旧 sp（审查 002）
+        showStatus('failed', t.spacing.categoryInvalid)
         return
       }
       // 基面取 DOM 读面（含未刷新的行编辑——click 前的 blur/change 写在途，
@@ -1613,14 +1615,17 @@ export function mountRulesSettingsView(
 
   /** 就地切换语言（#58）：更新字典引用后按既有渲染路径重建。状态保全：
    *  - 选中规则/灰态/客户端数据为闭包态，重建不丢；
-   *  - 编辑浮层在场：表单值经 formContext.model 往返，测试编辑器（DOM 态）
-   *    显式回填，焦点优先按 data-vet-input 名恢复，其次测试编辑器（其值
-   *    与选区随回填恢复）；浮层内其余无稳定名标记的控件（pill/按钮）焦点
-   *    不恢复；
+   *  - 编辑浮层在场：表单值按切换前 DOM 原始草稿快照恢复（含选区与方向）
+   *    ——不从归一化模型重建：priority 空串被输入处理忽略、
+   *    scopeLanguage/regexFlags 模型已归一化，模型往返会覆盖未提交输入
+   *    （审查 001）；测试编辑器（DOM 态）同快照回填；焦点优先按
+   *    data-vet-input 名恢复，其次测试编辑器；浮层内其余无稳定名标记的
+   *    控件（pill/按钮）焦点不恢复；
    *  - 分区头部与规则列表按钮（开关/编辑/删除等）重建后焦点回落 body，
    *    属已知边界（低频切换事件，重新点击即可）；
    *  - spacing 分区草稿守卫（spacingEditingInFlight）沿用写后刷新语义：
-   *    焦点/脏标记在场时本分区保持原语言，下一次无冲突渲染补齐。 */
+   *    焦点/脏标记在场时本分区保持原语言，下一次无冲突渲染补齐；守卫
+   *    期间动作回调的校验提示执行时读当前字典（审查 002）。 */
   function setLanguage(language: string): void {
     if (disposed) return
     m = pickMessages(language)
@@ -1630,6 +1635,29 @@ export function mountRulesSettingsView(
       const testText = testInput?.value ?? null
       const testFrom = testInput?.selectionStart ?? null
       const testTo = testInput?.selectionEnd ?? null
+      const draft = new Map<
+        string,
+        {
+          value: string
+          checked: boolean
+          from: number | null
+          to: number | null
+          direction: SelectionDirection
+        }
+      >()
+      for (const field of overlay.querySelectorAll<
+        HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+      >('[data-vet-input]')) {
+        const name = field.getAttribute('data-vet-input')
+        if (name === null) continue
+        draft.set(name, {
+          value: field.value,
+          checked: field instanceof HTMLInputElement && field.type === 'checkbox' && field.checked,
+          from: field instanceof HTMLSelectElement ? null : field.selectionStart,
+          to: field instanceof HTMLSelectElement ? null : field.selectionEnd,
+          direction: field instanceof HTMLSelectElement ? 'none' : (field.selectionDirection ?? 'none'),
+        })
+      }
       const activeElement =
         doc.activeElement instanceof HTMLElement && overlay.contains(doc.activeElement)
           ? doc.activeElement
@@ -1638,6 +1666,22 @@ export function mountRulesSettingsView(
       const focusWasTestInput = activeElement?.hasAttribute('data-vet-test-input') ?? false
       buildFormDom()
       refreshFormVisibility()
+      for (const [name, snap] of draft) {
+        const field = overlay.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
+          `[data-vet-input="${name}"]`,
+        )
+        if (field === null) continue
+        if (field instanceof HTMLInputElement && field.type === 'checkbox') {
+          field.checked = snap.checked
+        } else if (field instanceof HTMLSelectElement) {
+          field.value = snap.value
+        } else {
+          field.value = snap.value
+          if (snap.from !== null && snap.to !== null) {
+            field.setSelectionRange(snap.from, snap.to, snap.direction)
+          }
+        }
+      }
       const nextTestInput = overlay.querySelector<HTMLTextAreaElement>('[data-vet-test-input]')
       if (nextTestInput !== null && testText !== null) {
         nextTestInput.value = testText

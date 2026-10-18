@@ -1234,6 +1234,55 @@ describe('就地语言切换（view.setLanguage，#58）', () => {
     expect(next.selectionStart).toBe(2)
   })
 
+  it('浮层原始草稿与选区保全：未归一化文本/空数字/反向选区双向切换零写入（审查 001）', async () => {
+    const { request, mock } = assemble()
+    const { root, view } = await mountPage(request)
+    view.switchTab('user-rules')
+    q<HTMLButtonElement>(q(root, '[data-vet-section="user"]'), '[data-vet-action="add-rule"]').click()
+    const modal = q(root, '[data-vet-modal]')
+    // 未提交草稿：DOM 原始值与归一化模型有意分叉（输入处理写模型，DOM 保持用户输入）
+    const trigger = q<HTMLInputElement>(modal, '[data-vet-input="trigger"]')
+    trigger.value = 'abcdef'
+    trigger.dispatchEvent(new Event('input', { bubbles: true }))
+    trigger.setSelectionRange(2, 4, 'backward')
+    const priority = q<HTMLInputElement>(modal, '[data-vet-input="priority"]')
+    priority.value = '' // 空数字被输入处理忽略，模型仍持种子值
+    priority.dispatchEvent(new Event('input', { bubbles: true }))
+    const lang = q<HTMLInputElement>(modal, '[data-vet-input="scopeLanguage"]')
+    lang.value = 'Python, ' // 模型归一化为 'python,'
+    lang.dispatchEvent(new Event('input', { bubbles: true }))
+    const flags = q<HTMLInputElement>(modal, '[data-vet-input="regexFlags"]')
+    flags.value = 'mmi' // 模型归一化为 'im'
+    flags.dispatchEvent(new Event('input', { bubbles: true }))
+    const filesBefore = JSON.stringify([...mock.files.entries()])
+    view.setLanguage('en')
+    view.setLanguage('zh-cn') // 双向切换
+    const nextTrigger = q<HTMLInputElement>(modal, '[data-vet-input="trigger"]')
+    expect(nextTrigger.value).toBe('abcdef')
+    expect(nextTrigger.selectionStart).toBe(2)
+    expect(nextTrigger.selectionEnd).toBe(4)
+    expect(nextTrigger.selectionDirection).toBe('backward')
+    expect(q<HTMLInputElement>(modal, '[data-vet-input="priority"]').value).toBe('')
+    expect(q<HTMLInputElement>(modal, '[data-vet-input="scopeLanguage"]').value).toBe('Python, ')
+    expect(q<HTMLInputElement>(modal, '[data-vet-input="regexFlags"]').value).toBe('mmi')
+    expect(JSON.stringify([...mock.files.entries()])).toBe(filesBefore) // 零写入
+  })
+
+  it('spacing 编辑保护期间新校验提示读当前语言，草稿保留（审查 002）', async () => {
+    const { request } = assemble()
+    const { root, view } = await mountPage(request)
+    view.switchTab('auto-format')
+    const newName = q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]')
+    newName.value = 'draft' // 置脏：编辑保护生效，切语言不重建本分区
+    newName.dispatchEvent(new Event('input', { bubbles: true }))
+    view.setLanguage('en')
+    q<HTMLButtonElement>(q(root, '[data-vet-section="spacing"]'), '[data-vet-action="add-category"]').click()
+    const status = q(root, '[data-vet-status]')
+    expect(status.getAttribute('data-vet-status')).toBe('failed')
+    expect(status.textContent).toBe(enMessages.rulesPage.spacing.categoryInvalid) // 新提示为当前语言
+    expect(q<HTMLInputElement>(root, '[data-vet-input="new-category-name"]').value).toBe('draft') // 草稿保留
+  })
+
   it('平台空串（语言包未装配）按解析链同口径落英文', async () => {
     const { request } = assemble()
     const { root, view } = await mountPage(request)
