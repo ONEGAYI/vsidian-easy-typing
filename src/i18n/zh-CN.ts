@@ -218,11 +218,21 @@ const zhMessages = {
     // 作用域相关（#55 切片 2）：清除覆盖语义 = 恢复继承用户默认值（非恢复
     // 出厂默认——vendor AddonSettingsContextApi.clearWorkspaceOverride 注释）
     rulesScopeNote: '本页规则为用户级数据：全局共享，不随工作区隔离',
+    // spacing 分区标注（审查轮 R2-P2-3）：数据写全局 rule-state，与相邻按
+    // 作用域保存的设置行不同层，标注挂分区近旁不泛化整 Tab
+    spacingScopeNote: '本分区为用户级数据：全局共享，不随工作区隔离',
     badgeWorkspaceOverride: '工作区覆盖',
     clearOverrideAction: '清除覆盖',
     clearOverrideTitle: '清除工作区覆盖：此设置恢复继承用户默认值（非恢复出厂默认）',
-    statusOverrideCleared: '已清除工作区覆盖，恢复继承用户默认值',
+    statusOverrideCleared: '已清除工作区覆盖，恢复继承用户默认',
     statusClearOverrideFailed: '清除工作区覆盖失败',
+    // 首读失败三态（审查轮 R2-P2-2）：横幅错误提示 + 重试按钮 + 行级禁用提示
+    loadFailedText: '设置读取失败：当前显示默认值，暂不可编辑',
+    loadFailedRetry: '重试',
+    loadFailedRowHint: '设置读取失败，此设置暂不可编辑（读取成功后恢复）',
+    // 用户层合并值提示（审查轮 R2-P2-1 平台缺口过渡处置）：scope=user 且
+    // 工作区覆盖在场时行内提示；用户层原值按层读取待平台能力
+    mergedValueHint: '当前显示工作区覆盖后的合并值；用户层原值待平台支持按层读取',
   },
   // 规则管理设置页文案（工单 #16）：对照上游 locale headers.toolTip.
   // ruleEditModal.dropdownOptions 词条，按平台自绘页形态改写

@@ -218,11 +218,23 @@ export const enMessages: Messages = {
     // from the user default (not the factory default — see the vendor
     // AddonSettingsContextApi.clearWorkspaceOverride comment).
     rulesScopeNote: 'Rules on this tab are user-level data: shared globally, not isolated per workspace.',
+    // Spacing section note (review round R2-P2-3): the data lives in global
+    // rule-state, on a different layer than the neighboring scope-aware rows.
+    spacingScopeNote: 'This section holds user-level data: shared globally, not isolated per workspace.',
     badgeWorkspaceOverride: 'Workspace override',
     clearOverrideAction: 'Clear override',
     clearOverrideTitle: 'Clear the workspace override: this setting falls back to the user default (not the factory default)',
     statusOverrideCleared: 'Workspace override cleared; the setting inherits the user default again',
     statusClearOverrideFailed: 'Failed to clear the workspace override',
+    // First-read failure states (review round R2-P2-2): banner text, retry
+    // button, and the per-row disabled hint.
+    loadFailedText: 'Failed to load settings: defaults are shown and editing is unavailable',
+    loadFailedRetry: 'Retry',
+    loadFailedRowHint: 'Settings failed to load; this setting is unavailable until loading succeeds',
+    // User-layer merged-value hint (review round R2-P2-1, transitional until
+    // the platform exposes per-layer reads): shown on user scope with a
+    // workspace override present.
+    mergedValueHint: 'Shows the workspace-merged value; the user-layer value awaits per-layer read support',
   },
   // Rules management settings page copy (issue #16): follows upstream locale
   // headers / toolTip / ruleEditModal / dropdownOptions entries, adapted to

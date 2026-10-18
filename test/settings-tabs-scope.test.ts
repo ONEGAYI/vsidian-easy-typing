@@ -222,7 +222,7 @@ describe('settingsContext facet 判空降级（旧宿主 / 编辑器页形态）
     expect(store.userValues.tabout).toBe(false)
   })
 
-  it('无 facet：workspace 层来源也不渲染徽章/清除入口（无作用域相关 UI）', async () => {
+  it('无 facet：workspace 层来源也不渲染徽章/清除入口/合并值提示（无作用域相关 UI）', async () => {
     const { store, request } = assemble()
     store.wsValues.tabout = true
     const { root } = await mountPage(request)
@@ -230,6 +230,7 @@ describe('settingsContext facet 判空降级（旧宿主 / 编辑器页形态）
     // 不进可访问树），facet 缺席时 sources 不驱动任何作用域 UI 呈现
     expect(root.querySelectorAll('[data-vet-source-badge]:not([hidden])')).toHaveLength(0)
     expect(root.querySelectorAll('[data-vet-clear-override]:not([hidden])')).toHaveLength(0)
+    expect(root.querySelectorAll('[data-vet-merged-hint]:not([hidden])')).toHaveLength(0)
   })
 })
 
@@ -313,12 +314,24 @@ describe('规则 Tab 用户级标注', () => {
     }
   })
 
-  it('其他 panel（自动格式化/其他设置）不出现规则作用域标注', async () => {
+  it('spacing 分区用户级标注（审查轮 R2-P2-3）：挂分区近旁、不泛化整 Tab、其他 panel 无', async () => {
     const { request } = assemble()
     const { root } = await mountPage(request)
-    expect(panel(root, 'auto-format').querySelector('[data-vet-rules-scope]')).toBeNull()
-    expect(panel(root, 'other').querySelector('[data-vet-rules-scope]')).toBeNull()
-    expect(panel(root, 'edit-enhance').querySelector('[data-vet-rules-scope]')).toBeNull()
+    const autoPanel = panel(root, 'auto-format')
+    // 「语言间空格策略」分区数据写全局 rule-state（用户级）——标注在场
+    const note = autoPanel.querySelector<HTMLElement>('[data-vet-spacing-scope="user"]')
+    expect(note).not.toBeNull()
+    expect(note!.textContent).toContain('用户级')
+    expect(note!.textContent).toContain('不随工作区隔离')
+    // 标注紧邻分区：spacing 分区挂载 host 的前一个兄弟即标注
+    const spacingSection = q(root, '[data-vet-section="spacing"]')
+    expect(spacingSection.parentElement!.previousElementSibling).toBe(note)
+    // 不泛化整 Tab：规则 Tab 专属标注形态不落在自动格式化 panel
+    expect(autoPanel.querySelector('[data-vet-rules-scope]')).toBeNull()
+    // 其余 panel 无 spacing 标注
+    for (const tabId of ['edit-enhance', 'builtin-rules', 'user-rules', 'other'] as const) {
+      expect(panel(root, tabId).querySelector('[data-vet-spacing-scope]'), tabId).toBeNull()
+    }
   })
 
   it('无 facet（降级形态）规则标注仍在（静态数据级说明，非作用域 UI）', async () => {
@@ -405,6 +418,54 @@ describe('清除工作区覆盖（SETTINGS_TOPIC.clearOverride）', () => {
     expect(status.getAttribute('data-vet-status')).toBe('failed')
     expect(status.textContent).toContain(zhMessages.settingsTabs.statusClearOverrideFailed)
     expect(status.textContent).toContain('no-workspace')
+    expect(q(root, '[data-vet-setting-key="tabout"] [data-vet-source-badge]').hidden).toBe(false)
+  })
+})
+
+// ===== 用户默认层下的工作区合并值提示（审查轮 R2-P2-1 平台缺口过渡处置）=====
+
+// 平台 SDK get() 仅合并语义（vendor AddonSettingsService.get → {values, sources}），
+// 用户层被工作区覆盖的原值不可读——按层读取依赖 ONEGAYI/vsidian#590
+// （「附加组件设置 SDK 暴露按层读取」）。过渡语义：scope=user 且
+// sources[key]=workspace 的行显示合并值 + 徽章 + 增强提示；本组测试钉住
+// 过渡形态，平台按层读取落地后随 #590 回收改写。
+describe('用户默认层下的工作区合并值提示（审查轮 R2-P2-1，待 ONEGAYI/vsidian#590）', () => {
+  it('scope=user：显示合并值 + 徽章 + 增强提示（user 层 true / workspace 层 false → 显示 false）', async () => {
+    const { store, request } = assemble()
+    store.userValues.tabout = true
+    store.wsValues.tabout = false
+    const fake = fakeFacet() // scope: 'user'
+    const { root } = await mountPage(request, { facet: fake.facet })
+    const row = q(root, '[data-vet-setting-key="tabout"]')
+    expect((rowControl(root, 'tabout') as HTMLInputElement).checked).toBe(false) // 合并值（workspace 胜出）
+    expect(q(row, '[data-vet-source-badge="workspace"]').hidden).toBe(false)
+    const hint = q(row, '[data-vet-merged-hint]')
+    expect(hint.hidden).toBe(false)
+    expect(hint.textContent).toBe(zhMessages.settingsTabs.mergedValueHint)
+  })
+
+  it('scope=workspace：同快照无「用户层」提示（徽章照常——提示仅用户层视角）', async () => {
+    const { store, request } = assemble()
+    store.userValues.tabout = true
+    store.wsValues.tabout = false
+    const fake = fakeFacet({ scope: 'workspace', hasWorkspace: true })
+    const { root } = await mountPage(request, { facet: fake.facet })
+    const row = q(root, '[data-vet-setting-key="tabout"]')
+    expect((rowControl(root, 'tabout') as HTMLInputElement).checked).toBe(false)
+    expect(q(row, '[data-vet-source-badge="workspace"]').hidden).toBe(false)
+    expect(q(row, '[data-vet-merged-hint]').hidden).toBe(true)
+  })
+
+  it('作用域切换驱动提示显隐：user→workspace 后提示隐藏（徽章保持）', async () => {
+    const { store, request } = assemble()
+    store.userValues.tabout = true
+    store.wsValues.tabout = false
+    const fake = fakeFacet()
+    const { root } = await mountPage(request, { facet: fake.facet })
+    expect(q(root, '[data-vet-setting-key="tabout"] [data-vet-merged-hint]').hidden).toBe(false)
+    fake.apply({ scope: 'workspace', hasWorkspace: true })
+    await flush()
+    expect(q(root, '[data-vet-setting-key="tabout"] [data-vet-merged-hint]').hidden).toBe(true)
     expect(q(root, '[data-vet-setting-key="tabout"] [data-vet-source-badge]').hidden).toBe(false)
   })
 })

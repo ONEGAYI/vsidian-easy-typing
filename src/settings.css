@@ -820,3 +820,47 @@
   outline-offset: 2px;
   border-radius: 4px;
 }
+
+/* ===== 审查轮 R2-P2-2：首读失败横幅与重试 ===== */
+.vsidian-easy-typing-load-error {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+  border-radius: 4px;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  font-size: 12px;
+}
+
+/* hidden 自防（同 tab-panel 口径：display:flex 覆盖 UA [hidden]） */
+.vsidian-easy-typing-load-error[hidden] {
+  display: none;
+}
+
+.vsidian-easy-typing-load-error-retry {
+  padding: 2px 10px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 4px;
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #ffffff);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.vsidian-easy-typing-load-error-retry:hover {
+  background: var(--vscode-button-hoverBackground, #1177bb);
+}
+
+.vsidian-easy-typing-load-error-retry:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 1px;
+}
+
+/* ===== 审查轮 R2-P2-1：用户层合并值提示（徽章同排的行内说明） ===== */
+.vsidian-easy-typing-merged-hint {
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  font-size: 11px;
+  font-weight: 400;
+}

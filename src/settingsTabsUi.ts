@@ -21,6 +21,11 @@
 // - 规则四分区：rulesUi 的 hosts 模式挂入对应 panel（分区 DOM 结构与
 //   交互不变，spacing 防御网时序不变——面板常驻 DOM、非活动 [hidden]）。
 //
+// 【审查轮 R2（PR #59 review）】控件创建即应用定义默认值 + 首读失败三态
+//   （横幅/重试/行禁用）；24 控件统一可访问名称（aria-labelledby 标题 +
+//   aria-describedby 说明）；spacing 分区用户级标注；写失败强制回滚键单槽
+//   扩集合；用户层视角的合并值提示（平台按层读取缺口过渡处置）。
+//
 // 【Tab 态】内存保存，默认编辑增强，页面卸载即复位（决策 5/6）。
 // switchTab 为受控切换 API（外部驱动面）；搜索定位经内部 activateTab
 // 同一受控路径切页。
@@ -149,6 +154,10 @@ interface SettingRowEntry {
   badge: HTMLElement
   /** 清除工作区覆盖动作（恢复继承用户默认；与徽章同显隐） */
   clearBtn: HTMLButtonElement
+  /** 用户层合并值提示（审查轮 R2-P2-1 过渡处置）：scope=user 且
+   *  sources[key]=workspace 时呈现——显示值是工作区覆盖后的合并值，用户层
+   *  原值待平台按层读取（ONEGAYI/vsidian#590） */
+  mergedHint: HTMLElement
 }
 
 export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOptions): SettingsPageViewHandle {
@@ -161,10 +170,6 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
   let disposed = false
   let statusTimer: unknown = null
   let active: SettingsTabId = DEFAULT_SETTINGS_TAB
-  /** effective 快照（get 返回；写后重拉替换） */
-  let currentValues: Readonly<Record<string, unknown>> = {}
-  /** sources 快照（get 返回的来源分层 default/user/workspace；徽章驱动） */
-  let currentSources: Readonly<Record<string, string>> = {}
 
   /** DOM 构造糖（与 rulesUi 同款；模块内自有副本避免跨模块导出内部糖） */
   function el<K extends keyof HTMLElementTagNameMap>(
@@ -186,10 +191,25 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
   const defs = buildSettingDefinitions(m)
   const defByKey = new Map(defs.map((def) => [def.key, def]))
   const rows = new Map<string, SettingRowEntry>()
-  /** 自动格式化 Tab 下游行（联动置灰对象；主控键除外） */
+  /** 自动格式化 Tab 下下行（联动置灰对象；主控键除外） */
   const masterDownstreamKeys = cardsForTab('auto-format')
     .flatMap((card) => [...card.settingKeys])
     .filter((key) => key !== MASTER_KEY)
+
+  /** effective 快照（get 返回；写后重拉替换）。初值 = 定义默认值（审查轮
+   *  R2-P2-2）：装载窗口与首读失败期间控件呈现默认值而非浏览器原生初值，
+   *  联动同步初始化；get 成功后替换为存储真值 */
+  let currentValues: Readonly<Record<string, unknown>> = Object.fromEntries(
+    defs.map((def) => [def.key, def.default]),
+  )
+  /** sources 快照（get 返回的来源分层 default/user/workspace；徽章驱动） */
+  let currentSources: Readonly<Record<string, string>> = {}
+  /** 设置读取态（审查轮 R2-P2-2 三态）：loading（默认值在场）→ loaded /
+   *  failed（首 get 拒绝或抛错 → 横幅 + 重试 + 行禁用，重试成功恢复）。
+   *  已成功读取后的后续 get 失败不回 failed——保持既有静默语义（值是已读
+   *  真值而非默认值，写失败路径另有状态行提示） */
+  let settingsLoaded = false
+  let settingsLoadFailed = false
 
   // ===== 静态骨架：hero / tablist / 状态行 / 面板容器 =====
 
@@ -218,8 +238,23 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
   status.setAttribute('data-vet-status', '')
   status.setAttribute('role', 'status')
 
+  /** 装载失败横幅（审查轮 R2-P2-2）：首 get 拒绝/抛错 → 错误提示 + 重试
+   *  入口；读取成功后隐藏。role=alert 使恢复对读屏可闻；与状态行分工——
+   *  状态行 6s 自动清除，横幅承载持续性失败态 */
+  const loadError = el('div', `${CLS}-load-error`)
+  loadError.setAttribute('data-vet-load-error', '')
+  loadError.setAttribute('role', 'alert')
+  loadError.hidden = true
+  const loadErrorRetry = el('button', `${CLS}-load-error-retry`, t.loadFailedRetry) as HTMLButtonElement
+  loadErrorRetry.type = 'button'
+  loadErrorRetry.setAttribute('data-vet-action', 'retry-load')
+  loadErrorRetry.addEventListener('click', () => {
+    void refreshSettings()
+  })
+  loadError.append(el('span', `${CLS}-load-error-text`, t.loadFailedText), loadErrorRetry)
+
   const panelsWrap = el('div', `${CLS}-settings-panels`)
-  root.append(hero, nav, status, panelsWrap)
+  root.append(hero, nav, status, loadError, panelsWrap)
 
   function showStatus(kind: 'info' | 'failed' | 'success', text: string): void {
     // dispose 后经 statusSink 到达的规则侧在途提示直接丢弃（审查轮 R1-B3）：
@@ -350,8 +385,10 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
   }
 
   /** 联动置灰（决策 11，纯 UI 态不改变写入）：总开关关 → 自动格式化 Tab
-   *  下游行置灰；userDefinedRegExp 再受正则开关二级联动 */
+   *  下游行置灰；userDefinedRegExp 再受正则开关二级联动。装载失败锁定
+   *  期间（审查轮 R2-P2-2）联动让位——全部行已禁用，恢复后由本函数接管 */
   function applyLinkage(): void {
+    if (settingsLoadFailed) return
     const masterOn = currentValues[MASTER_KEY] !== false
     const regSwitchOn = currentValues[REGEXP_SWITCH_KEY] !== false
     for (const key of masterDownstreamKeys) {
@@ -372,7 +409,11 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
     row.setAttribute('data-vet-setting-key', def.key)
     const info = el('div', `${CLS}-setting-info`)
     const nameLine = el('div', `${CLS}-setting-name-line`)
-    nameLine.append(el('span', `${CLS}-setting-name`, def.title))
+    // 可访问名称锚点（审查轮 R2-P2-4，WCAG 4.1.2/F68）：标题 span 唯一 id，
+    // 全部控件统一 aria-labelledby 指向（checkbox 一并统一，不另用 aria-label）
+    const nameSpan = el('span', `${CLS}-setting-name`, def.title)
+    nameSpan.id = `vsidian-easy-typing-setting-name-${def.key}`
+    nameLine.append(nameSpan)
     // 工作区覆盖徽章 + 清除动作（sources 驱动；facet 缺席恒隐藏——降级
     // 形态无作用域相关 UI。清除语义 = 恢复继承用户默认，非恢复出厂）
     const badge = el('span', `${CLS}-source-badge`, t.badgeWorkspaceOverride)
@@ -387,9 +428,18 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
     clearBtn.addEventListener('click', () => {
       void clearOverride(def.key)
     })
-    nameLine.append(badge, clearBtn)
+    // 用户层合并值提示（审查轮 R2-P2-1）：用户层视角下被工作区覆盖的行呈现
+    const mergedHint = el('span', `${CLS}-merged-hint`, t.mergedValueHint)
+    mergedHint.setAttribute('data-vet-merged-hint', '')
+    mergedHint.hidden = true
+    nameLine.append(badge, clearBtn, mergedHint)
     info.append(nameLine)
-    if (def.description !== undefined) info.append(el('div', `${CLS}-setting-desc`, def.description))
+    if (def.description !== undefined) {
+      // 说明 span 唯一 id：控件 aria-describedby 指向（审查轮 R2-P2-4）
+      const descSpan = el('div', `${CLS}-setting-desc`, def.description)
+      descSpan.id = `vsidian-easy-typing-setting-desc-${def.key}`
+      info.append(descSpan)
+    }
     row.append(info)
     const controlWrap = el('div', `${CLS}-setting-control`)
     let control: SettingRowEntry['control']
@@ -397,7 +447,6 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
       const label = el('label', `${CLS}-toggle`)
       const input = el('input') as HTMLInputElement
       input.type = 'checkbox'
-      input.setAttribute('aria-label', def.title)
       control = input
       label.append(input)
       controlWrap.append(label)
@@ -427,12 +476,18 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
       control = input
       controlWrap.append(input)
     }
+    // 可访问名称统一收口（审查轮 R2-P2-4）：全部 24 控件 aria-labelledby →
+    // 标题 span；说明在场时 aria-describedby → 说明 span
+    control.setAttribute('aria-labelledby', nameSpan.id)
+    if (def.description !== undefined) {
+      control.setAttribute('aria-describedby', `vsidian-easy-typing-setting-desc-${def.key}`)
+    }
     row.append(controlWrap)
     // 写入触发 = change（失焦/回车），非逐键——避免通道风暴
     control.addEventListener('change', () => {
       void write(def.key, readControlValue(def, control))
     })
-    rows.set(def.key, { def, row, control, badge, clearBtn })
+    rows.set(def.key, { def, row, control, badge, clearBtn, mergedHint })
     return row
   }
 
@@ -463,6 +518,16 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
     return note
   }
 
+  /** spacing 分区用户级标注（审查轮 R2-P2-3）：语言间空格策略与自定义文字
+   *  类别数据写全局 rule-state（用户级），但分区挂在自动格式化 Tab、与按
+   *  作用域保存的普通设置行紧邻——标注只挂分区近旁（复用规则区标注文案
+   *  形态），不把整个 Tab 标为用户级 */
+  function buildSpacingScopeNote(): HTMLElement {
+    const note = el('p', `${CLS}-rules-scope-note`, t.spacingScopeNote)
+    note.setAttribute('data-vet-spacing-scope', 'user')
+    return note
+  }
+
   for (const tabId of SETTINGS_TAB_IDS) {
     const panelEl = panels.get(tabId)
     if (!panelEl) continue
@@ -473,8 +538,9 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
       case 'auto-format':
         for (const card of cardsForTab(tabId)) {
           panelEl.append(buildCard(card))
-          // 语言间空格策略分区（rulesUi spacing）随上游排在总开关卡之后
-          if (card.cardKey === 'autoFormat') panelEl.append(spacingHost)
+          // 语言间空格策略分区（rulesUi spacing）随上游排在总开关卡之后；
+          // 分区数据用户级 → 标注挂分区近旁（审查轮 R2-P2-3）
+          if (card.cardKey === 'autoFormat') panelEl.append(buildSpacingScopeNote(), spacingHost)
         }
         break
       case 'builtin-rules':
@@ -490,6 +556,12 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
         break
     }
   }
+
+  // 控件创建即应用定义默认值（审查轮 R2-P2-2）：装载窗口（get 在途）与
+  // 首读失败期间不落浏览器原生初值（checkbox 未选 / enum 首项 / 空文本），
+  // 联动同步初始化；get 成功后由 refreshSettings 替换为存储真值
+  for (const entry of rows.values()) applyValue(entry, entry.def.default)
+  applyLinkage()
 
   // ===== 设置读写通道（决策 12：写后重拉刷新；目标层跟随作用域） =====
 
@@ -594,23 +666,51 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
   /** 来源徽章显隐（写后/清除后/作用域切换后的重拉统一走此处）：仅
    *  facet 在场且 sources[key] === 'workspace' 的行呈现徽章与清除入口。
    *  hasWorkspace === false 时平台快照不会出现 workspace 来源（工作区层
-   *  不可用），入口自然不出现；写入/清除遭 no-workspace 拒绝经状态行兜底 */
+   *  不可用），入口自然不出现；写入/清除遭 no-workspace 拒绝经状态行兜底。
+   *  用户层视角（审查轮 R2-P2-1 过渡处置）：scope=user 的覆盖行另呈合并值
+   *  提示——SDK get() 仅合并语义，用户层原值按层读取待 ONEGAYI/vsidian#590 */
   function applySources(): void {
     const scopeUiEnabled = scopeFacet !== undefined
+    const viewingUserScope = scopeFacet !== undefined && scopeFacet.scopeState().scope === 'user'
     for (const entry of rows.values()) {
       const overridden = scopeUiEnabled && currentSources[entry.def.key] === 'workspace'
       entry.badge.hidden = !overridden
       entry.clearBtn.hidden = !overridden
+      entry.mergedHint.hidden = !(viewingUserScope && overridden)
+    }
+  }
+
+  /** 进入失败态（审查轮 R2-P2-2）：横幅 + 状态行提示 + 全部设置行禁用
+   *  （未读到的值不当已保存值编辑；规则分区走独立通道不受影响） */
+  function enterLoadFailedState(): void {
+    if (settingsLoadFailed || disposed) return
+    settingsLoadFailed = true
+    loadError.hidden = false
+    showStatus('failed', t.loadFailedText)
+    for (const entry of rows.values()) {
+      setRowDisabled(entry, true, t.loadFailedRowHint)
+    }
+  }
+
+  /** 退出失败态：横幅隐藏 + 全行恢复可编辑（联动紧随其后接管禁用语义） */
+  function exitLoadFailedState(): void {
+    settingsLoadFailed = false
+    loadError.hidden = true
+    for (const entry of rows.values()) {
+      setRowDisabled(entry, false, null)
     }
   }
 
   /** 重拉发起序（到达序令牌，审查轮 P2-3）：结算时只应用最新一笔——
    *  跨笔乱序回包（旧 get 迟到）不覆盖新快照 */
   let refreshSeq = 0
-  /** 待强制回滚键（审查轮 R1-B1）：写/清除失败对账——失败的重拉必须对
-   *  该键穿透聚焦草稿保护；重拉应用值时一次性消费，未被本笔结算消费的
-   *  （乱序弃置）留待下一笔真正结算的重拉 */
-  let pendingForceRollbackKey: string | null = null
+  /** 待强制回滚键集合（审查轮 R1-B1 引入单槽、R2-P3-5 扩为集合）：写/
+   *  清除失败对账——失败的重拉必须对该键穿透聚焦草稿保护；集合由真正
+   *  结算的刷新（未被序号弃置、走到应用循环的那笔）统一消费并清空，
+   *  弃置/异常/提前 return 不消费、留待下一笔结算兜底。集合语义堵住单槽
+   *  反例：A、B 先后失败且 A 聚焦时，旧槽被 B 覆盖 + 聚焦保护使 A 漏回滚
+   *  （「change 伴随焦点转移」不保证「异步对账时焦点在别处」） */
+  const pendingForceRollbackKeys = new Set<string>()
 
   async function refreshSettings(): Promise<void> {
     const seq = ++refreshSeq
@@ -619,28 +719,36 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
       try {
         outcome = await options.channel.request(SETTINGS_TOPIC.get, null)
       } catch {
-        // 通道异常静默（初值回落默认；后续写入失败有状态行提示面）；
-        // debugLog 留痕（审查轮 R1-B4：get 失败原本完全无诊断）
+        // 通道异常：首读失败进失败态（横幅 + 重试 + 行禁用，R2-P2-2）；已
+        // 成功读取后保持上次值（静默语义）；debugLog 留痕（R1-B4）
         debugLog('settings get channel error — refresh dropped, controls keep last state')
+        if (!settingsLoaded) enterLoadFailedState()
         return
       }
       if (disposed) return
       if (outcome.ok !== true) {
-        // 同上：静默降级但留诊断痕迹（debug 门控，非用户可见面）
+        // 同上：拒绝路径与异常同口径
         debugLog('settings get rejected:', outcome.reason ?? 'unknown')
+        if (!settingsLoaded) enterLoadFailedState()
         return
       }
       if (seq !== refreshSeq) return // 本笔挂起期间有更新刷新发起：陈旧快照弃置
       const snapshot = outcome.result as { effective?: unknown; sources?: unknown } | null
       const effective = snapshot?.effective
-      if (effective === null || typeof effective !== 'object') return
+      if (effective === null || typeof effective !== 'object') {
+        // 快照形状非法：与失败同口径（首读时行保持默认值 + 失败态）
+        if (!settingsLoaded) enterLoadFailedState()
+        return
+      }
+      settingsLoaded = true
+      exitLoadFailedState()
       currentValues = effective as Readonly<Record<string, unknown>>
       const sources = snapshot?.sources
       currentSources = sources !== null && typeof sources === 'object' ? (sources as Readonly<Record<string, string>>) : {}
       for (const entry of rows.values()) {
-        applyValue(entry, currentValues[entry.def.key] ?? entry.def.default, entry.def.key === pendingForceRollbackKey)
+        applyValue(entry, currentValues[entry.def.key] ?? entry.def.default, pendingForceRollbackKeys.has(entry.def.key))
       }
-      pendingForceRollbackKey = null // 失败对账强制回滚一次性消费
+      pendingForceRollbackKeys.clear() // 失败对账强制回滚一次性消费（结算笔清空集合）
       applyLinkage()
       applySources()
     } finally {
@@ -655,20 +763,20 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
     try {
       outcome = await options.channel.request(SETTINGS_TOPIC.clearOverride, { key })
     } catch {
-      // 失败对账：重拉时对该键强制回滚（穿透聚焦草稿保护，审查轮 R1-B1）
-      pendingForceRollbackKey = key
+      // 失败对账：重拉时对该键强制回滚（穿透聚焦草稿保护，R1-B1/R2-P3-5 集合）
+      pendingForceRollbackKeys.add(key)
       if (!disposed) showStatus('failed', `${t.statusClearOverrideFailed}：io-failed`)
       await refreshSettings()
       return
     }
     if (disposed) return
     if (outcome.ok !== true) {
-      pendingForceRollbackKey = key
+      pendingForceRollbackKeys.add(key)
       showStatus('failed', `${t.statusClearOverrideFailed}：${outcome.reason ?? 'rejected'}`)
     } else {
       const inner = outcome.result as { ok?: boolean; reason?: string } | null
       if (inner?.ok === false) {
-        pendingForceRollbackKey = key
+        pendingForceRollbackKeys.add(key)
         showStatus('failed', `${t.statusClearOverrideFailed}：${inner.reason ?? 'store-write-failed'}`)
       } else {
         showStatus('success', t.statusOverrideCleared)
@@ -683,20 +791,20 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
     try {
       outcome = await options.channel.request(SETTINGS_TOPIC.update, { scope: writeScope(), patch: { [key]: value } })
     } catch {
-      // 失败对账：重拉时对该键强制回滚（穿透聚焦草稿保护，审查轮 R1-B1）
-      pendingForceRollbackKey = key
+      // 失败对账：重拉时对该键强制回滚（穿透聚焦草稿保护，R1-B1/R2-P3-5 集合）
+      pendingForceRollbackKeys.add(key)
       if (!disposed) showStatus('failed', `${t.statusUpdateFailed}：io-failed`)
       await refreshSettings()
       return
     }
     if (disposed) return
     if (outcome.ok !== true) {
-      pendingForceRollbackKey = key
+      pendingForceRollbackKeys.add(key)
       showStatus('failed', `${t.statusUpdateFailed}：${outcome.reason ?? 'rejected'}`)
     } else {
       const inner = outcome.result as { ok?: boolean; reason?: string } | null
       if (inner?.ok === false) {
-        pendingForceRollbackKey = key
+        pendingForceRollbackKeys.add(key)
         showStatus('failed', `${t.statusUpdateFailed}：${inner.reason ?? 'store-write-failed'}`)
       }
     }

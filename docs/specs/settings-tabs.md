@@ -27,8 +27,11 @@
 ## 设置行渲染与写入链路
 
 - **控件形态由定义元数据驱动**：boolean → checkbox；string enum → select（档位文案用 `enumLabels` 双语标签，缺失回退枚举值本身）；普通 string → text；`multiline` string 与 array → textarea（array 每行一项）。行文案用既有 `settings[key].name/desc`，不另造第二份。
+- **控件创建即应用定义默认值**（`src/settings/defaults.ts` 同源，不经 get）：装载窗口（get 在途）与首读失败期间不落浏览器原生初值（checkbox 未选 / enum 首项 / 空文本）；autoFormat 联动同步初始化（显示的总开关状态与下游可用性一致）。
+- **首读失败三态**（审查轮 R2）：loading（默认值在场，无骨架屏）→ loaded（正常）；failed（首 get 拒绝、抛错或快照形状非法）→ 失败横幅（`role=alert`，错误提示 + 重试入口）+ 共享状态行 failed 提示 + **全部 24 设置行禁用**（disabled/aria-disabled + 行级提示——未读到的值不当已保存值编辑；规则分区走独立通道不受影响）；重试成功恢复可编辑并由联动接管禁用语义。已成功读取后的后续 get 失败保持既有静默语义（值是已读真值而非默认值，写失败路径另有状态行提示）。
+- **可访问名称**（审查轮 R2，WCAG 4.1.2 / F68）：全部 24 控件统一 `aria-labelledby` 指向行内标题 span 唯一 id（`vsidian-easy-typing-setting-name-<key>`，checkbox 一并统一不另用 aria-label）；说明 span 唯一 id（`vsidian-easy-typing-setting-desc-<key>`）+ `aria-describedby`。
 - **写入触发 = `change` 事件**（失焦/回车，非逐键——避免通道风暴）；excludeFiles 写入按行拆分、逐行 trim、丢弃空行。
-- **读写通道**：初值/回显经 `SETTINGS_TOPIC.get` 的 `effective`（默认回填后的生效值）；写入经 `SETTINGS_TOPIC.update`，载荷 `{scope, patch}`（scope 见下节作用域）；**写后重拉刷新**（成功同步存储真值，失败把控件拉回，失败 reason 经状态行提示——含 `no-workspace` 拒绝码）。重拉两条确定性语义：**跳过聚焦中控件**（当前编辑中的草稿不被写后/作用域切换/清除覆盖的重拉覆盖，失焦后下一次重拉照常应用存储真值）与**到达序令牌**（并发重拉按发起序自增令牌结算，挂起旧快照迟到回包弃置，不覆盖新快照）。
+- **读写通道**：初值/回显经 `SETTINGS_TOPIC.get` 的 `effective`（默认回填后的生效值）；写入经 `SETTINGS_TOPIC.update`，载荷 `{scope, patch}`（scope 见下节作用域）；**写后重拉刷新**（成功同步存储真值，失败把控件拉回，失败 reason 经状态行提示——含 `no-workspace` 拒绝码）。重拉两条确定性语义：**跳过聚焦中控件**（当前编辑中的草稿不被写后/作用域切换/清除覆盖的重拉覆盖，失焦后下一次重拉照常应用存储真值）与**到达序令牌**（并发重拉按发起序自增令牌结算，挂起旧快照迟到回包弃置，不覆盖新快照）。写/清除失败的强制回滚对账键是**集合**：连续多次失败的全部未对账键由真正结算的刷新（未被序号弃置、走到应用循环的那笔）统一强制回滚并清空集合；弃置/异常/提前 return 不消费，留待下一笔结算兜底（审查轮 R2 修单槽反例：A、B 先后失败且 A 聚焦时，旧槽被 B 覆盖 + 聚焦保护使 A 漏回滚）。
 - **联动置灰（纯 UI 态，不改变写入）**：`autoFormat` 总开关关闭 → 自动格式化 Tab 下游**设置行**置灰（`aria-disabled` + 类名 + tooltip「总开关已关闭，此设置暂不可用」），总开关自身可用；`userDefinedRegExp` 再受 `userDefinedRegSwitch` 二级联动。打开总开关后下行随写后重拉恢复可用。
 
 ## 作用域语义（settingsContext facet 消费）
@@ -36,7 +39,9 @@
 - **组件消费观察面，不自绘作用域切换器**：作用域选择器（用户默认 / 当前工作区）由平台外壳持有，本组件只消费 `settingsContext.scopeState()` / `onScopeChange`（平台等值不分发）。
 - **写入目标层跟随**：`SETTINGS_TOPIC.update` 的 scope 取 `scopeState().scope`——切到工作区层后写入落 workspace 层，切回用户层落 user 层；`onScopeChange` 分发后重拉对齐显示（effective 与来源徽章都随 layers 解析变化）。`hasWorkspace === false` 时平台快照不出现 workspace 来源，覆盖入口自然不出现；写入/清除遭 `no-workspace` 拒绝经状态行兜底并回滚控件。
 - **行级来源徽章 + 清除覆盖**：仅 facet 在场且 `sources[key] === 'workspace'` 的行呈现「工作区覆盖」徽章与「清除覆盖」动作；**清除覆盖 = 恢复继承用户默认值，不是恢复出厂默认**（`SETTINGS_TOPIC.clearOverride`，平台 `clearWorkspaceOverride` 语义），清除后重拉（徽章消失 + effective 回退用户层）。
+- **用户层视角的合并值提示**（审查轮 R2 过渡处置）：`scope === 'user'` 且 `sources[key] === 'workspace'` 的行在徽章之外追加合并值提示——显示值是工作区覆盖后的合并值、用户层原值待平台按层读取能力（SDK `get()` 仅合并语义，见已知边界）。scope=workspace 时无此提示（工作区层视角直接编辑覆盖值）。
 - **规则 Tab 用户级标注**：规则/富结构存储是 globalStorage 语义用户级（无工作区作用域），内置/自定义规则 panel 顶部静态标注「用户级数据：全局共享，不随工作区隔离」；规则区不出现任何作用域 UI。标注是数据级说明，facet 降级形态下仍在。
+- **spacing 分区用户级标注**（审查轮 R2）：自动格式化 Tab 的「语言间空格策略」分区（语言对策略与自定义文字类别）数据写全局 rule-state（用户级），与相邻按作用域保存的普通设置行不同层——标注挂分区近旁（复用规则区标注文案形态），**不把整个自动格式化 Tab 标为用户级**。
 - **facet 判空降级**：`settingsContext` 缺席（旧宿主 / 编辑器页形态）→ 无作用域相关 UI（徽章/清除入口不呈现——节点常驻但 `hidden`，不进可访问树），写入目标层固定 `'user'`，页面其余功能完整可用。
 - **清单下界**：`vsidianAddon.api ^1.1.0`（settingsContext 自 vsidian 附加组件 API 1.1.0 发行；`^1.1.0` 仍包含宿主 1.2.0，兼容判定不变）。
 
@@ -69,8 +74,8 @@
 ## 验收口径（票面映射）
 
 - **归属映射纯函数**：`test/settings-tabs-model.test.ts`——24 键全覆盖无遗漏、excludeFiles 特例归自动格式化、卡片键并集 = 24 键恰好一次、组路由与卡片锚点两套口径咬合、Tab 计数（6/14/4）、总开关是 autoFormat 卡首键、组未映射的已注册定义判空降级不抛错。
-- **Tab 框架与设置行 DOM**：`test/settings-tabs-ui.test.ts`——hero 链接、tablist aria 配对与键盘导航、面板常驻 hidden 切换、24 行渲染与控件形态矩阵、行文案来自既有 i18n、初值经 effective、写入通道（scope user + 写后重拉 + change 触发 + excludeFiles 拆行）、写入失败状态行回滚、联动置灰矩阵（含二级联动与恢复）、规则四分区挂入对应 panel、dispose；审查轮加固——共享状态行单计时器（规则分区提示经 statusSink 上交，先到计时器不提前清除后到提示）、重拉跳过聚焦中控件（草稿保留，失焦后回真值）、并发重拉到达序令牌（旧快照迟到不覆盖新快照）、enumLabelText 直值形态（LocalizedText 直值字符串直返）。
-- **作用域接入**：`test/settings-tabs-scope.test.ts`——facet 判空降级（无作用域 UI + 写入固定 user）、写入目标层跟随 scopeState、onScopeChange 重拉对齐、dispose 退订、no-workspace 拒绝提示与控件回滚、规则 Tab 用户级标注（含降级形态仍在）、workspace 徽章显隐、清除覆盖成功（载荷/重拉/回退用户层）/失败（reason 提示、徽章保持）。
+- **Tab 框架与设置行 DOM**：`test/settings-tabs-ui.test.ts`——hero 链接、tablist aria 配对与键盘导航、面板常驻 hidden 切换、24 行渲染与控件形态矩阵、行文案来自既有 i18n、初值经 effective、写入通道（scope user + 写后重拉 + change 触发 + excludeFiles 拆行）、写入失败状态行回滚、联动置灰矩阵（含二级联动与恢复）、规则四分区挂入对应 panel、dispose；审查轮加固——共享状态行单计时器（规则分区提示经 statusSink 上交，先到计时器不提前清除后到提示）、重拉跳过聚焦中控件（草稿保留，失焦后回真值）、并发重拉到达序令牌（旧快照迟到不覆盖新快照）、enumLabelText 直值形态（LocalizedText 直值字符串直返）；审查第二轮加固——装载窗口默认值在场 + 联动同步、首 get 拒绝/抛错失败三态（默认值 + 横幅重试 + 全行禁用 + 规则分区不受影响 + 重试恢复）、24 控件可访问名称（aria-labelledby 标题 / aria-describedby 说明，id 唯一）、失败回滚键集合（A、B 先后失败 + A 聚焦 + 旧刷新弃置 → 一并强制回滚）。
+- **作用域接入**：`test/settings-tabs-scope.test.ts`——facet 判空降级（无作用域 UI + 写入固定 user）、写入目标层跟随 scopeState、onScopeChange 重拉对齐、dispose 退订、no-workspace 拒绝提示与控件回滚、规则 Tab 用户级标注（含降级形态仍在）、workspace 徽章显隐、清除覆盖成功（载荷/重拉/回退用户层）/失败（reason 提示、徽章保持）；审查第二轮加固——spacing 分区用户级标注（挂分区近旁、不泛化整 Tab）、用户层合并值提示（scope=user 显示合并值 + 徽章 + 提示；scope=workspace 无提示；作用域切换驱动显隐——过渡语义钉住，待 ONEGAYI/vsidian#590）。
 - **搜索定位**：`test/settings-tabs-locate.test.ts`——首开回放（订阅回放 + 初值双投只落一次高亮）、已开立即交付（不触发重拉）、def/group 两类映射与组特例（general 锚排除文件卡）、未知键静默降级、重复目标重入、换目标清旧、null 清除（含排队丢弃）、get 挂起排队补投、dispose 退订、与作用域重拉共存、facet 缺席无定位消费痕迹。
 - **真实观感归人工清单**：暗/亮主题真实绘制、中英双语、长内容滚动、物理键盘 Tab 导航、作用域切换/清除覆盖实操、全局搜索定位实操（含重复点击重新滚动）、规则四分区回归——[manual-verification.md](../manual-verification.md) 二十二节（A83–A88）。
 - `npm run compile`（三产物构建 + `tsc --noEmit`）通过；全部测试绿，不回归。
@@ -78,7 +83,8 @@
 ## 已知边界
 
 - **Tab 态不持久化**：内存态，页面卸载即复位默认「编辑增强」；搜索定位的订阅回放可覆盖首开主要 UX 损失。
-- **设置值无推送通道**：页面在每次写后/清除后/作用域切换后重拉 `SETTINGS_TOPIC.get` 刷新；跨窗口实时同步不做（平台作用域推送同款边界，见 settings-mapping.md §六）。写入失败（`no-workspace` 等 reason）经状态行提示。残余边界：重拉跳过聚焦中控件（保草稿语义），外部变更在焦点离开该控件前不呈现于该行——焦点离开后的下一次重拉（写后/清除后/作用域切换任一触发）对齐；写失败的强制回滚对账键是单槽位（连续两次失败且首笔重拉长挂起时，先失败键的对账转由「焦点已转移 → 非聚焦正常回写」兜底，真实浏览器 change 伴随焦点转移使该兜底恒成立）。
+- **设置值无推送通道**：页面在每次写后/清除后/作用域切换后重拉 `SETTINGS_TOPIC.get` 刷新；跨窗口实时同步不做（平台作用域推送同款边界，见 settings-mapping.md §六）。写入失败（`no-workspace` 等 reason）经状态行提示。残余边界：重拉跳过聚焦中控件（保草稿语义），外部变更在焦点离开该控件前不呈现于该行——焦点离开后的下一次重拉（写后/清除后/作用域切换任一触发）对齐；写/清除失败的强制回滚对账键是集合（连续多次失败的全部未对账键在真正结算的刷新中统一强制回滚，弃置/异常不消费、留待下一笔结算兜底——审查轮 R2 起单槽语义废止）。
+- **用户默认层不显示用户层原值（平台缺口，过渡处置）**：SDK `get()` 仅合并语义（返回 `{values, sources}`，用户层被工作区覆盖的原值不可读），scope=user 时工作区覆盖行只能显示合并值 + 徽章 + 合并值提示。按层读取依赖平台票 ONEGAYI/vsidian#590（「附加组件设置 SDK 暴露按层读取」），落地后回收合并值提示并以用户层真值呈现。过渡期写入语义不变：scope=user 写入落用户层（被覆盖时显示不随之变化属预期）。
 - **spacing 卡片不随 autoFormat 总开关联动置灰**：语言间空格策略分区是规则域渲染（rulesUi spacing），与设置行（设置域）渲染分离；联动置灰仅覆盖自动格式化 Tab 的设置行。总开关关闭时 spacing 分区仍可编辑，其生效由引擎侧 autoFormat 总门把守。
 - **定位补投以首次 `get` 结算为闸**：get 结算成败皆算（失败时行以默认形态在场）；若通道挂起无响应（promise 永不落定），首开排队目标停留在排队态不投递——组件不为 get 另设超时，也不绕过结算直接投递。
 - **facet 缺席 = 降级形态**：旧宿主 / 编辑器页形态下无作用域相关 UI、无定位消费，写入目标层固定 `'user'`；页面其余功能完整可用（`^1.1.0` 下界保证发行宿主恒有 facet，降级形态仅为防御性兼容与测试注入面）。

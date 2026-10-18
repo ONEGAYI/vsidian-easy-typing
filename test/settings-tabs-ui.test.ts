@@ -836,3 +836,174 @@ describe('面板 hidden 自防样式契约（审查轮 R1-F1/B2）', () => {
     expect(css).toMatch(/\.vsidian-easy-typing-settings-tab-panel\[hidden\]\s*\{[^}]*display:\s*none/)
   })
 })
+
+// ===== 审查第二轮修复（PR #59 review，2026-10-18）=====
+
+/** 首笔 get 可控失败通道（R2-P2-2）：failing 期间 get 拒绝/抛错，recover 后放行 */
+function flakyGetChannel(
+  base: ReturnType<typeof assemble>['request'],
+  mode: 'reject' | 'throw',
+) {
+  let failing = true
+  const request = async (
+    topic: string,
+    payload: unknown,
+  ): Promise<{ ok: true; result: unknown } | { ok: false; reason: string }> => {
+    if (topic === SETTINGS_TOPIC.get && failing) {
+      if (mode === 'throw') throw new Error('io-down')
+      return { ok: false, reason: 'io-down' }
+    }
+    return base(topic, payload)
+  }
+  return {
+    request,
+    recover(): void {
+      failing = false
+    },
+  }
+}
+
+describe('首次读取失败三态（审查轮 R2-P2-2：默认值在场 + 失败锁定 + 重试）', () => {
+  it('装载窗口（get 挂起）：控件已显示定义默认值且联动同步（不落浏览器原生初值）', async () => {
+    const { store, request, holdNextGet } = assemble()
+    // 存储真值先就位（mock 的 get 快照在调用时捕获，挂起门只延迟结算）
+    store.values.autoFormat = false
+    const release = holdNextGet()
+    const { root } = await mountPage(request)
+    // 定义默认值在场（不经 get）：checkbox 浏览器原生为未选、enum 原生落首项、
+    // textarea 原生为空——三者均应为 defaults.ts 的默认值
+    expect((rowControl(root, 'autoFormat') as HTMLInputElement).checked).toBe(true)
+    expect((rowControl(root, 'autoCapital') as HTMLInputElement).checked).toBe(false)
+    expect((rowControl(root, 'inlineCodeSpaceMode') as HTMLSelectElement).value).toBe('soft')
+    expect((rowControl(root, 'prefixDictionary') as HTMLTextAreaElement).value).toBe(
+      DEFAULT_EFFECTIVE_SETTINGS.prefixDictionary,
+    )
+    // 联动同步：默认总开关开 → 下游可编辑（与显示的总开关状态一致）
+    expect(rowControl(root, 'autoFormatPaste').disabled).toBe(false)
+    expect(rowControl(root, 'userDefinedRegExp').disabled).toBe(false)
+    // get 返回后照常应用存储真值（默认值只是装载窗口的诚实呈现）
+    release()
+    await flush()
+    expect((rowControl(root, 'autoFormat') as HTMLInputElement).checked).toBe(false)
+    expect(rowControl(root, 'autoFormatPaste').disabled).toBe(true)
+  })
+
+  it('首 get 拒绝：默认值在场 + 失败横幅与重试 + 全部设置行禁用 + 规则分区不受影响；重试成功恢复', async () => {
+    const base = assemble()
+    const flaky = flakyGetChannel(base.request, 'reject')
+    const { root } = await mountPage(flaky.request)
+    // 默认值在场（非浏览器原生初值）
+    expect((rowControl(root, 'autoFormat') as HTMLInputElement).checked).toBe(true)
+    expect((rowControl(root, 'inlineCodeSpaceMode') as HTMLSelectElement).value).toBe('soft')
+    // 失败横幅：错误提示 + 重试入口；共享状态行同步 failed 提示
+    const banner = q<HTMLElement>(root, '[data-vet-load-error]')
+    expect(banner.hidden).toBe(false)
+    expect(banner.textContent).toContain(zhMessages.settingsTabs.loadFailedText)
+    const retry = q<HTMLButtonElement>(banner, '[data-vet-action="retry-load"]')
+    expect(retry.textContent).toBe(zhMessages.settingsTabs.loadFailedRetry)
+    const status = q(root, '[data-vet-status]')
+    expect(status.getAttribute('data-vet-status')).toBe('failed')
+    expect(status.textContent).toContain(zhMessages.settingsTabs.loadFailedText)
+    // 全部 24 行禁用（含总开关——未读到的值不当已保存值编辑）+ 行级提示
+    const rowEls = [...root.querySelectorAll('[data-vet-setting-key]')]
+    expect(rowEls).toHaveLength(24)
+    for (const rowEl of rowEls) {
+      const key = rowEl.getAttribute('data-vet-setting-key') ?? ''
+      const control = q<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(rowEl, 'input, select, textarea')
+      expect(control.disabled, key).toBe(true)
+      expect(rowEl.getAttribute('aria-disabled'), key).toBe('true')
+      expect(rowEl.getAttribute('title'), key).toBe(zhMessages.settingsTabs.loadFailedRowHint)
+    }
+    // 规则分区不受影响（独立通道）：内置规则开关可编辑
+    const builtinToggle = q<HTMLInputElement>(root, '[data-vet-builtin-list] input[data-vet-action="toggle-builtin"]')
+    expect(builtinToggle.disabled).toBe(false)
+    // 重试成功 → 横幅隐藏、行恢复可编辑、应用存储真值、联动接管禁用语义
+    base.store.values.tabout = false
+    base.store.values.autoFormat = false
+    flaky.recover()
+    retry.click()
+    await flush()
+    expect(q<HTMLElement>(root, '[data-vet-load-error]').hidden).toBe(true)
+    const tabout = rowControl(root, 'tabout') as HTMLInputElement
+    expect(tabout.disabled).toBe(false)
+    expect(tabout.checked).toBe(false)
+    const downstreamRow = q(root, '[data-vet-setting-key="autoFormatPaste"]')
+    expect(rowControl(root, 'autoFormatPaste').disabled).toBe(true)
+    expect(downstreamRow.getAttribute('title')).toBe(zhMessages.settingsTabs.hintDisabledByMaster)
+  })
+
+  it('首 get 抛错：同样进入失败态（通道异常与拒绝同口径）', async () => {
+    const base = assemble()
+    const flaky = flakyGetChannel(base.request, 'throw')
+    const { root } = await mountPage(flaky.request)
+    expect((rowControl(root, 'tabout') as HTMLInputElement).checked).toBe(true) // 默认值非浏览器原生
+    expect(q<HTMLElement>(root, '[data-vet-load-error]').hidden).toBe(false)
+    expect(rowControl(root, 'tabout').disabled).toBe(true)
+    flaky.recover()
+    q<HTMLButtonElement>(root, '[data-vet-action="retry-load"]').click()
+    await flush()
+    expect(q<HTMLElement>(root, '[data-vet-load-error]').hidden).toBe(true)
+    expect(rowControl(root, 'tabout').disabled).toBe(false)
+  })
+})
+
+describe('控件可访问名称（审查轮 R2-P2-4：WCAG 4.1.2 / F68）', () => {
+  it('24 控件统一 aria-labelledby 指向行内非空标题 + aria-describedby 指向行内非空说明；id 唯一', async () => {
+    const { request } = assemble()
+    const { root } = await mountPage(request)
+    const rowEls = [...root.querySelectorAll('[data-vet-setting-key]')]
+    expect(rowEls).toHaveLength(24)
+    const nameIds = new Set<string>()
+    for (const rowEl of rowEls) {
+      const key = rowEl.getAttribute('data-vet-setting-key') ?? ''
+      const control = q<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(rowEl, 'input, select, textarea')
+      const labelledby = control.getAttribute('aria-labelledby')
+      expect(labelledby, `${key} 缺 aria-labelledby`).toMatch(/^\S+$/)
+      expect(labelledby!.startsWith('vsidian-easy-typing-'), key).toBe(true)
+      const nameEl = document.getElementById(labelledby!)
+      expect(nameEl, `${key} aria-labelledby 指向不存在的 id`).toBeTruthy()
+      expect(rowEl.contains(nameEl!), key).toBe(true)
+      expect(nameEl!.textContent ?? '', `${key} 标题为空`).toMatch(/\S/)
+      expect(nameIds.has(labelledby!), `${key} 标题 id 重复`).toBe(false)
+      nameIds.add(labelledby!)
+      const describedby = control.getAttribute('aria-describedby')
+      expect(describedby, `${key} 缺 aria-describedby`).toMatch(/^\S+$/)
+      const descEl = document.getElementById(describedby!)
+      expect(descEl, `${key} aria-describedby 指向不存在的 id`).toBeTruthy()
+      expect(rowEl.contains(descEl!), key).toBe(true)
+      expect(descEl!.textContent ?? '', `${key} 说明为空`).toMatch(/\S/)
+      // 统一走 aria-labelledby（checkbox 一并统一），不再叠用 aria-label
+      expect(control.getAttribute('aria-label'), key).toBeNull()
+    }
+  })
+})
+
+describe('失败回滚键集合（审查轮 R2-P3-5：单槽「焦点转移」论据被反例击穿）', () => {
+  it('A、B 先后失败 + A 聚焦 + 旧刷新弃置 → 最新结算的刷新把 A、B 一并强制回滚', async () => {
+    const { store, request, holdNextGet } = assemble({ tabout: true, smartPaste: true })
+    const { root } = await mountPage(request)
+    const a = rowControl(root, 'tabout') as HTMLInputElement
+    const b = rowControl(root, 'smartPaste') as HTMLInputElement
+    // 反例形态：编辑 A 后焦点移回 A（change 伴随焦点转移 ≠ 异步对账时焦点在别处）
+    a.focus()
+    expect(document.activeElement).toBe(a) // 聚焦成立前置（防御测试自身失效）
+    store.failReason = 'store-write-failed'
+    // A 写失败：其重拉（get）挂起，快照按调用时捕获
+    const releaseARefresh = holdNextGet()
+    changeValue(a, false)
+    await flush()
+    expect(a.checked).toBe(false) // 挂起未结算：失败值暂留（A 聚焦草稿保护在场）
+    // B 写失败：其重拉立即结算（最新笔）——按集合语义消费全部未对账键
+    changeValue(b, false)
+    await flush()
+    // A 虽聚焦也被强制回滚（单槽时代 A 躲过：旧槽被 B 覆盖 + 聚焦保护）
+    expect(a.checked).toBe(true)
+    expect(b.checked).toBe(true)
+    expect(document.activeElement).toBe(a) // 回滚不夺焦点
+    // 旧刷新迟到结算：序号弃置，不再消费（集合已被结算笔清空）
+    releaseARefresh()
+    await flush()
+    expect(a.checked).toBe(true)
+    expect(b.checked).toBe(true)
+  })
+})
