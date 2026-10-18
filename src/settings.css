@@ -674,6 +674,14 @@
   gap: 14px;
 }
 
+/* hidden 自防（审查轮 R1-F1/B2）：上方 display:flex 覆盖 UA [hidden]
+ * 隐藏——平台 webview 全局 [hidden]{display:none!important} reset 在场时
+ * 由其兜底；本规则使组件隐藏机制不依赖该 reset（双保险：reset 在场两
+ * 者一致，reset 缺席时组件自身仍正确隐藏） */
+.vsidian-easy-typing-settings-tab-panel[hidden] {
+  display: none;
+}
+
 /* 规则分区挂载点（面板内按块排布） */
 .vsidian-easy-typing-settings-section-host {
   display: flex;

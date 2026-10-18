@@ -82,3 +82,4 @@
 - **spacing 卡片不随 autoFormat 总开关联动置灰**：语言间空格策略分区是规则域渲染（rulesUi spacing），与设置行（设置域）渲染分离；联动置灰仅覆盖自动格式化 Tab 的设置行。总开关关闭时 spacing 分区仍可编辑，其生效由引擎侧 autoFormat 总门把守。
 - **定位补投以首次 `get` 结算为闸**：get 结算成败皆算（失败时行以默认形态在场）；若通道挂起无响应（promise 永不落定），首开排队目标停留在排队态不投递——组件不为 get 另设超时，也不绕过结算直接投递。
 - **facet 缺席 = 降级形态**：旧宿主 / 编辑器页形态下无作用域相关 UI、无定位消费，写入目标层固定 `'user'`；页面其余功能完整可用（`^1.1.0` 下界保证发行宿主恒有 facet，降级形态仅为防御性兼容与测试注入面）。
+- **面板隐藏自防与平台 reset 双保险**：`src/settings.css` 对 `.vsidian-easy-typing-settings-tab-panel[hidden]` 显式 `display:none`——面板基线 `display:flex` 会覆盖 UA `[hidden]`，实际隐藏不单靠平台 webview 全局 `[hidden]{display:none!important}` reset（reset 在场时两者一致，reset 缺席时组件自身仍正确隐藏）。

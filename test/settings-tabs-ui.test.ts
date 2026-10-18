@@ -6,6 +6,9 @@
 // HostRulesService + mock storage/registry）；设置通道为页面侧 mock 主题
 // handler。真实观感归 #21 人工清单。
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   enumLabelText,
   mountSettingsPage,
@@ -16,6 +19,7 @@ import { HostRulesService, registerRulesChannels } from '../src/rulesHost'
 import { SETTINGS_TOPIC } from '../src/settings/store'
 import { RULES_TOPIC } from '../src/rules/rules-protocol'
 import { setDebugEnabled } from '../src/logging'
+import type { SettingsTabId } from '../src/settings/tabs-model'
 import { DEFAULT_EFFECTIVE_SETTINGS } from '../src/settings/defaults'
 import { zhMessages } from '../src/i18n'
 import type { AddonChannelRegistry } from '../types/vendor/host/addons/addonRegistry'
@@ -188,6 +192,9 @@ function changeValue(
 }
 
 const TAB_IDS = ['edit-enhance', 'auto-format', 'builtin-rules', 'user-rules', 'other'] as const
+
+/** 仓库根（样式契约读文件断言用） */
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 afterEach(() => {
   document.body.textContent = ''
@@ -776,5 +783,56 @@ describe('get 失败路径 debugLog 留痕（审查轮 R1-B4）', () => {
       setDebugEnabled(false)
       spy.mockRestore()
     }
+  })
+})
+
+describe('五 Tab 装配 behaviorState 透传（审查轮 R1-F3）', () => {
+  it('注入 behaviorState：规则分区宿主灰态随 facet 生效（#50 两层口径不因 Tab 化断链）', async () => {
+    const { request } = assemble()
+    const root = document.createElement('div')
+    document.body.append(root)
+    mountSettingsPage(root, {
+      channel: { request },
+      messages: zhMessages,
+      localeTag: 'zh-cn',
+      doc: document,
+      setTimeout: () => 0,
+      clearTimeout: () => {},
+      // fake 对齐 RulesBehaviorStateLike（形状同 vendor AddonBehaviorStateFacet，
+      // 参照 test/rules-ui.test.ts mockBehaviorState）：组件停用 → 全灰
+      behaviorState: {
+        enabledState: () => ({ addonRunState: 'user-disabled', disabled: [] }),
+        onEnabledChange: () => () => {},
+      },
+    })
+    await flush()
+    const rows = [...q(root, '[data-vet-builtin-list]').children]
+    expect(rows.length).toBeGreaterThan(0)
+    for (const row of rows) {
+      expect((row as HTMLElement).getAttribute('data-vet-host-disabled'), '内置条目应灰').toBe('addon')
+    }
+    expect((rows[0] as HTMLElement).getAttribute('title')).toContain('组件已停用')
+  })
+})
+
+describe('switchTab 未知 id 抛错契约（审查轮 R1-F4）', () => {
+  it('未知 id 抛错保持可闻（受控 API 不静默吞错）', async () => {
+    const { request } = assemble()
+    const { view } = await mountPage(request)
+    expect(() => view.switchTab('no-such-tab' as unknown as SettingsTabId)).toThrow(/未知设置页 Tab/)
+    expect(view.activeTab()).toBe('edit-enhance') // 抛错不改变当前活动 Tab
+  })
+})
+
+describe('面板 hidden 自防样式契约（审查轮 R1-F1/B2）', () => {
+  it('settings.css 含 tab-panel [hidden] display:none 自防规则（不依赖平台 reset）', () => {
+    const css = readFileSync(path.join(repoRoot, 'src', 'settings.css'), 'utf8')
+    // 面板基线 display:flex 覆盖 UA [hidden]——须显式自防，否则隐藏依赖
+    // 平台 webview 全局 [hidden] reset 在场（组件机制不独立）
+    expect(
+      css.includes('.vsidian-easy-typing-settings-tab-panel[hidden]'),
+      '缺 .vsidian-easy-typing-settings-tab-panel[hidden] 自防规则',
+    ).toBe(true)
+    expect(css).toMatch(/\.vsidian-easy-typing-settings-tab-panel\[hidden\]\s*\{[^}]*display:\s*none/)
   })
 })
