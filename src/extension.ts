@@ -11,7 +11,7 @@ import * as vscode from 'vscode'
 import type { AddonDefinition, AddonSetupContext } from '../types/vendor/host/addons/addonRegistry'
 import type { VsidianHostExports } from './host-api'
 import { pickMessages } from './i18n'
-import { attachSettings, NOTICE_TOPIC, RULE_ERROR_TOPIC, SETTINGS_TOPIC, type EasyTypingSettingsFacade } from './settings/store'
+import { attachSettings, NOTICE_TOPIC, registerViewStateChannels, RULE_ERROR_TOPIC, SETTINGS_TOPIC, type EasyTypingSettingsFacade } from './settings/store'
 import { buildSettingDefinitions, buildSettingGroups } from './settings/definitions'
 import { HostRulesService, registerRulesChannels } from './rulesHost'
 import { debugLog, setDebugEnabled } from './logging'
@@ -60,6 +60,11 @@ function registerSettingsChannels(setupCtx: AddonSetupContext): void {
     }
     return settingsFacade?.clearWorkspaceOverride(request.key) ?? { ok: false, reason: 'rejected' }
   })
+  // 设置页 UI 浏览态（#63）：Tab 浏览位置会话级内存态（闭包持态，setup
+  // 常驻）——跨设置面板开关保留、随 activate 生命周期复位。平台设置面板
+  // 隐藏即释放 webview（重开重新装载页面），页面侧 mount 读回 / 切换上送
+  // 经本通道；注册单元契约见 store.ts（无落盘面）。
+  registerViewStateChannels(setupCtx.channel)
   // 规则错误通知（工单 #25）：页面侧规则引擎 reportError 注入缝的 i18n
   // 承接——上游 Obsidian Notice 的等价通道（webview 无自绘通知面）。
   // 文案走字典（ruleError.notify 模板），{id}/{message} 占位替换；页面侧

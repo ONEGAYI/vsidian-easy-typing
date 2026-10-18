@@ -31,14 +31,16 @@
 //   已存配置、防仅聚焦挡首快照回填）；重试恢复时清理状态行仍挂着的本次
 //   失败提示（较新的规则通道消息不误清）。
 //
-// 【Tab 态】内存保存，默认编辑增强，页面卸载即复位（决策 5/6）。
-// switchTab 为受控切换 API（外部驱动面）；搜索定位经内部 activateTab
-// 同一受控路径切页。
+// 【Tab 态】（#63 修正）宿主侧会话级 view-state 通道（VIEW_STATE_TOPIC）
+// 承载——Tab 浏览位置跨面板开关保留（平台隐藏面板即释放 webview，重开
+// 重新装载页面，内存态经宿主 setup 常驻闭包续存）、重启 VSCode 复位；
+// 滚动位置不保存（上游亦无保存行为）。switchTab 为受控切换 API（外部
+// 驱动面）；按钮 / 键盘 / 定位切换经 selectTab 同一受控路径切页并上送。
 import { localeTagFor, pickMessages, type Messages } from './i18n'
 import type { AddonSettingDefinition } from '../types/vendor/shared/addonSettings'
 import type { AddonSettingsLocateTarget, AddonSettingsScopeSnapshot } from '../types/vendor/shared/addonSettingsContextApi'
 import { buildSettingDefinitions } from './settings/definitions'
-import { pickValidValue, SETTINGS_TOPIC } from './settings/store'
+import { pickValidValue, SETTINGS_TOPIC, VIEW_STATE_TOPIC } from './settings/store'
 import { debugLog } from './logging'
 import { mountRulesSettingsView, type RulesBehaviorStateLike, type RulesSettingsViewHandle } from './rulesUi'
 import { RulesSettingsClient } from './rules/rules-settings-client'
@@ -314,6 +316,26 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
     }
   }
 
+  // ===== Tab 浏览态 view-state 接入（#63）：跨面板开关保留、会话级复位 =====
+
+  /** mount 后恢复窗口内已有确定导航（用户切换 / 搜索定位交付）→ 迟到的
+   *  view-state 回包放弃恢复：确定意图优先，回包不翻转既有选择。初始
+   *  默认渲染与恢复切换本身都不置位（初始上送会把宿主态冲回默认） */
+  let viewStateClaimed = false
+
+  /** 确定导航的唯一切页入口：切页 + 上送宿主 view-state（失败静默不阻塞
+   *  切换——UI 浏览态尽力而为）。按钮点击 / 键盘导航 / switchTab 受控
+   *  API / 搜索定位四路共用 */
+  function selectTab(tabId: SettingsTabId, focusButton = false): void {
+    viewStateClaimed = true
+    activateTab(tabId, focusButton)
+    void options.channel
+      .request(VIEW_STATE_TOPIC.update, { tab: tabId })
+      .catch(() => {
+        // 通道异常静默（尽力而为通道，无重试面）
+      })
+  }
+
   for (const tabId of SETTINGS_TAB_IDS) {
     const buttonId = `vsidian-easy-typing-tab-${tabId}`
     const panelId = `vsidian-easy-typing-panel-${tabId}`
@@ -324,7 +346,7 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
     btn.setAttribute('data-vet-tab', tabId)
     btn.setAttribute('aria-controls', panelId)
     btn.tabIndex = -1
-    btn.addEventListener('click', () => activateTab(tabId))
+    btn.addEventListener('click', () => selectTab(tabId))
     btn.addEventListener('keydown', (evt) => {
       const index = SETTINGS_TAB_IDS.indexOf(tabId)
       let target: number | null = null
@@ -346,7 +368,7 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
       }
       if (target === null) return
       evt.preventDefault()
-      activateTab(SETTINGS_TAB_IDS[target], true)
+      selectTab(SETTINGS_TAB_IDS[target], true)
     })
     nav.append(btn)
     tabButtons.set(tabId, btn)
@@ -668,7 +690,8 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
   function applyLocateTarget(target: AddonSettingsLocateTarget): void {
     const anchor = findLocateAnchor(target)
     if (!anchor) return
-    activateTab(anchor.tabId)
+    // 搜索定位是确定导航：切页经 selectTab（置位 claimed + 上送 view-state）
+    selectTab(anchor.tabId)
     clearLocatedMark()
     anchor.element.setAttribute('data-located', `${target.kind}:${target.key}`)
     anchor.element.classList.add(`${CLS}-located`)
@@ -904,6 +927,23 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
 
   void refreshSettings()
 
+  // view-state 恢复（#63）：mount 后拉宿主会话级 Tab 浏览位置。先同步渲染
+  // 默认 Tab、回包后切换（本地通道毫秒级，用户无感）；回包 tab 经
+  // SETTINGS_TAB_IDS 合法性校验（非法/缺席保持默认），通道失败静默；回包
+  // 前已有确定导航（viewStateClaimed，见 selectTab）则放弃恢复；dispose 后
+  // 迟到的回包无操作。恢复切换不上送（值本就来自宿主侧，无回写必要）。
+  void options.channel
+    .request(VIEW_STATE_TOPIC.get, null)
+    .then((outcome) => {
+      if (disposed || viewStateClaimed || outcome.ok !== true) return
+      const tab = (outcome.result as { tab?: unknown } | null)?.tab
+      if (typeof tab !== 'string' || !(SETTINGS_TAB_IDS as readonly string[]).includes(tab)) return
+      if (tab !== active) activateTab(tab as SettingsTabId)
+    })
+    .catch(() => {
+      // 通道异常静默（恢复尽力而为，保持默认 Tab）
+    })
+
   /** 就地切换语言（#58：SDK locale 通知驱动）。控件显示值（含未提交草稿）
    *  与活动 Tab 不动；definitions 按新字典重建（title/description 换语言，
    *  键集/默认值/枚举值结构不变），联动与失败态行级提示按新文案重放。
@@ -964,7 +1004,7 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
   return {
     switchTab(tabId: SettingsTabId): void {
       if (!SETTINGS_TAB_IDS.includes(tabId)) throw new Error(`未知设置页 Tab：${tabId}`)
-      activateTab(tabId)
+      selectTab(tabId)
     },
     activeTab(): SettingsTabId {
       return active

@@ -15,7 +15,8 @@ export const SETTINGS_TAB_IDS = ['edit-enhance', 'auto-format', 'builtin-rules',
 
 export type SettingsTabId = (typeof SETTINGS_TAB_IDS)[number]
 
-/** 默认 Tab（Tab 态不持久化——内存态，页面卸载即复位；对齐上游） */
+/** 默认 Tab（#63：Tab 浏览态经宿主会话级 view-state 跨面板开关保留、重启
+ *  复位——本值是会话内无浏览记录时的落点） */
 export const DEFAULT_SETTINGS_TAB: SettingsTabId = 'edit-enhance'
 
 /** 声明组键 → 页内 Tab 路由（general 特例：excludeFiles 卡片随上游归自动格式化） */
