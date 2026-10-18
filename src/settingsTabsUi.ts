@@ -29,6 +29,7 @@ import type { AddonSettingDefinition } from '../types/vendor/shared/addonSetting
 import type { AddonSettingsLocateTarget, AddonSettingsScopeSnapshot } from '../types/vendor/shared/addonSettingsContextApi'
 import { buildSettingDefinitions } from './settings/definitions'
 import { SETTINGS_TOPIC } from './settings/store'
+import { debugLog } from './logging'
 import { mountRulesSettingsView, type RulesBehaviorStateLike, type RulesSettingsViewHandle } from './rulesUi'
 import { RulesSettingsClient } from './rules/rules-settings-client'
 import {
@@ -221,6 +222,9 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
   root.append(hero, nav, status, panelsWrap)
 
   function showStatus(kind: 'info' | 'failed' | 'success', text: string): void {
+    // dispose 后经 statusSink 到达的规则侧在途提示直接丢弃（审查轮 R1-B3）：
+    // 已卸载的页面不再写状态行 / 起新计时器（6s 空转持闭包）
+    if (disposed) return
     status.textContent = text
     status.setAttribute('data-vet-status', kind)
     if (statusTimer !== null) cancel(statusTimer)
@@ -316,12 +320,15 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
     return control.value
   }
 
-  function applyValue(entry: SettingRowEntry, raw: unknown): void {
+  function applyValue(entry: SettingRowEntry, raw: unknown, force = false): void {
     const { def, control } = entry
     // 聚焦中控件跳过回写（审查轮 P2-2）：保留正在编辑的未提交草稿——
     // 写后/作用域切换/清除覆盖的重拉不覆盖用户当前输入；失焦后的下一次
-    // 重拉照常应用存储真值
-    if (doc.activeElement === control) return
+    // 重拉照常应用存储真值。force 仅由写/清除失败对账路径传入（审查轮
+    // R1-B1）：真实浏览器提交（点选/换档/回车）后焦点仍在控件，失败
+    // 回滚必须穿透草稿保护把该键拉回存储真值，否则失配持续到下一次
+    // 操作（无推送通道不自愈）；未失败键的草稿保护照常生效
+    if (!force && doc.activeElement === control) return
     if (def.type === 'boolean') {
       ;(control as HTMLInputElement).checked = raw === true
       return
@@ -600,6 +607,10 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
   /** 重拉发起序（到达序令牌，审查轮 P2-3）：结算时只应用最新一笔——
    *  跨笔乱序回包（旧 get 迟到）不覆盖新快照 */
   let refreshSeq = 0
+  /** 待强制回滚键（审查轮 R1-B1）：写/清除失败对账——失败的重拉必须对
+   *  该键穿透聚焦草稿保护；重拉应用值时一次性消费，未被本笔结算消费的
+   *  （乱序弃置）留待下一笔真正结算的重拉 */
+  let pendingForceRollbackKey: string | null = null
 
   async function refreshSettings(): Promise<void> {
     const seq = ++refreshSeq
@@ -608,9 +619,17 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
       try {
         outcome = await options.channel.request(SETTINGS_TOPIC.get, null)
       } catch {
-        return // 通道异常静默（初值回落默认；后续写入失败有状态行提示面）
+        // 通道异常静默（初值回落默认；后续写入失败有状态行提示面）；
+        // debugLog 留痕（审查轮 R1-B4：get 失败原本完全无诊断）
+        debugLog('settings get channel error — refresh dropped, controls keep last state')
+        return
       }
-      if (disposed || outcome.ok !== true) return
+      if (disposed) return
+      if (outcome.ok !== true) {
+        // 同上：静默降级但留诊断痕迹（debug 门控，非用户可见面）
+        debugLog('settings get rejected:', outcome.reason ?? 'unknown')
+        return
+      }
       if (seq !== refreshSeq) return // 本笔挂起期间有更新刷新发起：陈旧快照弃置
       const snapshot = outcome.result as { effective?: unknown; sources?: unknown } | null
       const effective = snapshot?.effective
@@ -619,8 +638,9 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
       const sources = snapshot?.sources
       currentSources = sources !== null && typeof sources === 'object' ? (sources as Readonly<Record<string, string>>) : {}
       for (const entry of rows.values()) {
-        applyValue(entry, currentValues[entry.def.key] ?? entry.def.default)
+        applyValue(entry, currentValues[entry.def.key] ?? entry.def.default, entry.def.key === pendingForceRollbackKey)
       }
+      pendingForceRollbackKey = null // 失败对账强制回滚一次性消费
       applyLinkage()
       applySources()
     } finally {
@@ -635,16 +655,20 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
     try {
       outcome = await options.channel.request(SETTINGS_TOPIC.clearOverride, { key })
     } catch {
+      // 失败对账：重拉时对该键强制回滚（穿透聚焦草稿保护，审查轮 R1-B1）
+      pendingForceRollbackKey = key
       if (!disposed) showStatus('failed', `${t.statusClearOverrideFailed}：io-failed`)
       await refreshSettings()
       return
     }
     if (disposed) return
     if (outcome.ok !== true) {
+      pendingForceRollbackKey = key
       showStatus('failed', `${t.statusClearOverrideFailed}：${outcome.reason ?? 'rejected'}`)
     } else {
       const inner = outcome.result as { ok?: boolean; reason?: string } | null
       if (inner?.ok === false) {
+        pendingForceRollbackKey = key
         showStatus('failed', `${t.statusClearOverrideFailed}：${inner.reason ?? 'store-write-failed'}`)
       } else {
         showStatus('success', t.statusOverrideCleared)
@@ -659,16 +683,22 @@ export function mountSettingsPage(root: HTMLElement, options: SettingsPageViewOp
     try {
       outcome = await options.channel.request(SETTINGS_TOPIC.update, { scope: writeScope(), patch: { [key]: value } })
     } catch {
+      // 失败对账：重拉时对该键强制回滚（穿透聚焦草稿保护，审查轮 R1-B1）
+      pendingForceRollbackKey = key
       if (!disposed) showStatus('failed', `${t.statusUpdateFailed}：io-failed`)
       await refreshSettings()
       return
     }
     if (disposed) return
     if (outcome.ok !== true) {
+      pendingForceRollbackKey = key
       showStatus('failed', `${t.statusUpdateFailed}：${outcome.reason ?? 'rejected'}`)
     } else {
       const inner = outcome.result as { ok?: boolean; reason?: string } | null
-      if (inner?.ok === false) showStatus('failed', `${t.statusUpdateFailed}：${inner.reason ?? 'store-write-failed'}`)
+      if (inner?.ok === false) {
+        pendingForceRollbackKey = key
+        showStatus('failed', `${t.statusUpdateFailed}：${inner.reason ?? 'store-write-failed'}`)
+      }
     }
     // 写后重拉刷新（成功同步存储真值，失败把控件拉回；决策 12）
     await refreshSettings()

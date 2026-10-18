@@ -5,7 +5,7 @@
 // 规则四分区挂入对应 panel。数据链装配对齐 test/rules-ui.test.ts（真实
 // HostRulesService + mock storage/registry）；设置通道为页面侧 mock 主题
 // handler。真实观感归 #21 人工清单。
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   enumLabelText,
   mountSettingsPage,
@@ -14,6 +14,8 @@ import {
 } from '../src/settingsTabsUi'
 import { HostRulesService, registerRulesChannels } from '../src/rulesHost'
 import { SETTINGS_TOPIC } from '../src/settings/store'
+import { RULES_TOPIC } from '../src/rules/rules-protocol'
+import { setDebugEnabled } from '../src/logging'
 import { DEFAULT_EFFECTIVE_SETTINGS } from '../src/settings/defaults'
 import { zhMessages } from '../src/i18n'
 import type { AddonChannelRegistry } from '../types/vendor/host/addons/addonRegistry'
@@ -620,5 +622,159 @@ describe('enumLabelText 纯函数（审查轮 P2-4：vendor LocalizedText 两形
     expect(enumLabelText(def, 'a', 'zh-cn')).toBe('甲')
     expect(enumLabelText(def, 'a', 'en')).toBe('A')
     expect(enumLabelText(def, 'b', 'zh-cn')).toBe('b')
+  })
+})
+
+// ===== 审查循环轮 1 修复（review-loops R1）=====
+
+describe('写失败对账强制回滚（审查轮 R1-B1：聚焦草稿保护不挡失败回滚）', () => {
+  it('聚焦中控件写失败：重拉结算对该键强制拉回存储值（真实浏览器焦点形态）', async () => {
+    const { store, request } = assemble({ tabout: true })
+    const { root } = await mountPage(request)
+    const control = rowControl(root, 'tabout') as HTMLInputElement
+    // 真实浏览器点选 checkbox / select 换档 / Enter 提交后焦点仍在控件
+    control.focus()
+    expect(document.activeElement).toBe(control) // 聚焦成立前置（防御测试自身失效）
+    store.failReason = 'no-workspace'
+    changeValue(control, false)
+    await flush()
+    expect(store.updateCalls).toEqual([{ scope: 'user', patch: { tabout: false } }])
+    expect(control.checked).toBe(true) // 失败对账强制回滚：拉回存储真值
+    expect(document.activeElement).toBe(control) // 不夺焦点（回滚不打扰用户）
+  })
+
+  it('强制回滚仅作用失败键：聚焦中的其他键草稿不受波及', async () => {
+    const { store, request } = assemble({ tabout: true })
+    const { view, root } = await mountPage(request)
+    view.switchTab('auto-format') // prefixDictionary 所在面板可见才可聚焦
+    const draft = rowControl(root, 'prefixDictionary') as HTMLTextAreaElement
+    draft.focus()
+    expect(document.activeElement).toBe(draft)
+    draft.value = '草稿, /未提交/'
+    store.failReason = 'no-workspace'
+    // 另一键写失败（hidden 面板内合成 change 仍触发写入链）
+    changeValue(rowControl(root, 'tabout'), false)
+    await flush()
+    expect(draft.value).toBe('草稿, /未提交/') // 草稿保留（force 只作用失败键）
+    expect((rowControl(root, 'tabout') as HTMLInputElement).checked).toBe(true) // 失败键照常回滚
+  })
+})
+
+describe('showStatus disposed 守卫（审查轮 R1-B3：规则侧在途失败不空转）', () => {
+  it('dispose 后经 statusSink 到达的规则侧在途写失败：不写文本、不起新计时器', async () => {
+    const base = assemble()
+    const timers = capturingTimers()
+    // 挂起规则 mutate：点击后 dispose，再放行失败回包——模拟规则侧在途
+    // 写失败晚于页面卸载结算（经 statusSink 触达页面 showStatus）
+    let releaseMutate!: (value: { ok: false; reason: string }) => void
+    const mutateGate = new Promise<{ ok: false; reason: string }>((resolve) => {
+      releaseMutate = resolve
+    })
+    const request = async (
+      topic: string,
+      payload: unknown,
+    ): Promise<{ ok: true; result: unknown } | { ok: false; reason: string }> => {
+      if (topic === RULES_TOPIC.mutate) return mutateGate
+      return base.request(topic, payload)
+    }
+    const root = document.createElement('div')
+    document.body.append(root)
+    const view = mountSettingsPage(root, {
+      channel: { request },
+      messages: zhMessages,
+      localeTag: 'zh-cn',
+      doc: document,
+      setTimeout: timers.schedule,
+      clearTimeout: timers.cancel,
+    })
+    await flush()
+    const status = q(root, '[data-vet-status]')
+    // 内置规则开关关闭 → disableBuiltinRule（mutate 挂起中）
+    const toggle = q<HTMLInputElement>(
+      panel(root, 'builtin-rules'),
+      '[data-vet-builtin-list] input[data-vet-action="toggle-builtin"]',
+    )
+    toggle.checked = false
+    toggle.dispatchEvent(new Event('change', { bubbles: true }))
+    view.dispose()
+    releaseMutate({ ok: false, reason: 'rejected' })
+    await flush()
+    expect(timers.timers).toHaveLength(0) // 不再起新计时器（6s 空转持闭包）
+    expect(status.textContent).toBe('') // 已卸载状态行不被写入
+  })
+})
+
+describe('get 失败路径 debugLog 留痕（审查轮 R1-B4）', () => {
+  it('通道异常路径：debug 开启时留痕', async () => {
+    const base = assemble()
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    setDebugEnabled(true)
+    try {
+      const request = async (
+        topic: string,
+        payload: unknown,
+      ): Promise<{ ok: true; result: unknown } | { ok: false; reason: string }> => {
+        if (topic === SETTINGS_TOPIC.get) throw new Error('io-down')
+        return base.request(topic, payload)
+      }
+      const root = document.createElement('div')
+      document.body.append(root)
+      mountSettingsPage(root, {
+        channel: { request },
+        messages: zhMessages,
+        localeTag: 'zh-cn',
+        doc: document,
+        setTimeout: () => 0,
+        clearTimeout: () => {},
+      })
+      await flush()
+      const messages = spy.mock.calls.map((call) => call.map(String).join(' '))
+      expect(messages.some((line) => line.includes('[vsidian-easy-typing]') && line.includes('settings get'))).toBe(true)
+    } finally {
+      setDebugEnabled(false)
+      spy.mockRestore()
+    }
+  })
+
+  it('outcome rejected 路径：debug 开启时留痕 reason；门控关闭时静默', async () => {
+    const base = assemble()
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const request = async (
+        topic: string,
+        payload: unknown,
+      ): Promise<{ ok: true; result: unknown } | { ok: false; reason: string }> => {
+        if (topic === SETTINGS_TOPIC.get) return { ok: false, reason: 'rejected' }
+        return base.request(topic, payload)
+      }
+      const root = document.createElement('div')
+      document.body.append(root)
+      mountSettingsPage(root, {
+        channel: { request },
+        messages: zhMessages,
+        localeTag: 'zh-cn',
+        doc: document,
+        setTimeout: () => 0,
+        clearTimeout: () => {},
+      })
+      await flush()
+      expect(spy).not.toHaveBeenCalled() // 门控默认关：get 失败静默（留痕仅诊断面）
+      setDebugEnabled(true)
+      const view = mountSettingsPage(root, {
+        channel: { request },
+        messages: zhMessages,
+        localeTag: 'zh-cn',
+        doc: document,
+        setTimeout: () => 0,
+        clearTimeout: () => {},
+      })
+      await flush()
+      const messages = spy.mock.calls.map((call) => call.map(String).join(' '))
+      expect(messages.some((line) => line.includes('[vsidian-easy-typing]') && line.includes('settings get') && line.includes('rejected'))).toBe(true)
+      view.dispose()
+    } finally {
+      setDebugEnabled(false)
+      spy.mockRestore()
+    }
   })
 })

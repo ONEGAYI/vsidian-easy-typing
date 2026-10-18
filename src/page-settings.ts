@@ -26,8 +26,9 @@ defineAddonPage(ADDON_ID, (sdk: VsidianAddonPageSdk) => {
   // bundle 内单例，宿主 extension.ts 的 setDebugEnabled 接线不跨 bundle
   // ——本页装载时经 #3 设置通道拉 effective.debug 接线本份实例。边界：
   // 本页无焦点回归事件面，页面存活期内的开关变更不实时生效（重开设置
-  // 页即按新值；debug 是诊断面，当前设置页代码无 debugLog 调用点，接线
-  // 为后续调试面预置）；通道失败保持默认关。
+  // 页即按新值；debug 是诊断面，设置页装配内的 get 失败留痕（审查轮
+  // R1-B4，settingsTabsUi refreshSettings）经此接线生效）；通道失败保持
+  // 默认关。
   void sdk.channel
     .request(SETTINGS_TOPIC.get, null)
     .then((outcome) => {
