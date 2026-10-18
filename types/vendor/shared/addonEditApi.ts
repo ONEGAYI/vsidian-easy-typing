@@ -1,9 +1,10 @@
-// vendored from ONEGAYI/vsidian@56e03882135dda7caf05da1e82dc5557718a837c — src/shared/addonEditApi.ts
+// vendored from ONEGAYI/vsidian@f7b80d6eda00d16f4fb7ead49aa86fcd41cb75c8 — src/shared/addonEditApi.ts
 // 类型快照：由 scripts/vendorSdkTypes.mjs 自动生成——仅保留类型声明与被
 // 类型引用的常量，值级导出（校验函数、运行时数据）已剥离。不要手改；
 // re-vendor：npm run vendor:sdk（升级锚定提交改脚本 DEFAULT_COMMIT 后重跑）。
 
 import type { SerChange } from './protocol'
+import type { AddonDocNavRequest, AddonDocNavResult } from './addonNavApi'
 
 /** 视图种类：main = 面板主正文；embed = 嵌入内部 Live；hover = 悬停引用
  *  （只读预览，无写端口） */
@@ -118,12 +119,17 @@ export interface AddonViewHandle {
 }
 
 /** SDK views 面（views.list / views.get / 变化订阅——设计 §5.1）。
- *  仅编辑器页提供（设置页无编辑视图，views 为 undefined） */
+ *  仅编辑器页提供（设置页无编辑视图，views 为 undefined）。
+ *  #543 T03 起 views.openDocument 提供文档打开与定位请求（宿主解析与
+ *  执行——来源身份由 SDK 层注入，组件请求不携带身份字段） */
 export interface AddonViewsFacet {
   list(): readonly AddonViewInfo[]
   get(instanceId: string): AddonViewHandle | null
   onCreated(callback: (info: AddonViewInfo) => void): () => void
   onDisposed(callback: (info: AddonViewInfo) => void): () => void
+  /** 文档打开与定位请求（异步——宿主执行；结果区分 opened 与 located，
+   *  拒绝面见 AddonDocNavRejection；请求具有有界终态） */
+  openDocument(request: AddonDocNavRequest): Promise<AddonDocNavResult>
 }
 
 /** #426 视图身份反查面（experimental.viewIdentity 的内容）：CM6

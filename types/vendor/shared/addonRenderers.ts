@@ -1,4 +1,4 @@
-// vendored from ONEGAYI/vsidian@56e03882135dda7caf05da1e82dc5557718a837c — src/shared/addonRenderers.ts
+// vendored from ONEGAYI/vsidian@f7b80d6eda00d16f4fb7ead49aa86fcd41cb75c8 — src/shared/addonRenderers.ts
 // 类型快照：由 scripts/vendorSdkTypes.mjs 自动生成——仅保留类型声明与被
 // 类型引用的常量，值级导出（校验函数、运行时数据）已剥离。不要手改；
 // re-vendor：npm run vendor:sdk（升级锚定提交改脚本 DEFAULT_COMMIT 后重跑）。
@@ -92,7 +92,23 @@ export interface AddonRenderersTablePayload {
   languages: readonly AddonRendererLanguageSelection[]
 }
 
-/** 选择输入（纯函数：候选、可用性谓词、内置语言、首选与批次） */
+/**
+ * #546 T07 主题例外输入（ADR-0017）：themedProviderIds = 主题关联的提供
+ * 者集（目录注入）——这些提供者不参与自动接管，也不接受 renderer 按语
+ * 言显式首选（不能经一般渲染候选路径绕过主题单选）；activeThemeProvider
+ * Id = 当前选中且可用的主题提供者——仅它对所声明语言生效（source='user'，
+ * 主题单选的投影）；unavailableThemeLanguages = 已选主题失效前已知的
+ * 声明语言，仅这些语言回落内置（无内置则普通代码块）。未声明语言与未知
+ * 首选的语言范围继续一般规则。
+ */
+export interface RendererThemeSelectionContext {
+  themedProviderIds: ReadonlySet<string>
+  activeThemeProviderId?: string
+  activeThemeLanguages?: readonly string[]
+  unavailableThemeLanguages?: readonly string[]
+}
+
+/** 选择输入（纯函数：候选、可用性谓词、内置语言、首选与批次；#546 起含主题例外上下文） */
 export interface RendererSelectionInput {
   candidates: readonly AddonRendererCandidate[]
   isAvailable: (candidate: AddonRendererCandidate) => boolean
@@ -100,6 +116,8 @@ export interface RendererSelectionInput {
   builtinLanguages: readonly string[]
   preferred: Readonly<Record<string, string>>
   batches: Readonly<Record<string, number>>
+  /** #546 T07 主题例外（缺省无主题语义——普通渲染器行为不变） */
+  theme?: RendererThemeSelectionContext
 }
 
 /** webview → 宿主：某组件当前装载代次内注册的提供者集（空数组 = 全部撤销） */
