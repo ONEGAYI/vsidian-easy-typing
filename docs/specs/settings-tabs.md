@@ -78,7 +78,7 @@
 - **作用域接入**：`test/settings-tabs-scope.test.ts`——facet 判空降级（无作用域 UI + 写入固定 user）、写入目标层跟随 scopeState、onScopeChange 重拉对齐、dispose 退订、no-workspace 拒绝提示与控件回滚、规则 Tab 用户级标注（含降级形态仍在）、workspace 徽章显隐、清除覆盖成功（载荷/重拉/回退用户层）/失败（reason 提示、徽章保持）；审查第二轮加固——spacing 分区用户级标注（挂分区近旁、不泛化整 Tab）；**#60 按层显示组**——user 视角层值真显（mergedHint 回收）、未显式保存键出厂默认 + 联动按层、workspace 视角合并、作用域切换显示跟随、写 user 层回显、写失败强制回滚按层、用户层存量失配值归一化回归（布尔/枚举/数组与文本三类：非法存量值显示出厂默认且联动一致，审查 P2）；**合并值提示组**——降级为旧宿主形态钉住（`layered=false` mock：合并显示 + 提示在场 + 切换驱动显隐）。
 - **搜索定位**：`test/settings-tabs-locate.test.ts`——首开回放（订阅回放 + 初值双投只落一次高亮）、已开立即交付（不触发重拉）、def/group 两类映射与组特例（general 锚排除文件卡）、未知键静默降级、重复目标重入、换目标清旧、null 清除（含排队丢弃）、get 挂起排队补投、dispose 退订、与作用域重拉共存、facet 缺席无定位消费痕迹。
 - **Tab 浏览态 view-state（#63）**：`test/settings-tabs-viewstate.test.ts`——跨 mount 恢复主线（同一宿主后端两次全新 mount，切非默认 Tab → 关面板 → 重开回离开时 Tab）、切换即上送、回包非法 Tab 保持默认（页面侧 `SETTINGS_TAB_IDS` 校验）、通道缺席（旧宿主）静默降级、恢复回包迟到于用户切换不覆盖、恢复让位搜索定位、dispose 后迟到回包无害、对照例（同 mount `setLanguage` 不重置、设置数据跨 mount 不丢）；**滚动组（#63 扩展）**——滚动 → 关面板 → 重开回离开时 Tab 与偏移、切换上送携带当前偏移（节流窗内程序性位移）、无位移重开保持顶部、恢复让位不应用滚动、dispose 后监听与节流定时器清理（位移不再上送）；**滚动 R1 审查加固组**——规则装载跨帧后仍恢复偏移（后端挂起规则 get，以顺序钉住「不提前回放」）、恢复等待中用户切页不抢回、恢复等待中离开组件页（root 脱离滚动容器）不应用偏移、切离后共享主区滚动不改本组件记忆（重入恢复）、节流尾沿在切离后到期不提交；宿主侧通道契约在 `test/settings-store.test.ts`（get 初值 / update 回读含 scroll 面 / 非法载荷与非法 scroll 拒绝 / 注册面无 storage 形参即无落盘面）。
-- **真实观感归人工清单**：暗/亮主题真实绘制、中英双语、长内容滚动、物理键盘 Tab 导航、作用域切换/清除覆盖实操、全局搜索定位实操（含重复点击重新滚动）、规则四分区回归——[manual-verification.md](../manual-verification.md) 二十二节（A83–A88）。
+- **真实观感归人工清单**：暗/亮主题真实绘制、中英双语、长内容滚动、物理键盘 Tab 导航、作用域切换/清除覆盖实操、全局搜索定位实操（含重复点击重新滚动）、规则四分区回归——[manual-verification.md](../manual-verification.md) 二十二节（A83–A89）。
 - `npm run compile`（三产物构建 + `tsc --noEmit`）通过；全部测试绿，不回归。
 
 ## 已知边界
