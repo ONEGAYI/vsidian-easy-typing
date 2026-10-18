@@ -42,10 +42,12 @@ const DOMAIN_SECTION_PREFIXES: readonly string[] = [
   '## 二十、严格换行三模式补偿（',
   // #34 嵌入目标命令执行面（2026-10 起本票验证域）
   '## 二十一、嵌入目标命令执行面（',
+  // #55 五 Tab 自绘设置页（2026-10 起本票验证域：Tab 框架/设置读写/作用域/搜索定位/规则回归/观感）
+  '## 二十二、五 Tab 自绘设置页（',
 ]
 
 describe('人工验证清单结构契约（#21）', () => {
-  it('功能域节全覆盖（含 #28/#19 占位节、#4 间距节、#10 代码块节、#30 换行补偿节与 #34 嵌入目标节）', () => {
+  it('功能域节全覆盖（含 #28/#19 占位节、#4 间距节、#10 代码块节、#30 换行补偿节、#34 嵌入目标节与 #55 五 Tab 设置页节）', () => {
     const doc = readDoc()
     for (const prefix of DOMAIN_SECTION_PREFIXES) {
       expect(doc.includes(prefix), `缺少功能域节：${prefix}…`).toBe(true)
@@ -83,10 +85,11 @@ describe('人工验证清单结构契约（#21）', () => {
 
   it('宿主版本矩阵三要素：vsidian 基线 commit / VSIX 安装态 / 1.82.3 下界', () => {
     const doc = readDoc()
-    // 基线 commit 与 vendor 快照锚定同步（#30 re-vendor 至 9f2d2927——
-    // hostSettings 读取面 merge（PR #458），此前 #5 至 d26f1e86 syntax 面；
-    // 文档「维度一」节与 DEFAULT_COMMIT 同源）
-    expect(doc).toContain('9f2d292753291db5fa5c45cc3f6dcbbd71c2e37c')
+    // 基线 commit 与 vendor 快照锚定同步（#55 前置 re-vendor 至 f7b80d6e——
+    // API 1.2.0 发行基线，含 settingsContext 设置页上下文面；此前 #52 至
+    // 56e03882（多光标 selection 与 IME 错位补偿）；文档「维度一」节与
+    // DEFAULT_COMMIT 同源）
+    expect(doc).toContain('f7b80d6eda00d16f4fb7ead49aa86fcd41cb75c8')
     expect(doc).toContain('--install-extension')
     expect(doc).toContain('1.82.3')
     // 先装宿主再装组件（extensionDependencies 依赖顺序）在步骤中写明

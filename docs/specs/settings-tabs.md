@@ -1,0 +1,84 @@
+# 五 Tab 自绘设置页（工单 #55）
+
+上游 `src/settings/easy_typing_settings_tab.ts` 的 5-Tab 设置页整体移植：24 项普通设置从「平台声明式表单为主」翻转为**五 Tab 自绘页承载呈现**，与规则四分区同页；同时接入平台作用域（用户默认 / 当前工作区）与全局设置搜索定位。设置定义保持 `registerDefinitions` 注册不注销（全局搜索索引与平台基础表单的驱动面，平台基础表单降为页内次级页签）。事实源模块：`src/settings/tabs-model.ts`（Tab/卡片归属纯函数）、`src/settingsTabsUi.ts`（页面装配）、`src/page-settings.ts`（入口注入）、`src/settings.css`（样式追加）；测试矩阵：`test/settings-tabs-model.test.ts` / `settings-tabs-ui.test.ts` / `settings-tabs-scope.test.ts` / `settings-tabs-locate.test.ts`。设置字段与声明面事实源在 [settings-mapping.md](settings-mapping.md)，规则分区内部语义在 [rules-ui.md](rules-ui.md)。
+
+## 页面结构
+
+- **hero 顶部块**：项目名（`settingsTabs.heroTitle`）+ 上游来源链接（MIT 双署名致敬，链 Yaozhuwa/easy-typing-obsidian，`_blank` + `noreferrer noopener`）。
+- **Tab 框架**：`nav[role=tablist]` 五按钮 + 五 `section[role=tabpanel]`；aria 配对完整（`aria-selected` / `aria-controls` / `aria-labelledby`）；键盘导航左右/上下循环、Home/End、roving tabIndex（活动钮 0 其余 -1，焦点随键盘移动）。
+- **面板常驻、hidden 切换**：五个 panel 全部挂载在 DOM，非活动 panel `[hidden]` + `aria-hidden`——不因切 Tab 销毁重建。目的：spacing 分区防御网（串行写队列/脏标记/编辑保护/DOM 读面，见 rules-ui.md）在 Tab 化后时序不变；规则分区草稿/焦点不因切 Tab 丢失。
+- **页面级状态行**：`role=status`（`data-vet-status` 三态），设置写入提示与规则分区共享，6s 自动清除。
+- **Tab 态**：内存保存，默认「编辑增强」，页面卸载即复位（上游同为内存态；平台关闭组件详情即卸载自绘页）。`switchTab` 为受控切换 API，搜索定位经同一内部路径切页。
+
+## 五 Tab 归属表
+
+| Tab（id） | 内容（序 = 呈现序） | 数据源 |
+| --- | --- | --- |
+| 编辑增强（`edit-enhance`） | 「增强编辑设置」卡 6 项：betterCodeEdit / betterBackspace / tabout / enhanceModA / smartPaste / newLineBelow（本仓键殿后，上游无此字段） | 定义 + SETTINGS_TOPIC |
+| 自动格式化（`auto-format`） | 「自动格式化设置」卡 3 项（autoFormat / autoFormatPaste / autoCapital）→ **语言间空格策略分区**（rulesUi spacing 挂入点）→ 「行内元素间空格」卡 6 项 → 「前缀词典」卡 1 项 → 「自定义正则区块」卡 3 项 → 「指定文件不自动格式化」卡（excludeFiles） | 定义 + SETTINGS_TOPIC + RulesSettingsClient |
+| 内置规则（`builtin-rules`） | 用户级标注 + 内置规则分区（20 条 + 重置 + 已停用折叠区，rulesUi builtin） | RulesSettingsClient |
+| 自定义规则（`user-rules`） | 用户级标注 + 用户规则分区（新增/导入/导出/排序 + 编辑模态框，rulesUi user） | RulesSettingsClient |
+| 其他设置（`other`） | 「实验功能」卡 4 项（strictModeEnter / strictLineMode / collapsePersistentEnter / debug）→ 数据目录展示分区（rulesUi storage，殿后） | 定义 + SETTINGS_TOPIC + RulesSettingsClient.storageUri |
+
+- **键计数**：编辑增强 6 / 自动格式化 14（auto-format 组 13 键 + excludeFiles）/ 其他设置 4；内置/自定义规则两 Tab 无设置行（规则分区承载）。卡片键并集 = 24 键全集且每键恰好一次（单一事实源 `SETTINGS_TAB_CARDS`，Tab 键清单由卡片折叠而来）。
+- **excludeFiles 特例**：声明在 `general` 组（#477 四组声明），自绘页按上游语义归「自动格式化」Tab（上游「指定文件不自动格式化」卡片）。**声明分组与自绘页归属是两套呈现，互不冲突**：声明分组（edit-enhance / auto-format / general / experimental 四组）继续驱动平台基础表单与搜索索引的分组呈现，自绘归属（`GROUP_TO_TAB` 路由）只管本页 Tab 落位；`groupKeyToTabId` 对未知组键抛错（守配置错误），`settingKeyToTabId` / `groupKeyToCardAnchor` 对未注册键返回 null（守运行期外来输入）。
+- **组定位落点**：`groupKeyToCardAnchor` 锚到组首卡片（组内定义键按卡片声明序首个命中的卡片）——auto-format 组锚总开关卡、general 组锚排除文件卡、edit-enhance 键锚增强编辑卡、experimental 组锚实验功能卡。
+
+## 设置行渲染与写入链路
+
+- **控件形态由定义元数据驱动**：boolean → checkbox；string enum → select（档位文案用 `enumLabels` 双语标签，缺失回退枚举值本身）；普通 string → text；`multiline` string 与 array → textarea（array 每行一项）。行文案用既有 `settings[key].name/desc`，不另造第二份。
+- **写入触发 = `change` 事件**（失焦/回车，非逐键——避免通道风暴）；excludeFiles 写入按行拆分、逐行 trim、丢弃空行。
+- **读写通道**：初值/回显经 `SETTINGS_TOPIC.get` 的 `effective`（默认回填后的生效值）；写入经 `SETTINGS_TOPIC.update`，载荷 `{scope, patch}`（scope 见下节作用域）；**写后重拉刷新**（成功同步存储真值，失败把控件拉回，失败 reason 经状态行提示——含 `no-workspace` 拒绝码）。
+- **联动置灰（纯 UI 态，不改变写入）**：`autoFormat` 总开关关闭 → 自动格式化 Tab 下游**设置行**置灰（`aria-disabled` + 类名 + tooltip「总开关已关闭，此设置暂不可用」），总开关自身可用；`userDefinedRegExp` 再受 `userDefinedRegSwitch` 二级联动。打开总开关后下行随写后重拉恢复可用。
+
+## 作用域语义（settingsContext facet 消费）
+
+- **组件消费观察面，不自绘作用域切换器**：作用域选择器（用户默认 / 当前工作区）由平台外壳持有，本组件只消费 `settingsContext.scopeState()` / `onScopeChange`（平台等值不分发）。
+- **写入目标层跟随**：`SETTINGS_TOPIC.update` 的 scope 取 `scopeState().scope`——切到工作区层后写入落 workspace 层，切回用户层落 user 层；`onScopeChange` 分发后重拉对齐显示（effective 与来源徽章都随 layers 解析变化）。`hasWorkspace === false` 时平台快照不出现 workspace 来源，覆盖入口自然不出现；写入/清除遭 `no-workspace` 拒绝经状态行兜底并回滚控件。
+- **行级来源徽章 + 清除覆盖**：仅 facet 在场且 `sources[key] === 'workspace'` 的行呈现「工作区覆盖」徽章与「清除覆盖」动作；**清除覆盖 = 恢复继承用户默认值，不是恢复出厂默认**（`SETTINGS_TOPIC.clearOverride`，平台 `clearWorkspaceOverride` 语义），清除后重拉（徽章消失 + effective 回退用户层）。
+- **规则 Tab 用户级标注**：规则/富结构存储是 globalStorage 语义用户级（无工作区作用域），内置/自定义规则 panel 顶部静态标注「用户级数据：全局共享，不随工作区隔离」；规则区不出现任何作用域 UI。标注是数据级说明，facet 降级形态下仍在。
+- **facet 判空降级**：`settingsContext` 缺席（旧宿主 / 编辑器页形态）→ 无作用域相关 UI（徽章/清除入口不呈现——节点常驻但 `hidden`，不进可访问树），写入目标层固定 `'user'`，页面其余功能完整可用。
+- **清单下界**：`vsidianAddon.api ^1.1.0`（settingsContext 自 vsidian 附加组件 API 1.1.0 发行；`^1.1.0` 仍包含宿主 1.2.0，兼容判定不变）。
+
+## 搜索定位链路（locateTarget 消费）
+
+平台全局设置搜索只给落点 `{kind: 'def' | 'group', key}`（键空间与注册 keys / 组键同源），**切页内 Tab 与定位控件是组件自己的职责**。消费面：`onLocateTarget` 订阅（订阅即回放挂起目标）+ 装配时 `locateTarget()` 初值拉取（双保险，重复到达由幂等吸收）。
+
+映射：`def` → 设置行（`settingKeyToTabId` 切 Tab + 行滚动 + 高亮）；`group` → 组首卡片（`groupKeyToCardAnchor`）。高亮形态 = 目标节点 `data-located="<kind>:<key>"` + 样式类，`scrollIntoView({block: 'nearest'})` 滚动进可视区。
+
+三条定位语义（切片 3 落档）：
+
+1. **重复定位不去重，组件幂等是平台契约**——平台刻意不做等值去重，同一目标重复交付即重新滚动/高亮（高亮保持单份，全局单高亮：换目标先清旧标记）。
+2. **定位高亮是常驻标记**——null 清除或换目标前不自动消退；作用域切换触发的重拉走单行刷新（不重建 DOM），高亮不丢。
+3. **首开定位等首次 `get` 结算后才落位**——目标早于首次渲染（`SETTINGS_TOPIC.get` 未返回）先排队，首次 `refreshSettings` 结算（成败皆算）后补投，避免高亮/滚动落在值尚未应用的行上；排队期间收到 null 则丢弃排队目标。
+
+**未知键静默降级**：未注册键 / 未知组键 / 组内无定义 → 不报错、不切 Tab、不高亮、不滚动、不排队（与平台注册键空间同空间的外来输入）。
+
+## 上游对照
+
+| 上游锚点（easy_typing_settings_tab.ts） | 移植落点 | 语义与偏差 |
+| --- | --- | --- |
+| 5-Tab 导航（编辑增强/自动格式化/内置规则/自定义规则/其他） | `SETTINGS_TAB_IDS` + Tab 框架 | 同名同序；Tab 态同为内存态（页面卸载复位） |
+| Tab2 卡片序（总开关 → 语言对 → 行内空格 → 前缀词典 → 自定义正则 → 排除文件） | `SETTINGS_TAB_CARDS` 卡片分区 | 卡片结构与序对照；「语言间空格策略」为本仓 rulesUi spacing 分区挂入（非设置行，卡片间插入） |
+| 上游 `newLineBelow` 无字段 | `editEnhance` 卡末位 | #13 本仓门控键殿后（见 settings-mapping.md §二表末行） |
+| excludeFiles 卡片归 Tab2 | `excludeFiles` 卡 → 自动格式化 Tab | 声明面在 `general` 组（两套呈现，见上文归属表节） |
+| 上游设置控件（checkbox/dropdown/text/textarea） | 元数据驱动控件形态 | 形态一致；枚举档位用平台 `enumLabels` 双语标签（#477） |
+| 作用域（上游无） | settingsContext 消费 | 平台侧扩展面：Obsidian 插件设置单层，无 user/workspace 双层对照——作用域语义为平台原生口径，非移植 |
+| 搜索定位（上游无对应自绘页定位） | locateTarget 消费 | 平台全局设置搜索能力（#472 索引驱动 + 交付面），组件补齐切 Tab/滚动/高亮 |
+
+## 验收口径（票面映射）
+
+- **归属映射纯函数**：`test/settings-tabs-model.test.ts`——24 键全覆盖无遗漏、excludeFiles 特例归自动格式化、卡片键并集 = 24 键恰好一次、组路由与卡片锚点两套口径咬合、Tab 计数（6/14/4）、总开关是 autoFormat 卡首键。
+- **Tab 框架与设置行 DOM**：`test/settings-tabs-ui.test.ts`——hero 链接、tablist aria 配对与键盘导航、面板常驻 hidden 切换、24 行渲染与控件形态矩阵、行文案来自既有 i18n、初值经 effective、写入通道（scope user + 写后重拉 + change 触发 + excludeFiles 拆行）、写入失败状态行回滚、联动置灰矩阵（含二级联动与恢复）、规则四分区挂入对应 panel、dispose。
+- **作用域接入**：`test/settings-tabs-scope.test.ts`——facet 判空降级（无作用域 UI + 写入固定 user）、写入目标层跟随 scopeState、onScopeChange 重拉对齐、dispose 退订、no-workspace 拒绝提示与控件回滚、规则 Tab 用户级标注（含降级形态仍在）、workspace 徽章显隐、清除覆盖成功（载荷/重拉/回退用户层）/失败（reason 提示、徽章保持）。
+- **搜索定位**：`test/settings-tabs-locate.test.ts`——首开回放（订阅回放 + 初值双投只落一次高亮）、已开立即交付（不触发重拉）、def/group 两类映射与组特例（general 锚排除文件卡）、未知键静默降级、重复目标重入、换目标清旧、null 清除（含排队丢弃）、get 挂起排队补投、dispose 退订、与作用域重拉共存、facet 缺席无定位消费痕迹。
+- **真实观感归人工清单**：暗/亮主题真实绘制、中英双语、长内容滚动、物理键盘 Tab 导航、作用域切换/清除覆盖实操、全局搜索定位实操（含重复点击重新滚动）、规则四分区回归——[manual-verification.md](../manual-verification.md) 二十二节（A83–A88）。
+- `npm run compile`（三产物构建 + `tsc --noEmit`）通过；全部测试绿，不回归。
+
+## 已知边界
+
+- **Tab 态不持久化**：内存态，页面卸载即复位默认「编辑增强」；搜索定位的订阅回放可覆盖首开主要 UX 损失。
+- **设置值无推送通道**：页面在每次写后/清除后/作用域切换后重拉 `SETTINGS_TOPIC.get` 刷新；跨窗口实时同步不做（平台作用域推送同款边界，见 settings-mapping.md §六）。写入失败（`no-workspace` 等 reason）经状态行提示。
+- **spacing 卡片不随 autoFormat 总开关联动置灰**：语言间空格策略分区是规则域渲染（rulesUi spacing），与设置行（设置域）渲染分离；联动置灰仅覆盖自动格式化 Tab 的设置行。总开关关闭时 spacing 分区仍可编辑，其生效由引擎侧 autoFormat 总门把守。
+- **定位补投以首次 `get` 结算为闸**：get 结算成败皆算（失败时行以默认形态在场）；若通道挂起无响应（promise 永不落定），首开排队目标停留在排队态不投递——组件不为 get 另设超时，也不绕过结算直接投递。
+- **facet 缺席 = 降级形态**：旧宿主 / 编辑器页形态下无作用域相关 UI、无定位消费，写入目标层固定 `'user'`；页面其余功能完整可用（`^1.1.0` 下界保证发行宿主恒有 facet，降级形态仅为防御性兼容与测试注入面）。

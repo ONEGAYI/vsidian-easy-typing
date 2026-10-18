@@ -56,7 +56,7 @@
 
 1. **兼容检查通过**：vsidian 装载器对组件清单做兼容判定（`vsidianAddon.api` 与 `experimental` 各项范围须包含宿主版本），通过才接入。观察通道是「Vsidian 附加组件」输出通道（Output 面板；英文界面显示 Vsidian Add-ons）——通过时无拒载记录；被拒时形如 `addon ONEGAYI.vsidian-easy-typing register rejected: incompatible-api (declared api ..., host ...)`，同时组件 activate 抛错进入扩展宿主日志。注意该输出通道是普通 channel、**不落盘**——交互场景看 Output 面板；日志文件面的等价证据是 exthost 日志中组件激活成功且无异常（被拒必然抛错留痕）。
 2. **组件激活**：exthost 日志（上节路径）出现 `ExtensionService#_doActivateExtension ONEGAYI.vsidian-easy-typing, activationEvent: 'api', root cause: onegayi.vsidian`——依赖链激活；宿主不在场的典型报错是 `ONEGAYI.vsidian-easy-typing: 当前扩展宿主中未找到 Vsidian（onegayi.vsidian）`（i18n `noHost` 消息；英文界面为 `Vsidian (onegayi.vsidian) not found in this extension host`）。setup 生命周期跑通的旁证：renderer.log 中 vsidian 为本组件创建的存储目录观察器记录（`...addons/ONEGAYI.vsidian-easy-typing`，ENOENT 属预期——目录惰性创建）。
-3. **experimental 入口可用**：行为生效即证明——Live 正文键入 `。。` 出 `.`（规则引擎经 `cm6` / `syntax` 等实验入口驱动）。设置侧入口同证：Vsidian 设置「附加组件」分页出现本组件条目，规则管理页可打开。清单层面的蕴含关系：兼容判定通过 = 声明的全部实验入口在宿主 API 面在场（任一缺位即拒载）；行为级核验属 #21 人工清单（A1 起逐项），日志联调不替代。
+3. **experimental 入口可用**：行为生效即证明——Live 正文键入 `。。` 出 `.`（规则引擎经 `cm6` / `syntax` 等实验入口驱动）。设置侧入口同证：Vsidian 设置「附加组件」分页出现本组件条目，组件详情打开五 Tab 自绘设置页（#55 起为主视图）。清单层面的蕴含关系：兼容判定通过 = 声明的全部实验入口在宿主 API 面在场（任一缺位即拒载）；行为级核验属 #21 人工清单（A1 起逐项），日志联调不替代。
 
 > debug 日志门控（默认关）：设置页开启 `debug` 后，扩展宿主控制台出现 `[vsidian-easy-typing]` 前缀日志（`src/logging.ts`），联调排障时可作补充通道。
 
@@ -82,14 +82,14 @@
 ### 编译期：vendor 类型快照锚定
 
 - `types/vendor/` 是从 vsidian 仓生成的类型快照，文件头标注来源 commit，**禁止手改**；源码只允许 `import type` 消费（`test/scaffold.test.ts` 钉住）。
-- **锚点实值以 `scripts/vendorSdkTypes.mjs` 的 `DEFAULT_COMMIT` 为准**，当前为 `9f2d292753291db5fa5c45cc3f6dcbbd71c2e37c`。票据与文档转述的锚点可能滞后，一律回脚本核对。
+- **锚点实值以 `scripts/vendorSdkTypes.mjs` 的 `DEFAULT_COMMIT` 为准**，当前为 `f7b80d6eda00d16f4fb7ead49aa86fcd41cb75c8`（API 1.2.0 发行基线，含 #55 消费的 settingsContext 设置页上下文面）。票据与文档转述的锚点可能滞后，一律回脚本核对。
 - `npm run vendor:check` 用 `DEFAULT_COMMIT` 重新生成并比对已提交快照。vsidian 升级（换装新平台 VSIX）后先跑它确认消费面未漂移，再开联调。
 - 源仓定位序：`--source` > 环境变量 `VSIDIAN_SOURCE_REPO` > 脚本内默认相对路径。读取经 `git show <commit>:<path>` 按提交快照取文，不受源仓工作树状态影响。
 - **本地跑 vendor 系命令在两仓同级布局下裸跑即可**（默认约定：本仓与 vsidian 主仓同在 `_Extensions` 目录下，脚本默认相对路径即指向同级主仓根）；源仓不在同级位置时（如模板复制者）以 `--source` 或 `VSIDIAN_SOURCE_REPO` 指向 vsidian 主仓根，不可达时报「源仓不是 git 仓库」退出并附指引。CI 即显式形态（partial clone vsidian 后以 `VSIDIAN_SOURCE_REPO` 指向，锚定 commit 不可达必须失败）。
 
 ### 装载期：清单兼容声明与拒载行为
 
-- 本仓清单声明 `vsidianAddon.api ^1.0.0` 与 `experimental` 各项（`cm6` / `headingFold` / `viewIdentity` / `syntax`）一律 `^` 范围——**范围必须 `^`**：宿主兼容判定要求声明范围包含宿主版本，精确版本在宿主升级即判不兼容（平台实证坑，`test/scaffold.test.ts` 钉死）。
+- 本仓清单声明 `vsidianAddon.api ^1.1.0`（#55 起：settingsContext 设置页上下文面自 API 1.1.0 发行，升下界属最低能力如实声明）与 `experimental` 各项（`cm6` / `headingFold` / `viewIdentity` / `syntax` / `hostSettings`）一律 `^` 范围——**范围必须 `^`**：宿主兼容判定要求声明范围包含宿主版本，精确版本在宿主升级即判不兼容（平台实证坑，`test/scaffold.test.ts` 钉死）。
 - vsidian 装载器兼容判定的两种拒载：`api-range`（api 范围不含宿主版本）与 experimental 声明的入口宿主未提供（entry not available）。拒载发生在 `registerAddon`——组件进程照常激活但注册被拒，activate 抛错，行为与设置页条目均不出现。
 - 联调排障时先看拒载日志区分两道闸：`register rejected: incompatible-api` 是装载期闸（版本声明问题）；编译都过不了是编译期闸（快照漂移或类型不匹配）。
 

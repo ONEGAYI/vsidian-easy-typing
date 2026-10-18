@@ -1,12 +1,12 @@
 # 规则管理 UI——自定义设置页自绘（工单 #16）
 
-上游 5-Tab 设置页的规则域（`easy_typing_settings_tab.ts` 的内置/自定义规则两 Tab + `rule_edit_modal.ts` 编辑 Modal，合计约 1700 行 UI）移植为 Vsidian 平台自定义设置页自绘。事实源模块：`src/rulesUi.ts`（视图层）、`src/rules/rules-ui-model.ts`（表单纯逻辑）、`src/rules/rules-settings-client.ts`（数据客户端）、`src/page-settings.ts`（入口装配）、`src/settings.css`（scoped 样式）；测试矩阵：`test/rules-ui-model.test.ts`（纯逻辑 36 例，#17 增函数面）、`test/rules-settings-client.test.ts`（数据客户端）、`test/rules-ui.test.ts`（jsdom 端到端 15 例，#17 增函数引用选择三例）。
+上游 5-Tab 设置页的规则域（`easy_typing_settings_tab.ts` 的内置/自定义规则两 Tab + `rule_edit_modal.ts` 编辑 Modal，合计约 1700 行 UI）移植为 Vsidian 平台自定义设置页自绘；#55 起整个设置页升为五 Tab 结构，本页四分区作为 hosts 挂入对应 Tab 的 panel（装配见 [settings-tabs.md](settings-tabs.md)）。事实源模块：`src/rulesUi.ts`（视图层）、`src/rules/rules-ui-model.ts`（表单纯逻辑）、`src/rules/rules-settings-client.ts`（数据客户端）、`src/settingsTabsUi.ts`（五 Tab 页装配，规则分区 hosts 挂入）、`src/page-settings.ts`（入口装配）、`src/settings.css`（scoped 样式）；测试矩阵：`test/rules-ui-model.test.ts`（纯逻辑 36 例，#17 增函数面）、`test/rules-settings-client.test.ts`（数据客户端）、`test/rules-ui.test.ts`（jsdom 端到端 15 例，#17 增函数引用选择三例）。
 
 ## 范围与模块结构
 
 | 上游锚点 | 移植落点 | 语义与偏差 |
 | --- | --- | --- |
-| 设置页 Tab3「内置规则」+ Tab4「自定义规则」 | `renderBuiltinSection` / `renderUserSection` | 分组展示形态一致；**上游 5-Tab 导航不移植**（本页只承载规则域，其余设置域走平台「附加组件」分页，见 [settings-mapping.md](settings-mapping.md)） |
+| 设置页 Tab3「内置规则」+ Tab4「自定义规则」 | `renderBuiltinSection` / `renderUserSection` | 分组展示形态一致；上游 5-Tab 导航自 #55 起整体移植——本页两分区经 hosts 挂入五 Tab 自绘设置页的「内置规则 / 自定义规则」panel（归属表与页面结构见 [settings-tabs.md](settings-tabs.md)），其余设置域同页承载 |
 | `RuleEditModal`（611 行） | `buildFormDom` + `refreshFormVisibility` + `src/rules/rules-ui-model.ts` | 表单字段、pill/chip 交互、可见性联动（SelectKey 隐藏正则与右匹配、Code 作用域点亮语言行）逐项对照；Modal 换为 mountRoot 内自绘浮层（backdrop + dialog） |
 | `buildRuleItem` | `buildUserRuleItem` / `buildBuiltinRuleItem` | 类型/作用域/函数标签、预览行（description 优先，否则 `触发 → 替换`；函数引用显示 `fn:<ref>`，遗留字符串函数体原样展示）逐项对照 |
 | 拖拽排序（settings_tab drag 族事件） | `attachDragHandlers` + `computeDropIndex` | 事件链与上/下半区判定移植；索引换算抽为纯函数矩阵钉住；落点后不做上游的 DOM 手工搬移——写后刷新全量重渲染（语义等价，列表规模小） |
@@ -34,7 +34,7 @@
 
 ## 上游简化清单（有意为之，非遗漏）
 
-- 5-Tab 导航与设置域其他 Tab（编辑增强/自动格式化/其他）不进本页——23 项设置走平台设置 schema（#3 已落）。
+- ~~5-Tab 导航与设置域其他 Tab（编辑增强/自动格式化/其他）不进本页~~ **已解除（#55）**：上游 5-Tab 导航整体移植——24 项设置行与规则四分区同挂一个五 Tab 自绘设置页（[settings-tabs.md](settings-tabs.md)），设置定义保持声明注册（平台基础表单降为次级页签，映射表见 [settings-mapping.md](settings-mapping.md)）。
 - 上游 `FolderSuggest`（规则存储路径建议）无对应概念（#3 已剔除 `rulesStoragePath`），本页展示 `storageUri` 只读提示代替。
 - 拖拽落点后上游做 DOM 手工搬移优化，本页写后刷新全量重渲染。
 
@@ -56,7 +56,7 @@
 - **宿主禁用灰态的族覆盖语义**：一条 Input 类用户规则在五个 Input 族各有一份实例（`resolveRuleFamilies` 归族设计），任一族在场即可触发——灰态判定是「覆盖族**全部**被禁」（多对多归族的精确语义，非任一禁即灰）。
 - **内置开关的双通道**：开关关闭恒走 `deleteBuiltinRule`（deletedBuiltinRuleIds 语义）；仅「在场但 `enabled=false`」的存量态（外部工具写入，UI 无此写路径）打开时走 `toggleRuleEnabled` 启用通道。
 - **语言间空格策略分区（#49）**：现役语言对 chips（内置类经 `scriptNames` 显示名映射）+ 双下拉添加 + 自定义词典成对编辑（失焦整表提交 `setLanguagePairs` / `setCustomScriptCategories`）；上限 64 对 / 128 类整批拒绝（`invalid-payload`）。持久化与引擎消费见 [rules-storage.md](rules-storage.md)。
-- **behaviorState 注入**：`RulesSettingsViewOptions.behaviorState` 为本地结构接口（`RulesBehaviorStateLike`，形状对齐 vendor `AddonBehaviorStateFacet`），入口 `page-settings.ts` 传 `sdk.behaviorState`——视图层保持零 SDK 依赖，jsdom 测试注入 mock。
+- **behaviorState 注入**：`RulesSettingsViewOptions.behaviorState` 为本地结构接口（`RulesBehaviorStateLike`，形状对齐 vendor `AddonBehaviorStateFacet`），入口 `page-settings.ts` 经 `settingsTabsUi.ts` 透传 `sdk.behaviorState`——视图层保持零 SDK 依赖，jsdom 测试注入 mock。
 - **spacing 分区写路径（评审轮 1–3 落档）**：整表写经本地串行队列（每笔写含写后刷新落地后下一笔才取基面，防浏览器 blur→change→click 事件序下整表写以陈旧基面互相覆盖）+ 词典基面取 DOM 读面；编辑保护 = 焦点在编辑面**或**存在未提交草稿脏标记（真实浏览器 mousedown 即移焦点，仅凭焦点不够）。
 - **已知窄窗口（延后跟踪）**：① 草稿在途时非消费性 spacing 写（chips/词典删除）会清脏标记并重建，草稿丢失——修法是重建时回注草稿值，「按写种类选择性清位」会让 chip 删除不即时反映，更糟；② client.load 单飞下写后 load 可能并入更早发出的 get（快照缺该笔写 → 控件瞬态回弹，下次动作自愈，存储无损）；③ 存量「与内置类同名」词典条目（仅手改 rule-state.json 可造出）会被 UI 预检整表拦截、该行无法经 UI 删除。三者窗口均窄、无存储损坏。
 
