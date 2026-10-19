@@ -379,7 +379,6 @@ export const enMessages: Messages = {
   // preview) prefers this over the data-state description (default-rules.ts
   // keeps the upstream Chinese data as-is; storage is never rewritten by language)
   builtinRuleDescriptions: {
-    'builtin-autopair-input': 'Auto-complete paired full-width brackets/quotes',
     'builtin-autopair-jump': 'Skip over closing paired symbol to avoid duplicates',
     'builtin-autopair-delete': 'Delete both sides of full-width bracket/quote pairs',
     'builtin-conv-backtick': 'Double middle dot ·· converts to inline code',
@@ -396,7 +395,6 @@ export const enMessages: Messages = {
     'builtin-sel-wrap-backtick': 'Wrap selection with backticks using ·',
     'builtin-sel-wrap-symbols': 'Wrap selection with []/$ using 【/¥/￥',
     'builtin-sel-wrap-quotes': 'Wrap selection with paired full-width quotes',
-    'builtin-sel-wrap-cjk-brackets': 'Wrap selection with 《》 or （） brackets',
     'builtin-quote-convert': 'Convert > or 》 to Markdown blockquote marker',
     'builtin-quote-space': 'Auto-insert space after blockquote marker >',
   },

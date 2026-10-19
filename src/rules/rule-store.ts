@@ -19,7 +19,7 @@
 //
 // IO 全注入（RuleStoreIo），零平台依赖；宿主接线见 rules-host.ts。
 import { RuleEngine, isFunctionReplacementRef, type SimpleRule } from './rule-engine'
-import { DEFAULT_BUILTIN_RULES } from './default-rules'
+import { DEFAULT_BUILTIN_RULES, stripRetiredBuiltins } from './default-rules'
 
 /** 内置规则文件（相对组件数据目录，正斜杠） */
 export const BUILTIN_RULES_FILE = 'builtin-rules.json'
@@ -337,15 +337,19 @@ export class RuleStore {
       await requireAbsent(BUILTIN_RULES_FILE)
       await this.saveBuiltinRules(this.defaults.map((r) => ({ ...r })))
     } else {
+      // #56 退役回收：旧副本与出厂定义内容一致（enabled 差异不算改写）即
+      // 回收并重写磁盘；内容已改写的副本保留。与外部重载同入口（init 即
+      // 重载路径），退役副本经外部同步写回不复活。
       const current = this.parseFile(builtinContent)
-      const existingIds = new Set(current.map((r) => r.id).filter(Boolean))
+      const { rules: kept, removed: retiredRemoved } = stripRetiredBuiltins(current)
+      const existingIds = new Set(kept.map((r) => r.id).filter(Boolean))
       const newRules = this.defaults.filter(
         (r) => !existingIds.has(r.id) && !this.deletedBuiltinRuleIds.includes(r.id),
       )
-      if (newRules.length > 0) {
-        await this.saveBuiltinRules([...current, ...newRules.map((r) => ({ ...r }))])
+      if (retiredRemoved || newRules.length > 0) {
+        await this.saveBuiltinRules([...kept, ...newRules.map((r) => ({ ...r }))])
       } else {
-        this.cachedBuiltinRules = current
+        this.cachedBuiltinRules = kept
       }
     }
 

@@ -42,12 +42,11 @@ const DELETE_RULE_IDS = [
   'builtin-del-wikilink',
 ]
 
-/** 全部 4 条 SelectKey 类内置规则 */
+/** 全部 3 条 SelectKey 类内置规则（cjk-brackets 已随 #56 清退，平台兜底） */
 const SELECTKEY_RULE_IDS = [
   'builtin-sel-wrap-backtick',
   'builtin-sel-wrap-symbols',
   'builtin-sel-wrap-quotes',
-  'builtin-sel-wrap-cjk-brackets',
 ]
 
 /** 模拟 AddonInputContext（快照已含本次输入；LF 坐标） */
@@ -86,13 +85,23 @@ describe('管线集成：标点转换（builtin-fw2hw-double）', () => {
   })
 })
 
-// ===== 票面场景 2：括号补全（autopair 族，真实内置规则） =====
+// ===== 票面场景 2：配对跳过（autopair 族；配对补全已随 #56 清退） =====
 
-describe('管线集成：括号补全（builtin-autopair-input / builtin-autopair-jump）', () => {
-  const engine = engineOf(['builtin-autopair-jump', 'builtin-autopair-input'])
+describe('管线集成：配对跳过与用户域补全（builtin-autopair-jump / 用户规则引用 autopairInput）', () => {
+  const engine = engineOf(['builtin-autopair-jump'])
 
-  it('输入（ → 补全配对（$0 经 #14 Tabstop 解析，光标落配对中间）', () => {
-    const plan = planInputRuleModification(engine, inputCtx('（', 1, 'input.type', '（'))
+  it('用户规则引用 autopairInput 函数：输入（ → 补全配对（#56 清退后用户域可用）', () => {
+    const userEngine = engineOf(['builtin-autopair-jump'])
+    userEngine.addSimpleRules([
+      {
+        id: 'user-autopair-input',
+        trigger: '[（《「『“”‘’《]',
+        replacement: { kind: 'function', ref: 'autopairInput' },
+        options: 'rF',
+        priority: 10,
+      },
+    ])
+    const plan = planInputRuleModification(userEngine, inputCtx('（', 1, 'input.type', '（'))
     expect(plan).toEqual({
       changes: [{ offset: 0, length: 1, text: '（）' }],
       selection: { anchor: 1, head: 1 },
@@ -118,7 +127,7 @@ describe('管线集成：中英空格基线', () => {
     expect(planInputRuleModification(engine, inputCtx('中文a', 3, 'input.type', 'a'))).toBeNull()
   })
 
-  it('全量 20 条内置规则装载下普通英文输入不产生任何修饰', () => {
+  it('全量 18 条内置规则装载下普通英文输入不产生任何修饰（#56 清退 2 条）', () => {
     expect(planInputRuleModification(engine, inputCtx('plain text', 10, 'input.type', 't'))).toBeNull()
   })
 })
@@ -165,11 +174,12 @@ describe('选区语义（单选区基线）', () => {
   })
 
   it('选区替换形态（replaced 非空）→ null：上游 changedStr.length < 1 同口径（#9 接缝）', () => {
-    // 选中 hello 键入（：快照 （、光标塌缩——autopair 若放行会基于残缺
-    // 上下文命中并把被替换内容丢失；上游该事务只走 SelectKey 分支
-    const autopair = engineOf(['builtin-autopair-input'])
+    // 选中 hello 键入。：快照 。、光标塌缩——Input 规则若放行会基于残缺
+    // 上下文命中并把被替换内容丢失；上游该事务只走 SelectKey 分支（#56
+    // 前以 autopair-input 为场景，清退后换存续规则钉同一门）
+    const punct = engineOf(['builtin-fw2hw-double'])
     expect(
-      planInputRuleModification(autopair, inputCtx('（', 1, 'input.type', '（', [{ anchor: 1, head: 1 }], { from: 0, to: 5, text: 'hello' })),
+      planInputRuleModification(punct, inputCtx('。', 1, 'input.type', '。', [{ anchor: 1, head: 1 }], { from: 0, to: 5, text: 'hello' })),
     ).toBeNull()
   })
 
@@ -230,9 +240,19 @@ describe('per-range 评估：多光标全命中（票面主场景）', () => {
     ])
   })
 
-  it('同 range 处替换体更长时（autopair）后方光标正向平移', () => {
+  it('同 range 处替换体更长时（用户规则 autopair）后方光标正向平移', () => {
     // 快照 （\n（，双光标 [1, 3]；补全 （） 后第二光标 = 3 + delta(2-1=+1) = 4
-    const autopair = engineOf(['builtin-autopair-input'])
+// #56 清退后以用户规则引用 autopairInput 的形态钉住同一平移契约
+    const autopair = engineOf([])
+    autopair.addSimpleRules([
+      {
+        id: 'user-autopair-input',
+        trigger: '[（《「『“”‘’《]',
+        replacement: { kind: 'function', ref: 'autopairInput' },
+        options: 'rF',
+        priority: 10,
+      },
+    ])
     const plan = planInputRuleModification(
       autopair,
       inputCtx('（\n（', 1, 'input.type', '（', [
@@ -864,13 +884,25 @@ describe('SelectKey 管线：内置规则选中包裹矩阵（真实数据端到
     expect(r?.plan?.changes[0]?.text).toBe('$hello$')
   })
 
-  it('选中后键 “ → 全角引号配对包裹（sel-wrap-quotes，函数体规则）', () => {
+  it('选中后键 “（开引号）→ null：#56 收窄后让位平台选区包裹兜底', () => {
     const r = planSelectKeyRuleModification(engine, wrapCtx('“'))
-    expect(r?.plan?.changes[0]?.text).toBe('“hello”')
+    expect(r).toBeNull()
   })
 
-  it('选中后键 （ → 全角括号配对包裹（sel-wrap-cjk-brackets，函数体规则）', () => {
-    const r = planSelectKeyRuleModification(engine, wrapCtx('（'))
+  it('用户规则引用 selWrapCjkBrackets 函数（#56 清退后用户域仍可包裹 （）', () => {
+    // 票面红线：用户规则不受退役政策限制——与退役内置项同触发式、同函数
+    // 引用的用户规则照常执行（出厂形态的等价能力归 test/rule-retirement.test.ts）
+    const userEngine = engineOf([...SELECTKEY_RULE_IDS])
+    userEngine.addSimpleRules([
+      {
+        id: 'user-cjk-wrap',
+        trigger: '《（',
+        replacement: { kind: 'function', ref: 'selWrapCjkBrackets' },
+        options: 'sF',
+        priority: 40,
+      },
+    ])
+    const r = planSelectKeyRuleModification(userEngine, wrapCtx('（'))
     expect(r?.plan?.changes[0]?.text).toBe('（hello）')
   })
 

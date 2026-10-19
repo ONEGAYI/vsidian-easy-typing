@@ -61,11 +61,11 @@ function familyIndexOfRule(ruleId: string): number {
 }
 
 describe('功能族契约：分族覆盖与无重叠', () => {
-  it('族表恰好覆盖全部 Input 类内置规则（10 条），无遗漏无重复', () => {
+  it('族表恰好覆盖全部 Input 类内置规则（9 条，#56 清退 autopair-input），无遗漏无重复', () => {
     const familyRuleIds = INPUT_RULE_FAMILIES.flatMap((f) => f.ruleIds)
     expect(new Set(familyRuleIds).size).toBe(familyRuleIds.length)
     expect([...familyRuleIds].sort()).toEqual(inputRulesSortedById().sort())
-    expect(familyRuleIds.length).toBe(10)
+    expect(familyRuleIds.length).toBe(9)
   })
 
   it('族表不含 Delete / SelectKey 类规则（归 #9 管线）', () => {
@@ -74,7 +74,7 @@ describe('功能族契约：分族覆盖与无重叠', () => {
       .map((r) => r.id)
     const familyRuleIds = new Set(INPUT_RULE_FAMILIES.flatMap((f) => f.ruleIds))
     for (const id of nonInput) expect(familyRuleIds.has(id), id).toBe(false)
-    expect(nonInput.length).toBe(10)
+    expect(nonInput.length).toBe(9)
   })
 })
 
@@ -159,26 +159,28 @@ describe('注册形状契约（AddonBehaviorRegistration）', () => {
     ).toBe(true)
   })
 
-  it('onInput 全链：括号补全场景经注册回调产出计划；delete 事件返回 null', () => {
+  it('onInput 全链：行内代码转换场景经注册回调产出计划；delete 事件返回 null', () => {
+    // 括号补全 autopair-input 已随 #56 清退（平台符号补全兜底）——示例
+    // 换 03-symbol-convert 的 ·· → ``（builtin-conv-backtick）
     const { registrations } = registerAll('zh-CN')
-    const autopair = registrations.find((r) => r.id === '02-autopair')!
-    const plan = autopair.onInput({
+    const conv = registrations.find((r) => r.id === '03-symbol-convert')!
+    const plan = conv.onInput({
       userEvent: 'input.type',
-      inputText: '（',
+      inputText: '·',
       replaced: null,
       docUri: 'file:///a.md',
-      snapshot: { text: '（', selections: [{ anchor: 1, head: 1 }], version: 1, revision: 1 },
+      snapshot: { text: '··', selections: [{ anchor: 2, head: 2 }], version: 1, revision: 1 },
     })
     expect(plan).toEqual({
-      changes: [{ offset: 0, length: 1, text: '（）' }],
+      changes: [{ offset: 0, length: 2, text: '``' }],
       selection: { anchor: 1, head: 1 },
     })
-    const onDelete = autopair.onInput({
+    const onDelete = conv.onInput({
       userEvent: 'delete.backward',
       inputText: '',
-      replaced: { from: 0, to: 1, text: '）' },
+      replaced: { from: 0, to: 1, text: '·' },
       docUri: 'file:///a.md',
-      snapshot: { text: '（）', selections: [{ anchor: 1, head: 1 }], version: 1, revision: 1 },
+      snapshot: { text: '·', selections: [{ anchor: 0, head: 0 }], version: 1, revision: 1 },
     })
     expect(onDelete).toBeNull()
   })
@@ -189,7 +191,7 @@ describe('注册形状契约（AddonBehaviorRegistration）', () => {
     // 路径（mainDocUri 不可得）：主视图文档须与快照一致才放行（快照已含
     // 本次键入，主视图文档同含）
     const registrations: RuleBehaviorRegistrationSubset[] = []
-    const MAIN_DOC = '主实例的另一篇文档（'
+    const MAIN_DOC = '主实例的另一篇文档··'
     registerRuleInputBehaviors({
       behaviors: {
         register: (reg) => {
@@ -202,25 +204,25 @@ describe('注册形状契约（AddonBehaviorRegistration）', () => {
       language: 'zh-CN',
       ownsContext: (ctx) => inputContextIsMainInstance(ctx, null, MAIN_DOC),
     })
-    const autopair = registrations.find((r) => r.id === '02-autopair')!
-    // 嵌入实例驱动（快照是嵌入文档的，≠ 主视图文档）：本会产出括号补全
-    // 计划的形态 → null
+    const conv = registrations.find((r) => r.id === '03-symbol-convert')!
+    // 嵌入实例驱动（快照是嵌入文档的，≠ 主视图文档）：本会产出行内代码
+    // 转换计划的形态 → null
     expect(
-      autopair.onInput({
+      conv.onInput({
         userEvent: 'input.type',
-        inputText: '（',
+        inputText: '·',
         replaced: null,
         docUri: 'file:///embed/b.md',
-        snapshot: { text: '（', selections: [{ anchor: 1, head: 1 }], version: 1, revision: 1 },
+        snapshot: { text: '··', selections: [{ anchor: 2, head: 2 }], version: 1, revision: 1 },
       }),
     ).toBeNull()
     // 主实例驱动（快照与主视图一致）：守卫放行，计划照常
-    const passThrough = autopair.onInput({
+    const passThrough = conv.onInput({
       userEvent: 'input.type',
-      inputText: '（',
+      inputText: '·',
       replaced: null,
       docUri: 'file:///main.md',
-      snapshot: { text: MAIN_DOC, selections: [{ anchor: 10, head: 10 }], version: 1, revision: 1 },
+      snapshot: { text: MAIN_DOC, selections: [{ anchor: 11, head: 11 }], version: 1, revision: 1 },
     })
     expect(passThrough).not.toBeNull()
   })
@@ -228,22 +230,22 @@ describe('注册形状契约（AddonBehaviorRegistration）', () => {
   it('tabstop 暂存通道（#15×#25 接线）：命中含占位符的计划后可取、读即消费', () => {
     const { registrations, runtime } = registerAll('zh-CN')
     // 基线：无命中后为空
-    expect(runtime.consumePendingTabstops(docOf('（）'))).toEqual([])
-    const autopair = registrations.find((r) => r.id === '02-autopair')!
-    autopair.onInput({
+    expect(runtime.consumePendingTabstops(docOf('``'))).toEqual([])
+    const conv = registrations.find((r) => r.id === '03-symbol-convert')!
+    conv.onInput({
       userEvent: 'input.type',
-      inputText: '（',
+      inputText: '·',
       replaced: null,
       docUri: 'file:///a.md',
-      snapshot: { text: '（', selections: [{ anchor: 1, head: 1 }], version: 1, revision: 1 },
+      snapshot: { text: '··', selections: [{ anchor: 2, head: 2 }], version: 1, revision: 1 },
     })
-    // 命中计划（（）补全）携带 $0 → tabstop 组暂存待取（文档已呈现计划
+    // 命中计划（`` 转换）携带 $0 → tabstop 组暂存待取（文档已呈现计划
     // 替换形态 → B-F2 校验通过）
-    const pending = runtime.consumePendingTabstops(docOf('（）'))
+    const pending = runtime.consumePendingTabstops(docOf('``'))
     expect(pending.length).toBeGreaterThan(0)
     expect(pending[0]).toMatchObject({ number: 0 })
     // 读即消费：再取为空
-    expect(runtime.consumePendingTabstops(docOf('（）'))).toEqual([])
+    expect(runtime.consumePendingTabstops(docOf('``'))).toEqual([])
   })
 
   it('注册拒绝（duplicate-id）不是故障：结果记录 ok:false，不抛错', () => {
@@ -363,7 +365,7 @@ function neverResolvingChannel(): { request: () => Promise<{ ok: false; reason: 
 // ===== 工单 #9：Delete / SelectKey 族注册 =====
 
 describe('#9 功能族契约：分族覆盖与链序', () => {
-  it('两族恰好覆盖全部 Delete/SelectKey 类内置规则（6 + 4 条），无遗漏无重复', () => {
+  it('两族恰好覆盖全部 Delete/SelectKey 类内置规则（6 + 3 条，#56 清退 cjk-brackets），无遗漏无重复', () => {
     const expected = DEFAULT_BUILTIN_RULES
       .map((r, index) => ({ r, index }))
       .filter(({ r }) => {
@@ -375,9 +377,9 @@ describe('#9 功能族契约：分族覆盖与链序', () => {
     const familyRuleIds = DELETE_SELECTKEY_RULE_FAMILIES.flatMap((f) => f.ruleIds)
     expect(new Set(familyRuleIds).size).toBe(familyRuleIds.length)
     expect([...familyRuleIds].sort()).toEqual([...expected].sort())
-    expect(familyRuleIds.length).toBe(10)
+    expect(familyRuleIds.length).toBe(9)
     expect(DELETE_SELECTKEY_RULE_FAMILIES.map((f) => f.localId)).toEqual(['06-delete-rules', '07-selectkey-rules'])
-    // 与 #25 五族零重叠：全量 20 条恰好分进七个族
+    // 与 #25 五族零重叠：全量 18 条恰好分进七个族（#56 清退 2 条）
     const all = [...INPUT_RULE_FAMILIES, ...DELETE_SELECTKEY_RULE_FAMILIES].flatMap((f) => f.ruleIds)
     expect(new Set(all).size).toBe(DEFAULT_BUILTIN_RULES.length)
   })
@@ -562,18 +564,19 @@ describe('#9 端到端链仲裁（按平台 addonBehaviors runtime 语义模拟�
     return { plan: null, firedId: null, called }
   }
 
-  it('选中 hello 键 （：Input 五族对选区替换形态让位（replaced 门），SelectKey 族命中包裹', () => {
+  it('选中 hello 键 【：Input 五族对选区替换形态让位（replaced 门），SelectKey 族命中包裹', () => {
     const chain = registerChain()
     const { plan, firedId, called } = driveChain(chain, {
       userEvent: 'input.type',
-      inputText: '（',
+      inputText: '【',
       replaced: { from: 0, to: 5, text: 'hello' },
       docUri: 'file:///a.md',
-      snapshot: { text: '（', selections: [{ anchor: 1, head: 1 }], version: 1, revision: 1 },
+      snapshot: { text: '【', selections: [{ anchor: 1, head: 1 }], version: 1, revision: 1 },
     })
-    // 01-05 全部 null（replaced 门）——若 autopair 放行会占用组并丢被替换内容
+    // 01-05 全部 null（replaced 门）——若 Input 族放行会占用组并丢被替换
+    // 内容（cjk-brackets 已清退，本例走 sel-wrap-symbols 的符号转换）
     expect(firedId).toBe('07-selectkey-rules')
-    expect(plan?.changes[0]?.text).toBe('（hello）')
+    expect(plan?.changes[0]?.text).toBe('[hello]')
     expect(called.filter((c) => c.endsWith(':null')).length).toBe(6) // 01-05 + 06-delete
     expect(called).toContain('02-autopair:null')
   })
@@ -591,17 +594,19 @@ describe('#9 端到端链仲裁（按平台 addonBehaviors runtime 语义模拟�
     expect(plan?.changes).toEqual([{ offset: 0, length: 1, text: '' }])
   })
 
-  it('纯插入（（：Input 族 autopair 照常命中，Delete/SelectKey 族不占用组', () => {
+  it('纯插入 。。：Input 族标点转换照常命中，Delete/SelectKey 族不占用组', () => {
+    // 纯插入 （ 已随 #56 清退无组件命中（平台符号补全兜底）——本例换
+    // 01-punct-collapse 保住「Input 族照常命中」的链仲裁形态
     const chain = registerChain()
     const { plan, firedId } = driveChain(chain, {
       userEvent: 'input.type',
-      inputText: '（',
+      inputText: '。',
       replaced: null,
       docUri: 'file:///a.md',
-      snapshot: { text: '（', selections: [{ anchor: 1, head: 1 }], version: 1, revision: 1 },
+      snapshot: { text: '。。', selections: [{ anchor: 2, head: 2 }], version: 1, revision: 1 },
     })
-    expect(firedId).toBe('02-autopair')
-    expect(plan?.changes[0]?.text).toBe('（）')
+    expect(firedId).toBe('01-punct-collapse')
+    expect(plan?.changes[0]?.text).toBe('.')
   })
 
   it('非触发输入（x 纯插入）：全链零命中，链照常落原生', () => {
@@ -1175,55 +1180,55 @@ describe('tabstop 消费一致性校验（B-F2）', () => {
 
   it('#25：applyEdit 回环窗口内用户键入先到（文档未呈现计划形态）→ 丢弃不激活', () => {
     const { registrations, runtime } = registerInputForAutopair()
-    const autopair = registrations.find((r) => r.id === '02-autopair')!
-    autopair.onInput({
+    const conv = registrations.find((r) => r.id === '03-symbol-convert')!
+    conv.onInput({
       userEvent: 'input.type',
-      inputText: '（',
+      inputText: '·',
       replaced: null,
       docUri: 'file:///a.md',
-      snapshot: inputSnapshot('（', 1),
+      snapshot: inputSnapshot('··', 2),
     })
-    // 用户键入 x 的事务先到：文档 '（x'（计划未应用，applyEdit 将被
+    // 用户键入 x 的事务先到：文档 '`x'（计划未应用，applyEdit 将被
     // stale-snapshot 拒绝）→ 坐标处不是替换体 → 丢弃
-    expect(runtime.consumePendingTabstops(docOf('（x'))).toEqual([])
+    expect(runtime.consumePendingTabstops(docOf('`x'))).toEqual([])
     // 丢弃后槽已清空（正确形态到来也不再激活本次）
-    expect(runtime.consumePendingTabstops(docOf('（）'))).toEqual([])
+    expect(runtime.consumePendingTabstops(docOf('``'))).toEqual([])
   })
 
   it('#25：计划应用后（文档呈现替换形态）→ 正常激活', () => {
     const { registrations, runtime } = registerInputForAutopair()
-    const autopair = registrations.find((r) => r.id === '02-autopair')!
-    autopair.onInput({
+    const conv = registrations.find((r) => r.id === '03-symbol-convert')!
+    conv.onInput({
       userEvent: 'input.type',
-      inputText: '（',
+      inputText: '·',
       replaced: null,
       docUri: 'file:///a.md',
-      snapshot: inputSnapshot('（', 1),
+      snapshot: inputSnapshot('··', 2),
     })
-    expect(runtime.consumePendingTabstops(docOf('（）'))).toEqual([{ number: 0, from: 1, to: 1 }])
+    expect(runtime.consumePendingTabstops(docOf('``'))).toEqual([{ number: 0, from: 1, to: 1 }])
   })
 
-  it('#52 多命中：双光标 autopair 计划应用后 → 第二条 change 按前方 delta 平移校验，两组 $0 均激活', () => {
+  it('#52 多命中：双光标转换计划应用后 → 第二条 change 按前方 delta 平移校验，两组 $0 均激活', () => {
     const { registrations, runtime } = registerInputForAutopair()
-    const autopair = registrations.find((r) => r.id === '02-autopair')!
-    autopair.onInput({
+    const conv = registrations.find((r) => r.id === '03-symbol-convert')!
+    conv.onInput({
       userEvent: 'input.type',
-      inputText: '（',
+      inputText: '·',
       replaced: null,
       docUri: 'file:///a.md',
       snapshot: {
-        text: '（\n（',
+        text: '··\n··',
         selections: [
-          { anchor: 1, head: 1 },
-          { anchor: 3, head: 3 },
+          { anchor: 2, head: 2 },
+          { anchor: 5, head: 5 },
         ],
         version: 1,
         revision: 1,
       },
     })
-    // 应用后文档 （）\n（）：第二条 change 快照 offset 2 → 应用后 2+1=3 处
-    // 应为 （）——修复前按快照坐标查 [2,4) = \n（ 恒失配，tabstop 全丢弃
-    expect(runtime.consumePendingTabstops(docOf('（）\n（）'))).toEqual([
+    // 应用后文档 ``\n``：第二条 change 快照 offset 3 → 平移校验
+    // 通过（修复前按快照坐标查恒失配，tabstop 全丢弃）
+    expect(runtime.consumePendingTabstops(docOf('``\n``'))).toEqual([
       { number: 0, from: 1, to: 1 },
       { number: 0, from: 4, to: 4 },
     ])
@@ -1231,24 +1236,24 @@ describe('tabstop 消费一致性校验（B-F2）', () => {
 
   it('#52 多命中：应用后文档失配（只应用了第一条）→ 丢弃', () => {
     const { registrations, runtime } = registerInputForAutopair()
-    const autopair = registrations.find((r) => r.id === '02-autopair')!
-    autopair.onInput({
+    const conv = registrations.find((r) => r.id === '03-symbol-convert')!
+    conv.onInput({
       userEvent: 'input.type',
-      inputText: '（',
+      inputText: '·',
       replaced: null,
       docUri: 'file:///a.md',
       snapshot: {
-        text: '（\n（',
+        text: '··\n··',
         selections: [
-          { anchor: 1, head: 1 },
-          { anchor: 3, head: 3 },
+          { anchor: 2, head: 2 },
+          { anchor: 5, head: 5 },
         ],
         version: 1,
         revision: 1,
       },
     })
     // 第二处未应用（如 stale-snapshot 部分拒绝）→ 第二条校验失配 → 丢弃
-    expect(runtime.consumePendingTabstops(docOf('（）\n（'))).toEqual([])
+    expect(runtime.consumePendingTabstops(docOf('``\n··'))).toEqual([])
   })
 
   it('#9 SelectKey：包裹计划失配文档 → 丢弃', () => {

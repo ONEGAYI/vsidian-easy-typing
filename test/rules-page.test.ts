@@ -314,13 +314,14 @@ function assemble(initial: Record<string, string> = {}) {
 }
 
 describe('端到端：规则数据链（票面验收 · mock 承载）', () => {
-  it('装载 → 引擎可执行内置规则（输入 · 触发配对补全）', async () => {
+  it('装载 → 引擎可执行内置规则（输入 。 触发全角转半角）', async () => {
     const { engine, client } = assemble()
     expect(await client.load()).toBe(true)
-    // builtin-autopair-input：键入 （ → （） + $0 tabstop（#14 已解析）
-    const result = engine.process(inputCtx('a（', 2))
-    expect(result?.newText).toBe('（）')
-    expect(result?.tabstops).toEqual([{ number: 0, from: 2, to: 2 }])
+    // builtin-fw2hw-double：连续 。。 → .（配对补全 autopair-input 已随
+    // #56 清退，示例换存续规则）
+    const result = engine.process(inputCtx('。。', 2))
+    expect(result?.newText).toBe('.')
+    expect(result?.matchRange).toEqual({ from: 0, to: 2 })
   })
 
   it('mutate 通道增删改用户规则：revision 递增 + 轮询自动重装（新规则可命中）', async () => {

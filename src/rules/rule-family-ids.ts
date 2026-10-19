@@ -27,10 +27,11 @@ export const RULE_INPUT_FAMILY_SEEDS: readonly RuleFamilySeedData[] = [
     ruleIds: ['builtin-fw2hw-double'],
     userRuleType: RuleType.Input,
   },
-  // 上游优先级 5 + 10：配对跳过 + 配对补全（同族：同一触发域，族内按引擎优先级）
+  // 上游优先级 5：配对跳过（配对补全 builtin-autopair-input 已随 #56 清退，
+  // 平台符号补全兜底；引用其函数表的用户规则仍归本族）
   {
     localId: '02-autopair',
-    ruleIds: ['builtin-autopair-jump', 'builtin-autopair-input'],
+    ruleIds: ['builtin-autopair-jump'],
     userRuleType: RuleType.Input,
   },
   // 上游优先级 10：·· 转行内代码 / `· 升级代码块 / ￥$ 转公式 / 行首 》、 转换
@@ -80,7 +81,6 @@ export const RULE_DELETE_SELECTKEY_FAMILY_SEEDS: readonly RuleFamilySeedData[] =
       'builtin-sel-wrap-backtick',
       'builtin-sel-wrap-symbols',
       'builtin-sel-wrap-quotes',
-      'builtin-sel-wrap-cjk-brackets',
     ],
     userRuleType: RuleType.SelectKey,
   },
