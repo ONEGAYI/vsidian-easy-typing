@@ -19,6 +19,11 @@ import {
   stripRetiredBuiltins,
 } from '../src/rules/default-rules'
 import { RuleStore, type RuleStoreIo } from '../src/rules/rule-store'
+import {
+  registerRuleInputBehaviors,
+  registerRuleDeleteSelectKeyBehaviors,
+} from '../src/ruleBehaviorIntercept'
+import type { AddonBehaviorRegistration } from '../types/vendor/shared/addonBehaviors'
 import type { SimpleRule } from '../src/rules/rule-engine'
 
 /** 内存 IO mock（对齐 rule-store.test.ts 形态：files 暴露给断言） */
@@ -214,5 +219,231 @@ describe('用户域零影响（#56 票面红线）', () => {
       key: '（',
     })
     expect(pair?.newText).toBe('（）') // newText 只含 matchRange 替换段（刚键入的 （）
+  })
+})
+
+// ===== 行为注册 harness（真实链：RuleStore 快照 → 族解析 → 注册回调） =====
+
+/** 行为注册面子集（对齐生产注册形态；rulesSource 喂 store 快照） */
+function registerWithSource(source: { builtin: SimpleRule[]; user: SimpleRule[] }) {
+  const registrations: AddonBehaviorRegistration[] = []
+  const behaviors = {
+    register: (reg: AddonBehaviorRegistration) => {
+      registrations.push(reg)
+      return { ok: true as const, key: `ONEGAYI.vsidian-easy-typing#${reg.id}` }
+    },
+    onChanged: () => () => {},
+  }
+  const channel = { request: async () => ({ ok: false as const, reason: 'test' }) }
+  const rulesSource = {
+    snapshot: () => source,
+    onUpdate: () => {},
+  }
+  registerRuleInputBehaviors({ behaviors, channel, language: 'zh-CN', rulesSource })
+  registerRuleDeleteSelectKeyBehaviors({ behaviors, channel, language: 'zh-CN', rulesSource })
+  return registrations
+}
+
+/** 迁移写失败注入：仅 builtin-rules.json 写返回 false，其余照常 */
+function memoryIoBuiltinWriteFails(initial: Record<string, string> = {}) {
+  const base = memoryIo(initial)
+  const io: RuleStoreIo = {
+    readText: base.io.readText,
+    writeText: async (path, content) =>
+      path === 'builtin-rules.json' ? false : base.io.writeText(path, content),
+    list: base.io.list,
+  }
+  return { files: base.files, io }
+}
+
+/** 旧安装 quotes 出厂定义（收窄前四字符形态，base 4a8f731 原样） */
+const legacyQuotes: SimpleRule = {
+  id: 'builtin-sel-wrap-quotes',
+  trigger: `“”‘’`,
+  replacement: { kind: 'function', ref: 'selWrapQuotes' },
+  options: 'sF',
+  priority: 40,
+  description: '选中文字后输入全角引号，配对引号包裹',
+}
+
+describe('改写副本执行归属（#56：保留 ≠ 只存不执行）', () => {
+  it('改写的 cjk-brackets 副本：真实注册链 07 族仍可产出包裹计划', async () => {
+    const modified = { ...retiredById.get('builtin-sel-wrap-cjk-brackets')!, trigger: '《「' }
+    const { io } = memoryIo({
+      'builtin-rules.json': JSON.stringify([
+        modified,
+        DEFAULT_BUILTIN_RULES.find((r) => r.id === 'builtin-sel-wrap-symbols')!,
+      ]),
+      'user-rules.json': '[]',
+      'rule-state.json': JSON.stringify({ deletedBuiltinRuleIds: [] }),
+    })
+    const store = new RuleStore(io)
+    await store.init()
+    const regs = registerWithSource({ builtin: store.getSnapshot().builtin, user: [] })
+    const sel = regs.find((r) => r.id === '07-selectkey-rules')!
+    const plan = sel.onInput({
+      userEvent: 'input.type',
+      inputText: '《',
+      replaced: { from: 0, to: 5, text: 'hello' },
+      docUri: 'file:///a.md',
+      snapshot: { text: '《', selections: [{ anchor: 1, head: 1 }], version: 1, revision: 1 },
+    })
+    expect(plan?.changes).toEqual([{ offset: 0, length: 1, text: '《hello》' }])
+    expect(plan?.selection).toEqual({ anchor: 1, head: 1 })
+  })
+
+  it('改写的 autopair-input 副本：真实注册链 02 族仍可补全配对', async () => {
+    const modified = { ...retiredById.get('builtin-autopair-input')!, trigger: '[《「]' }
+    const { io } = memoryIo({
+      'builtin-rules.json': JSON.stringify([
+        modified,
+        DEFAULT_BUILTIN_RULES.find((r) => r.id === 'builtin-autopair-jump')!,
+      ]),
+      'user-rules.json': '[]',
+      'rule-state.json': JSON.stringify({ deletedBuiltinRuleIds: [] }),
+    })
+    const store = new RuleStore(io)
+    await store.init()
+    const regs = registerWithSource({ builtin: store.getSnapshot().builtin, user: [] })
+    const autopair = regs.find((r) => r.id === '02-autopair')!
+    const plan = autopair.onInput({
+      userEvent: 'input.type',
+      inputText: '《',
+      replaced: null,
+      docUri: 'file:///a.md',
+      snapshot: { text: '《', selections: [{ anchor: 1, head: 1 }], version: 1, revision: 1 },
+    })
+    expect(plan?.changes).toEqual([{ offset: 0, length: 1, text: '《》' }])
+    expect(plan?.selection).toEqual({ anchor: 1, head: 1 })
+  })
+
+  it('未改写副本回收后：新装形态的 07 族不装载退役 id（映射不复活）', async () => {
+    const { io } = memoryIo()
+    const store = new RuleStore(io)
+    await store.init()
+    const regs = registerWithSource({ builtin: store.getSnapshot().builtin, user: [] })
+    const sel = regs.find((r) => r.id === '07-selectkey-rules')!
+    const plan = sel.onInput({
+      userEvent: 'input.type',
+      inputText: '《',
+      replaced: { from: 0, to: 5, text: 'hello' },
+      docUri: 'file:///a.md',
+      snapshot: { text: '《', selections: [{ anchor: 1, head: 1 }], version: 1, revision: 1 },
+    })
+    expect(plan).toBeNull()
+  })
+})
+
+describe('quotes 出厂收窄迁移（#56：旧安装内容感知升级）', () => {
+  it('旧安装未改写 quotes：装载即收窄为闭引号、磁盘重写、enabled 保留', async () => {
+    const { files, io } = memoryIo({
+      'builtin-rules.json': JSON.stringify([legacyQuotes]),
+      'user-rules.json': '[]',
+      'rule-state.json': JSON.stringify({ deletedBuiltinRuleIds: [] }),
+    })
+    const store = new RuleStore(io)
+    await store.init()
+    const quotes = store.getSnapshot().builtin.find((r) => r.id === 'builtin-sel-wrap-quotes')
+    expect(quotes?.trigger).toBe('”’')
+    const onDisk = JSON.parse(files.get('builtin-rules.json')!) as Array<{ id: string; trigger?: string }>
+    expect(onDisk.find((r) => r.id === 'builtin-sel-wrap-quotes')?.trigger).toBe('”’')
+  })
+
+  it('仅 enabled=false 的旧 quotes：内容一致 → 升级且 enabled 保持 false', async () => {
+    const { io } = memoryIo({
+      'builtin-rules.json': JSON.stringify([{ ...legacyQuotes, enabled: false }]),
+      'user-rules.json': '[]',
+      'rule-state.json': JSON.stringify({ deletedBuiltinRuleIds: [] }),
+    })
+    const store = new RuleStore(io)
+    await store.init()
+    const quotes = store.getSnapshot().builtin.find((r) => r.id === 'builtin-sel-wrap-quotes')
+    expect(quotes?.trigger).toBe('”’')
+    expect(quotes?.enabled).toBe(false)
+  })
+
+  it('改写过的旧 quotes：不迁移（保留用户修改），开引号触发原样', async () => {
+    const rewritten = { ...legacyQuotes, trigger: '“‘’' }
+    const { io } = memoryIo({
+      'builtin-rules.json': JSON.stringify([rewritten]),
+      'user-rules.json': '[]',
+      'rule-state.json': JSON.stringify({ deletedBuiltinRuleIds: [] }),
+    })
+    const store = new RuleStore(io)
+    await store.init()
+    const quotes = store.getSnapshot().builtin.find((r) => r.id === 'builtin-sel-wrap-quotes')
+    expect(quotes?.trigger).toBe('“‘’')
+  })
+
+  it('外部重载同策略：旧四字符列表经外部同步写回后重载同样收窄', async () => {
+    const { files, io } = memoryIo()
+    const store = new RuleStore(io)
+    await store.init()
+    files.set(
+      'builtin-rules.json',
+      JSON.stringify([legacyQuotes, ...store.getSnapshot().builtin.filter((r) => r.id !== 'builtin-sel-wrap-quotes')]),
+    )
+    await store.init() // watcher 重载同入口
+    const quotes = store.getSnapshot().builtin.find((r) => r.id === 'builtin-sel-wrap-quotes')
+    expect(quotes?.trigger).toBe('”’')
+  })
+})
+
+describe('迁移持久化失败（#56：不吞成成功空快照）', () => {
+  it('迁移写失败：init 不抛错、缓存保留迁移后有效集合、存续规则仍可执行', async () => {
+    const legacy = [
+      retiredById.get('builtin-sel-wrap-cjk-brackets')!,
+      retiredById.get('builtin-autopair-input')!,
+      legacyQuotes,
+      DEFAULT_BUILTIN_RULES.find((r) => r.id === 'builtin-fw2hw-double')!,
+    ]
+    const { files, io } = memoryIoBuiltinWriteFails({
+      'builtin-rules.json': JSON.stringify(legacy),
+      'user-rules.json': '[]',
+      'rule-state.json': JSON.stringify({ deletedBuiltinRuleIds: [] }),
+    })
+    const store = new RuleStore(io)
+    await expect(store.init()).resolves.toBeUndefined()
+    const snap = store.getSnapshot().builtin
+    for (const id of RETIRED_BUILTIN_RULE_IDS) expect(snap.map((r) => r.id)).not.toContain(id)
+    expect(snap.find((r) => r.id === 'builtin-sel-wrap-quotes')?.trigger).toBe('”’')
+    // 磁盘仍为旧形态（写失败未落盘）
+    const onDisk = JSON.parse(files.get('builtin-rules.json')!) as Array<{ id: string }>
+    expect(onDisk).toHaveLength(4)
+    // 存续规则在缓存集合上照常执行（。。→.）
+    const engine = new RuleEngine()
+    engine.addSimpleRules(snap)
+    const result = engine.process({
+      kind: RuleType.Input,
+      docText: '。。',
+      selection: { from: 2, to: 2 },
+      inserted: '。',
+      changeType: 'input.type',
+      scopeHint: RuleScope.All,
+      key: '。',
+    })
+    expect(result?.newText).toBe('.')
+  })
+
+  it('写失败后恢复：下次 init 幂等重试迁移并落盘', async () => {
+    const legacy = [
+      retiredById.get('builtin-autopair-input')!,
+      legacyQuotes,
+      DEFAULT_BUILTIN_RULES.find((r) => r.id === 'builtin-fw2hw-double')!,
+    ]
+    const { files, io } = memoryIoBuiltinWriteFails({
+      'builtin-rules.json': JSON.stringify(legacy),
+      'user-rules.json': '[]',
+      'rule-state.json': JSON.stringify({ deletedBuiltinRuleIds: [] }),
+    })
+    const store = new RuleStore(io)
+    await store.init()
+    expect(JSON.parse(files.get('builtin-rules.json')!)).toHaveLength(3) // 写失败：磁盘未动
+    const good = memoryIo(Object.fromEntries(files.entries()))
+    const store2 = new RuleStore(good.io)
+    await store2.init()
+    const onDisk = JSON.parse(good.files.get('builtin-rules.json')!) as Array<{ id: string; trigger?: string }>
+    expect(onDisk.map((r) => r.id)).not.toContain('builtin-autopair-input')
+    expect(onDisk.find((r) => r.id === 'builtin-sel-wrap-quotes')?.trigger).toBe('”’')
   })
 })

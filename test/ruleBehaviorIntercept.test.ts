@@ -6,7 +6,7 @@
 // docs/specs/rule-engine.md「#25 行为链接入」「#9 Delete/SelectKey 触发
 // 接入」节。
 import { describe, expect, it, vi } from 'vitest'
-import { RuleEngine, RuleScope, RuleType } from '../src/rules/rule-engine'
+import { RuleEngine, RuleScope, RuleType, type SimpleRule } from '../src/rules/rule-engine'
 import { DEFAULT_BUILTIN_RULES } from '../src/rules/default-rules'
 import { pickMessages } from '../src/i18n'
 import { SETTINGS_TOPIC } from '../src/settings/store'
@@ -1162,7 +1162,7 @@ describe('端到端：存储态 → 行为族引擎（B-F1 / C-P1-2 修复）', 
 // ===== tabstop 暂存消费一致性校验（审查 B-F2 修复） =====
 
 describe('tabstop 消费一致性校验（B-F2）', () => {
-  function registerInputForAutopair() {
+  function registerInputForAutopair(userRules: SimpleRule[] = []) {
     const registrations: RuleBehaviorRegistrationSubset[] = []
     const runtime = registerRuleInputBehaviors({
       behaviors: {
@@ -1174,6 +1174,14 @@ describe('tabstop 消费一致性校验（B-F2）', () => {
       },
       channel: { request: async () => ({ ok: false as const, reason: 'timeout' as const }) },
       language: 'zh-CN',
+      // 喂用户规则时走存储态接线（快照 → 族解析 → 引擎重建），与生产同链
+      rulesSource:
+        userRules.length > 0
+          ? {
+              snapshot: () => ({ builtin: DEFAULT_BUILTIN_RULES, user: userRules }),
+              onUpdate: () => {},
+            }
+          : undefined,
     })
     return { registrations, runtime }
   }
@@ -1229,6 +1237,42 @@ describe('tabstop 消费一致性校验（B-F2）', () => {
     // 应用后文档 ``\n``：第二条 change 快照 offset 3 → 平移校验
     // 通过（修复前按快照坐标查恒失配，tabstop 全丢弃）
     expect(runtime.consumePendingTabstops(docOf('``\n``'))).toEqual([
+      { number: 0, from: 1, to: 1 },
+      { number: 0, from: 4, to: 4 },
+    ])
+  })
+
+  it('#52 多命中：双光标用户 autopair 规则（+1 长度差）→ 第二条 change 按前方 delta 平移校验，两组 $0 均激活', () => {
+    // #56 清退 autopair-input 后以其用户规则形态钉同一保护（函数本体在
+    // 函数表未退役，用户域可引用）：等长替换 precedingDelta 恒 0，本用例
+    // 保留 +1 长度差场景——快照坐标 offset 2 平移到应用后 3 处校验
+    const userAutopair: SimpleRule = {
+      id: 'user-autopair-1',
+      trigger: '[（《「『“”‘’《]',
+      replacement: { kind: 'function', ref: 'autopairInput' },
+      options: 'rF',
+      priority: 10,
+    }
+    const { registrations, runtime } = registerInputForAutopair([userAutopair])
+    const autopair = registrations.find((r) => r.id === '02-autopair')!
+    autopair.onInput({
+      userEvent: 'input.type',
+      inputText: '（',
+      replaced: null,
+      docUri: 'file:///a.md',
+      snapshot: {
+        text: '（\n（',
+        selections: [
+          { anchor: 1, head: 1 },
+          { anchor: 3, head: 3 },
+        ],
+        version: 1,
+        revision: 1,
+      },
+    })
+    // 应用后文档 （）\n（）：第二条 change 快照 offset 2 → 应用后 2+1=3 处
+    // 应为 （）——按快照坐标查 [2,4) = \n（ 恒失配，tabstop 全丢弃
+    expect(runtime.consumePendingTabstops(docOf('（）\n（）'))).toEqual([
       { number: 0, from: 1, to: 1 },
       { number: 0, from: 4, to: 4 },
     ])

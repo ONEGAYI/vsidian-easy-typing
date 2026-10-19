@@ -174,13 +174,16 @@ describe('选区语义（单选区基线）', () => {
   })
 
   it('选区替换形态（replaced 非空）→ null：上游 changedStr.length < 1 同口径（#9 接缝）', () => {
-    // 选中 hello 键入。：快照 。、光标塌缩——Input 规则若放行会基于残缺
-    // 上下文命中并把被替换内容丢失；上游该事务只走 SelectKey 分支（#56
-    // 前以 autopair-input 为场景，清退后换存续规则钉同一门）
+    // 场景：前置已有一个 。（位置 0），选中 [1,6) 的 hello 键入。定稿 → 快照
+    // 。。、光标塌缩在 2。同一上下文先证无 replaced 时规则可命中（正对照，
+    // 防「规则本就不命中」的空测），再证 replaced 非空时被门拒绝——Input
+    // 规则放行会基于残缺上下文命中并把被替换内容丢失，上游该事务只走
+    // SelectKey 分支（#56 前以 autopair-input 为场景，清退后换存续规则钉同一门）
     const punct = engineOf(['builtin-fw2hw-double'])
-    expect(
-      planInputRuleModification(punct, inputCtx('。', 1, 'input.type', '。', [{ anchor: 1, head: 1 }], { from: 0, to: 5, text: 'hello' })),
-    ).toBeNull()
+    const ctx = (replaced: RuleInputPipelineContext['replaced']) =>
+      inputCtx('。。', 2, 'input.type', '。', [{ anchor: 2, head: 2 }], replaced)
+    expect(planInputRuleModification(punct, ctx(null))).not.toBeNull()
+    expect(planInputRuleModification(punct, ctx({ from: 1, to: 6, text: 'hello' }))).toBeNull()
   })
 
   it('无选区（空数组，防御）→ null', () => {

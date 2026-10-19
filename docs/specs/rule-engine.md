@@ -270,6 +270,9 @@ CDP 用法注意（平台 `embedLiveCloseout.mjs` 实证注释）：`imeSetCompo
 - **恢复路径**：`restoreBuiltinRule` 对退役 id 返回 false（出厂清单已无该条）；`resetAllBuiltinRules` 写出厂清单，天然不含退役 id。
 - **用户域零影响**（票面红线）：退役判定只作用于 builtin 文件的装载路径——与退役内置项同 id、同触发式、同函数引用的用户规则照常装载与执行；函数表本体（`autopairInput` / `selWrapCjkBrackets` 等）不随规则退役。契约由 `test/rule-retirement.test.ts` 钉住。
 - **族种子同步**：`02-autopair` 移除 `builtin-autopair-input`（jump 续任，引用 autopairInput 的用户规则仍归本族）、`07-selectkey-rules` 移除 `builtin-sel-wrap-cjk-brackets`（三条 sel-wrap-* 续任）。
+- **改写副本执行归属**（R1 修复）：族种子删除退役 id 后 `resolveRuleFamilies` 按 `seed.ruleIds` 过滤——改写副本会「保留在存储却退出执行链」。`RETIRED_RULE_FAMILY_BY_ID`（`rule-family-ids.ts`，退役 id → 原属族）让改写副本继续装载执行；规则页灰态判定（`coveringBehaviorLocalIds`）同口径归原属族。新装磁盘无退役 id，映射不引入任何条目。
+- **出厂定义演化迁移**（R1 修复，quotes 收窄的旧安装一致性）：init 只补缺失 id，旧安装既有 quotes 条目不会自动收窄（旧装触发面比新装宽）。`SUPERSEDED_BUILTIN_RULES` + `upgradeSupersededBuiltins`（`default-rules.ts`）对与被取代定义内容一致（enabled 差异不算）的旧条目升级为现役定义并保留 enabled；改写过的保留。装载与外部重载同入口同口径。
+- **迁移持久化失败 fail-open**（R1 修复）：退役回收/演化升级的磁盘重写失败时，缓存填**迁移后**有效集合（读取到的数据不丢、规则照常可用），磁盘保留旧形态，下次 init 幂等重试迁移——不吞成「成功 + 空内置快照」。
 
 ### 已知边界
 

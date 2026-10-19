@@ -231,6 +231,65 @@ export interface StripRetiredResult {
  * 在退役集的条目原样保留。磁盘缺字段的精简形态（外部工具写出的
  * 最小条目）因内容签名不同而保留——回收方向保守，宁可保留不误删。
  */
+// ===== 出厂定义演化迁移（#56：quotes 触发面收窄） =====
+//
+// sel-wrap-quotes 的 trigger 从四字符（“”‘’ 开闭引号）收窄为两闭引号
+//（”’）——开引号让位平台选区包裹。与退役回收不同，该条目仍在出厂清单，
+// 但 init 只补缺失 id，旧安装既有条目不会自动更新——旧装触发面比新装
+// 宽，行为不一致（#56 旧安装一致性口径）。装载路径（init 即外部重载
+// 同入口）对「可证明未改写」的旧条目做内容感知升级：与被取代定义内容
+// 一致（enabled 差异不算改写）→ 换成现役定义并保留 enabled；改写过的
+// 原样保留。
+
+/** #56 出厂定义演化前的被取代定义快照（升级判定对照） */
+export const SUPERSEDED_BUILTIN_RULES: readonly (SimpleRule & { id: string })[] = [
+  {
+    id: 'builtin-sel-wrap-quotes',
+    trigger: `“”‘’`,
+    replacement: { kind: 'function', ref: 'selWrapQuotes' },
+    options: 'sF',
+    priority: 40,
+    description: '选中文字后输入全角引号，配对引号包裹',
+  },
+]
+
+export interface UpgradeSupersededResult {
+  /** 升级后的规则列表（顺序保持；未命中条目原引用） */
+  rules: SimpleRule[]
+  /** 是否发生升级（调用方据此决定是否重写磁盘） */
+  changed: boolean
+}
+
+/**
+ * 出厂定义演化迁移（#56 装载路径统一口径——init 与外部重载同入口）：
+ * 与被取代定义内容一致的旧条目升级为现役出厂定义（enabled 取旧条目值
+ * 保留）；内容已改写或 id 不在被取代集的条目原样保留。方向与退役回收
+ * 一致保守——只在「证明未改写」时替换。
+ */
+export function upgradeSupersededBuiltins(
+  rules: readonly SimpleRule[],
+  defaults: readonly (SimpleRule & { id: string })[] = DEFAULT_BUILTIN_RULES,
+): UpgradeSupersededResult {
+  const supersededSignatures = new Map(
+    SUPERSEDED_BUILTIN_RULES.map((r) => [r.id, ruleContentSignature(r)]),
+  )
+  const defaultsById = new Map(defaults.map((r) => [r.id, r]))
+  const out: SimpleRule[] = []
+  let changed = false
+  for (const rule of rules) {
+    const id = rule.id
+    const baseline = id !== undefined ? supersededSignatures.get(id) : undefined
+    const current = id !== undefined ? defaultsById.get(id) : undefined
+    if (baseline !== undefined && current !== undefined && ruleContentSignature(rule) === baseline) {
+      changed = true
+      out.push({ ...current, enabled: rule.enabled })
+      continue
+    }
+    out.push(rule)
+  }
+  return { rules: out, changed }
+}
+
 export function stripRetiredBuiltins(rules: readonly SimpleRule[]): StripRetiredResult {
   const signatures = new Map(RETIRED_BUILTIN_RULES.map((r) => [r.id, ruleContentSignature(r)]))
   const kept: SimpleRule[] = []

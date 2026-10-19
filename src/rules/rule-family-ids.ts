@@ -86,6 +86,16 @@ export const RULE_DELETE_SELECTKEY_FAMILY_SEEDS: readonly RuleFamilySeedData[] =
   },
 ]
 
+/**
+ * #56 退役内置 id → 原属族 localId。改写过的退役副本被 stripRetiredBuiltins
+ * 保留在存储（内容有差异不回收），族解析按此映射保留其执行归属——与新
+ * 装无关（新装磁盘没有这些 id）；未列出的退役 id 回退按触发类归族。
+ */
+export const RETIRED_RULE_FAMILY_BY_ID: Readonly<Record<string, string>> = {
+  'builtin-autopair-input': '02-autopair',
+  'builtin-sel-wrap-cjk-brackets': '07-selectkey-rules',
+}
+
 /** 全部规则族种子（01–07，默认链序） */
 export const ALL_RULE_FAMILY_SEEDS: readonly RuleFamilySeedData[] = [
   ...RULE_INPUT_FAMILY_SEEDS,
@@ -112,6 +122,10 @@ export function coveringBehaviorLocalIds(rule: SimpleRule, isBuiltin: boolean): 
       (seed) => seed.localId,
     )
     if (hits.length > 0) return hits
+    // 改写的退役副本：按退役映射归原属族（与 resolveRuleFamilies 装载口径
+    // 一致；autopair-input 原属 02 单族，触发类回退会散到五个 Input 族）
+    const retiredFamily = ruleId !== undefined ? RETIRED_RULE_FAMILY_BY_ID[ruleId] : undefined
+    if (retiredFamily !== undefined) return [retiredFamily]
   }
   return seedsByType(RuleEngine.parseOptions(rule.options).type)
 }
