@@ -4,7 +4,7 @@
 
 ## 验收口径
 
-- 内置规则匹配矩阵单测全绿（触发 / 不触发 / 边界三档 × 全部 20 条，含捕获组引用与 flags 独立矩阵）。
+- 内置规则匹配矩阵单测全绿（触发 / 不触发 / 边界三档 × 全部 18 条现役规则，含捕获组引用与 flags 独立矩阵；#56 清退 2 条另见「内置规则清退（#56）」节）。
 - 函数替换体端到端（#17）：引用形态装载 → 查表注入 → `process` 命中（含捕获组消费：函数表函数消费 leftMatches/rightMatches/selectionText/key 参数矩阵）；未知 ref / 签名失配 / 遗留字符串函数体拒绝装载并上报。
 - `npm run compile`（三产物构建 + `tsc --noEmit`）通过。
 - 内核零平台依赖：`src/rules/` 下 import 语句扫描断言钉住（仅允许模块内相对 type 导入），禁止 `obsidian` / vsidian SDK / `vscode` / `@codemirror` / vendor 类型 / DOM。
@@ -47,14 +47,14 @@
 
 | ref | 签名 | 上游规则 id | 语义 |
 | --- | --- | --- | --- |
-| `autopairInput` | text | builtin-autopair-input | 键入全角开符号补全配对（$0 落配对间） |
+| `autopairInput` | text | ~~builtin-autopair-input~~（#56 清退；函数面保留供用户规则引用） | 键入全角开符号补全配对（$0 落配对间） |
 | `autopairJump` | text | builtin-autopair-jump | 右侧恰为配对端时吃掉重复右符 |
 | `autopairDelete` | text | builtin-autopair-delete | 删除开符号且右侧为配对端 → 连带删除 |
 | `convFormula` | text | builtin-conv-formula | ￥/$ 组合转行内或块级公式 |
 | `convHw2fw` | text | builtin-conv-hw2fw | CJK 后半角标点转全角（默认关） |
 | `convLinestart` | text | builtin-conv-linestart | 行首 》 转引用、行首 、 转斜杠 |
 | `fw2hwDouble` | text | builtin-fw2hw-double | 连续两个相同全角标点转半角 |
-| `selWrapCjkBrackets` | selectKey | builtin-sel-wrap-cjk-brackets | 选中后键入《（配对括号包裹 |
+| `selWrapCjkBrackets` | selectKey | ~~builtin-sel-wrap-cjk-brackets~~（#56 清退；函数面保留供用户规则引用） | 选中后键入《（配对括号包裹 |
 | `selWrapQuotes` | selectKey | builtin-sel-wrap-quotes | 选中后键入全角引号配对包裹 |
 | `selWrapSymbols` | selectKey | builtin-sel-wrap-symbols | 选中后键入【¥￥包裹 []/$$ |
 
@@ -78,7 +78,7 @@
 - **上游数据怪癖原样保留**（不擅自放宽）：`builtin-autopair-input` 触发类 `[（《「『“”‘’《]` 不含 `【`（替换表却含 `【` 的映射）；`builtin-conv-linestart` 的 `、` 分支替换体无尾随空格（`[[1]]/$0`）；`builtin-quote-convert` 连续 `>` 的归一形态为 `>> $0`（贪婪回溯后 `[[1]]` 只含首个 `>`）。
 - **正则引擎差异**：未发现——内置规则用到的 lookbehind（chrome62+ / node9+）、反向引用、`\u` 范围类在 chrome114（页面产物下界）与 node18（宿主 / vitest）均一致支持。后续 #14 用户规则引入任意正则时如有差异，在测试注释记录。
 - **函数替换体不再有动态代码路径**（#17 落地，取代 #1 时代的 `new Function` 边界）：预注册表是函数替换体的唯一装载形态，vitest 与真实 webview 行为一致（都是查表注入，无环境分支）。#25 报告的「6 条 Input 函数体规则 CSP 静默降级」场景已根治；动态代码禁令由 scaffold 扫描钉住（src 禁 `new Function`/`eval` 调用）。遗留字符串函数体（F 旗标 + 字符串，#17 前序列化数据或上游导入）装载期拒绝并通知，存储侧原样保留（数据不丢）。
-- **description 字段 i18n**（#19 已落地）：`default-rules.ts` 的中文描述保持上游数据原样；展示层本地化沿用上游模式——规则 id → 语言包 `builtinRuleDescriptions` 映射（`src/i18n/` 两字典各 20 条），消费点在规则管理页列表预览（`previewRuleText` 查表优先），存储数据不随语言改写。
+- **description 字段 i18n**（#19 已落地）：`default-rules.ts` 的中文描述保持上游数据原样；展示层本地化沿用上游模式——规则 id → 语言包 `builtinRuleDescriptions` 映射（`src/i18n/` 两字典各 18 条，#56 清退 2 条），消费点在规则管理页列表预览（`previewRuleText` 查表优先），存储数据不随语言改写。
 - **用户正则无回溯防护（审查 C-P2-1，上游同款继承）**：引擎对用户规则的正则源直接 `new RegExp` 编译执行，无超时/步数防护——灾难回溯正则（嵌套量词作用于重叠字符集，如 `(a+)+b` 对长串 `aaaa...a`）在病态输入下可长时间占住匹配（输入路径在页面主线程，表现为输入卡顿）。上游 easy-typing 同款行为；JS 正则引擎无中断机制，工程化防护（RE2 方言、worker 化匹配）超出移植范围。用户侧缓解：docs/guides/custom-rules.md「匹配条件」节的正则书写提醒。
 - **引擎内 console 直写不经统一日志门控（审查 C-P3-3，#19 已备案）**：`rule-engine.ts` 的 4 处 `console.error`（函数替换体解析失败 / F 旗标失配 / 无效正则 / 运行时异常）与 2 处 `ctx.debug` 命中日志是上游同款直写形态，未接 `src/logging.ts` 的 debugLog 统一门控——#19 备案口径：此类输出属 debug/诊断面非用户可见文字（不进 i18n 字典）；`src/rules/` 纯领域模块不引装配层依赖，保留直写形态。
 
@@ -93,12 +93,12 @@
 | localId（默认链序） | 族 | 规则（上游优先级） |
 | --- | --- | --- |
 | `01-punct-collapse` | 全角标点连击转半角 | `builtin-fw2hw-double`（3） |
-| `02-autopair` | 括号引号自动配对 | `builtin-autopair-jump`（5）、`builtin-autopair-input`（10） |
+| `02-autopair` | 括号引号自动配对 | `builtin-autopair-jump`（5）——`builtin-autopair-input`（10）已随 #56 清退，引用 autopairInput 的用户规则仍归本族 |
 | `03-symbol-convert` | 符号组合转换 | `builtin-conv-backtick`、`builtin-conv-codeblock`、`builtin-conv-formula`、`builtin-conv-linestart`（均 10） |
 | `04-punct-expand` | CJK 后半角转全角 | `builtin-conv-hw2fw`（15，数据态默认关） |
 | `05-quote` | 引用标记转换 | `builtin-quote-convert`、`builtin-quote-space`（均 50） |
 
-**分族依据**：其一，**开关粒度**——平台行为冲突管理以行为为粒度逐项开关与调序，族即「内置规则逐条开关」的插件侧承载形态（票面约定：插件侧不另建规则开关）；其二，**触发域**——同族规则服务同一输入域（如 autopair 族同管配对补全与跳过），族内次序由引擎优先级排序保证；其三，**链序保真**——localId 数值前缀按上游优先级分层编码，平台默认有效序（完整键字典序）逐层复刻上游 Input 规则的全局优先级序（3 < 5,10 < 10 < 15 < 50，契约测试钉住单调性）。01/04 拆为两族而非合并为一个「标点转换」族，原因是 hw2fw(15) 在上游序中位于 conv(10) 之后、fw2hw(3) 之前，单一族位无法同时保真两层，且两者默认态相反（一开一关）。
+**分族依据**：其一，**开关粒度**——平台行为冲突管理以行为为粒度逐项开关与调序，族即「内置规则逐条开关」的插件侧承载形态（票面约定：插件侧不另建规则开关）；其二，**触发域**——同族规则服务同一输入域（如 autopair 族同管配对跳过与补全——补全内置项已随 #56 清退，族以跳过与用户规则续任），族内次序由引擎优先级排序保证；其三，**链序保真**——localId 数值前缀按上游优先级分层编码，平台默认有效序（完整键字典序）逐层复刻上游 Input 规则的全局优先级序（3 < 5,10 < 10 < 15 < 50，契约测试钉住单调性）。01/04 拆为两族而非合并为一个「标点转换」族，原因是 hw2fw(15) 在上游序中位于 conv(10) 之后、fw2hw(3) 之前，单一族位无法同时保真两层，且两者默认态相反（一开一关）。
 
 **跨族首命中语义**：上游 `process` 单次调用即全局首命中；平台行为链是「按有效序每行为各试、计划逐个提交」。五族共用独占组 `input-rules` 承载首命中语义——平台按有效序首个**返回计划**者占用组、其后同组跳过（vsidian addonBehaviors runtime 语义），等价于「一条输入至多一条规则生效」。计划提交被拒（stale-snapshot 等）不释放组占用：该输入无后备规则，与上游命中即派发的单发语义一致（罕见路径偏差）。
 
@@ -194,7 +194,7 @@ Input 管线（`planInputRuleWithTabstops`）新增 `replaced !== null → retur
 
 ### 族设计与独占组结论
 
-- **两族**：`06-delete-rules`（autopair-delete 10 + 五条 del-* 30，同管联动删除）与 `07-selectkey-rules`（四条 sel-wrap-* 40，同管选中包裹）。分族依据同 #25 三条（开关粒度 / 触发域 / 链序保真——localId 数值前缀延续上游优先级分层编码：30 < 40 排在 01-05 之后）。
+- **两族**：`06-delete-rules`（autopair-delete 10 + 五条 del-* 30，同管联动删除）与 `07-selectkey-rules`（三条 sel-wrap-* 40，同管选中包裹——cjk-brackets 已随 #56 清退，平台选区包裹兜底）。分族依据同 #25 三条（开关粒度 / 触发域 / 链序保真——localId 数值前缀延续上游优先级分层编码：30 < 40 排在 01-05 之后）。
 - **独占组：与 #25 五族共用 `input-rules`**。核对平台语义（vsidian `webview/addonBehaviors.ts` driveInput）：按有效序逐行为调用，**返回 null 不占用组**、首个返回计划者占用组、其后同组跳过。三类触发面互斥（Input 族对 delete.* 走 userEvent 门返回 null、对选区替换形态走 replaced 门返回 null；Delete 族对 input.* 全 null；SelectKey 族对纯插入返回 null——replaced null 含 compose 纯塌缩/迟入，compose 定稿替换选区（replaced 非空，#64 双形态门）放行）——同组在结构上保住「一条输入至多一条规则生效」的上游全局首命中语义，且不会出现「Delete 事务被 Input 首命中堵住」（Input 族对 delete.* 恒 null）。若拆独立组则该不变量只剩各管线自觉门控，无平台层保障——故取同组。
 - **撤销**：Delete/SelectKey 规则同为用户输入直接触发的单发修饰，无同链前序 SDK 原子修饰可并组——延续 #25 全量核对结论，一律 `atomic`（联动删除与选中包裹各自成独立撤回步）。撤销单步还原的验收由注册声明（测试断言 `history: 'atomic'`）+ #21 真实撤销验证承载（真实撤销管线归平台）。
 - **tabstop 暂存**：SelectKey 包裹计划携带 `${0:${SEL}}` 的 `$0` 组（覆盖选中文本）。#9 注册函数返回独立暂存槽与 `consumePendingTabstops`（与 #25 槽互不干扰——独占组保证一次输入至多一族命中），page-editor 以独立 docChanged 监听消费、喂 `tabstopNav.activateTabstops`（读即消费，同 #15×#25 口径）。
@@ -246,3 +246,35 @@ CDP 用法注意（平台 `embedLiveCloseout.mjs` 实证注释）：`imeSetCompo
 - `headingFold: ^1.0.0`——消费者：#18 foldEnter（折叠判定经 `sdk.experimental.headingFold.folds()`）。
 
 本票 IME 语义全部经稳定行为链（`sdk.behaviors.register` 的 onInput 消费 `input.type.compose`）：不经 cm6、不注册 composition 钩子、不自建 updateListener 管线——清单无本票增项，亦无需移除项。
+
+## 内置规则清退（#56）
+
+平台 vsidian 的符号能力（#123 补全/越过、#124 选区包裹、#595 IME 定稿单驱动与内置让位、#597 键入路径归一「原始输入 → 行为链 → 内置兜底」）落地后，与组件内置规则重叠的部分清退——**重叠不再产生双处理**（行为链先、内置兜底的让位仲裁），清退动机是控制入口唯一与维护面收敛。逐项对照与裁决（2026-10-19 用户裁决）：
+
+| 内置规则 | 平台覆盖与差异 | 判定 |
+| --- | --- | --- |
+| `builtin-sel-wrap-cjk-brackets`（《（→全角对包裹） | 选区包裹注册表覆盖，输出全同（呈现略异：平台保持原文选中，组件走 tabstop 组） | **清退**（完全重复，平台兜底同语义） |
+| `builtin-autopair-input`（全角开符补对） | 平台补全覆盖更广（含 `【`、英文符号、Markdown 触发符）且更保守（#151 右邻正文形态抑制）；组件无抑制、且 `”`/`’` 闭引号键入也补对（上游独有） | **清退**（收敛平台口径；”’ 补对损失记 B28，用户规则引用 `autopairInput` 函数面仍可用） |
+| `builtin-sel-wrap-quotes`（引号包裹） | 开引号 `“`/`‘` 平台覆盖（输出同）；闭引号 `”`/`’` 包裹组件独有（平台只认 open 字符） | **收窄**触发至闭引号 `”’`（开引号让位平台兜底） |
+| `builtin-autopair-jump`（键右侧符跳过） | 平台越过**只认自动补出的对**（autoclosePairs 来源标记）；组件认任意相邻对（手打/粘贴） | **保留**（语义域不同，无第二控制入口） |
+| `builtin-autopair-delete`（删开符连删） | 平台空对删除同样**只认自动来源** | **保留**（同上） |
+| `builtin-sel-wrap-symbols`（【→[]、¥→$$） | 符号转换语义；`【` 的平台兜底是全角对 `【】`（输出不同），`¥`/`￥` 平台无 | **保留** |
+| `builtin-sel-wrap-backtick`（·→``） | 平台无 `·` 注册 | **保留** |
+| Tabout 的 frontmatter `$`/`<>` | 平台 Tab 越界不覆盖该区域 | **保留**（票面既定） |
+
+### 退役机制（旧安装与用户数据保护）
+
+`DEFAULT_BUILTIN_RULES` 删除两条（20 → 18）只是清退的一半——`RuleStore.init()` 对已存在的 `builtin-rules.json` 只补新不删旧，退役口径须覆盖装载/重载/恢复全路径：
+
+- **回收判定**（`stripRetiredBuiltins`，单一事实源在 `default-rules.ts`）：磁盘条目 id 命中退役快照（`RETIRED_BUILTIN_RULES`，清退时点出厂定义的冻结对照）且内容一致（剔除 `enabled` 的递归键序归一比对——开关是运行态不是内容）→ 回收；**内容已被用户改写的副本保留**（不静默丢失修改，作为仍可用的规则继续装载与编辑）。init 与外部文件重载同入口（watcher 重跑 init），退役副本经外部同步写回不再复活。
+- **恢复路径**：`restoreBuiltinRule` 对退役 id 返回 false（出厂清单已无该条）；`resetAllBuiltinRules` 写出厂清单，天然不含退役 id。
+- **用户域零影响**（票面红线）：退役判定只作用于 builtin 文件的装载路径——与退役内置项同 id、同触发式、同函数引用的用户规则照常装载与执行；函数表本体（`autopairInput` / `selWrapCjkBrackets` 等）不随规则退役。契约由 `test/rule-retirement.test.ts` 钉住。
+- **族种子同步**：`02-autopair` 移除 `builtin-autopair-input`（jump 续任，引用 autopairInput 的用户规则仍归本族）、`07-selectkey-rules` 移除 `builtin-sel-wrap-cjk-brackets`（三条 sel-wrap-* 续任）。
+- **改写副本执行归属**（R1 修复）：族种子删除退役 id 后 `resolveRuleFamilies` 按 `seed.ruleIds` 过滤——改写副本会「保留在存储却退出执行链」。`RETIRED_RULE_FAMILY_BY_ID`（`rule-family-ids.ts`，退役 id → 原属族）让改写副本继续装载执行；规则页灰态判定（`coveringBehaviorLocalIds`）同口径归原属族。新装磁盘无退役 id，映射不引入任何条目。
+- **出厂定义演化迁移**（R1 修复，quotes 收窄的旧安装一致性）：init 只补缺失 id，旧安装既有 quotes 条目不会自动收窄（旧装触发面比新装宽）。`SUPERSEDED_BUILTIN_RULES` + `upgradeSupersededBuiltins`（`default-rules.ts`）对与被取代定义内容一致（enabled 差异不算）的旧条目升级为现役定义并保留 enabled；改写过的保留。装载与外部重载同入口同口径。
+- **迁移持久化失败 fail-open**（R1 修复）：退役回收/演化升级的磁盘重写失败时，缓存填**迁移后**有效集合（读取到的数据不丢、规则照常可用），磁盘保留旧形态，下次 init 幂等重试迁移——不吞成「成功 + 空内置快照」。
+
+### 已知边界
+
+- 平台关闭其符号补全/包裹能力时，组件随包内置规则不再作为相同能力的隐式补位（清退即让位）；用户自行添加同类规则不受限（用户域红线）。
+- 键入 `（` 的右邻抑制形态（平台 #151 生态口径：右邻非空白且非闭合字符不补全）与键入 `”`/`’` 不再补出配对（上游独有行为）——记 B28。

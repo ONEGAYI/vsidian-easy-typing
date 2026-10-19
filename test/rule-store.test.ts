@@ -216,7 +216,7 @@ describe('parseRulesFileContent / sanitizeSimpleRule（校验管线）', () => {
     await store.init()
     const persisted = JSON.parse(files.get(BUILTIN_RULES_FILE)!)
     const fnRules = persisted.filter((r: { options?: string }) => (r.options ?? '').includes('F'))
-    expect(fnRules).toHaveLength(10)
+    expect(fnRules).toHaveLength(8)
     for (const rule of fnRules) {
       expect(rule.replacement).toMatchObject({ kind: 'function' })
       expect(typeof rule.replacement.ref).toBe('string')
@@ -225,7 +225,7 @@ describe('parseRulesFileContent / sanitizeSimpleRule（校验管线）', () => {
     const reparsed = parseRulesFileContent(files.get(BUILTIN_RULES_FILE)!)
     if ('error' in reparsed) throw new Error('出厂规则 JSON 不应解析失败')
     const refRules = reparsed.rules.filter((r) => typeof r.replacement !== 'string')
-    expect(refRules).toHaveLength(10)
+    expect(refRules).toHaveLength(8)
   })
 })
 

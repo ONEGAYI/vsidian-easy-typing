@@ -374,7 +374,6 @@ const zhMessages = {
   // 按规则 id 映射——展示层（规则管理页列表预览）以此优先于数据态
   // description（default-rules.ts 保持上游中文数据原样，不随语言改写存储）
   builtinRuleDescriptions: {
-    'builtin-autopair-input': '输入全角括号/引号时自动补全配对',
     'builtin-autopair-jump': '输入右侧配对符号时自动跳过，避免重复插入',
     'builtin-autopair-delete': '删除全角括号/引号时同时删除配对',
     'builtin-conv-backtick': '连续中文间隔号 ·· 转行内代码',
@@ -391,7 +390,6 @@ const zhMessages = {
     'builtin-sel-wrap-backtick': '选中文字后输入 · 包裹为行内代码',
     'builtin-sel-wrap-symbols': '选中文字后输入 【/¥/￥ 包裹为 []/$$',
     'builtin-sel-wrap-quotes': '选中文字后输入全角引号，配对引号包裹',
-    'builtin-sel-wrap-cjk-brackets': '选中文字后输入《（，配对括号包裹',
     'builtin-quote-convert': '输入 > 或 》 转为 Markdown 引用标记',
     'builtin-quote-space': '引用标记 > 后自动补空格',
   },

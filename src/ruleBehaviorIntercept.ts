@@ -42,7 +42,11 @@ import type {
   AddonInputContext,
 } from '../types/vendor/shared/addonBehaviors'
 import { RuleEngine, RuleType, type SimpleRule } from './rules/rule-engine'
-import { RULE_DELETE_SELECTKEY_FAMILY_SEEDS, RULE_INPUT_FAMILY_SEEDS } from './rules/rule-family-ids'
+import {
+  RULE_DELETE_SELECTKEY_FAMILY_SEEDS,
+  RULE_INPUT_FAMILY_SEEDS,
+  RETIRED_RULE_FAMILY_BY_ID,
+} from './rules/rule-family-ids'
 import { DEFAULT_BUILTIN_RULES } from './rules/default-rules'
 import { pickMessages, ruleFamilyNameMap, type Messages } from './i18n'
 import { debugLog } from './logging'
@@ -131,7 +135,14 @@ export function resolveRuleFamilies(
   return seeds.map((seed) => ({
     ...seed,
     rules: [
-      ...builtin.filter((r) => 'id' in r && seed.ruleIds.includes((r as { id: string }).id)),
+      ...builtin.filter((r) => {
+        if (!('id' in r)) return false
+        const id = (r as { id: string }).id
+        // 种子 ruleIds（现役）之外，改写的退役副本按退役映射保留执行归属
+        // （#56：stripRetiredBuiltins 保留内容有差异的退役条目，而族种子已
+        // 删其 id——无此映射时改写副本保留在存储却退出执行链）
+        return seed.ruleIds.includes(id) || RETIRED_RULE_FAMILY_BY_ID[id] === seed.localId
+      }),
       ...user.filter((r) => RuleEngine.parseOptions(r.options).type === seed.userRuleType),
     ],
   }))

@@ -14,7 +14,7 @@
 //   kind:Delete/SelectKey 的「内核共享路径冒烟」——触发管线与端到端归 #9。
 import { describe, expect, it } from 'vitest'
 import { RuleEngine, RuleScope, RuleType, type TxContext } from '../src/rules/rule-engine'
-import { DEFAULT_BUILTIN_RULES } from '../src/rules/default-rules'
+import { DEFAULT_BUILTIN_RULES, RETIRED_BUILTIN_RULES } from '../src/rules/default-rules'
 
 /** 装载全部内置规则的全新引擎（用例间无状态串扰） */
 function builtinEngine(): RuleEngine {
@@ -38,10 +38,10 @@ function inputCtx(docText: string, cursor: number, overrides: Partial<TxContext>
 }
 
 describe('数据完整性（上游 20 条全量移植）', () => {
-  it('规则数 20、id 唯一、各带描述', () => {
-    expect(DEFAULT_BUILTIN_RULES).toHaveLength(20)
+  it('规则数 18（#56 清退 2 条）、id 唯一、各带描述', () => {
+    expect(DEFAULT_BUILTIN_RULES).toHaveLength(18)
     const ids = DEFAULT_BUILTIN_RULES.map((r) => r.id)
-    expect(new Set(ids).size).toBe(20)
+    expect(new Set(ids).size).toBe(18)
     for (const rule of DEFAULT_BUILTIN_RULES) {
       expect(rule.description, `${rule.id} 缺描述`).toBeTruthy()
     }
@@ -58,15 +58,22 @@ describe('数据完整性（上游 20 条全量移植）', () => {
       byPriority.set(rule.priority ?? 100, (byPriority.get(rule.priority ?? 100) ?? 0) + 1)
     }
     expect(Object.fromEntries([...byPriority].sort(([a], [b]) => a - b))).toEqual({
-      3: 1, 5: 1, 10: 6, 15: 1, 30: 5, 40: 4, 50: 2,
+      3: 1, 5: 1, 10: 5, 15: 1, 30: 5, 40: 3, 50: 2,
     })
   })
 })
 
-describe('builtin-autopair-input（输入全角括号/引号自动补全，rF/10）', () => {
-  // 上游数据怪癖（原样保留）：触发类 [（《「『“”‘’《] 不含 【，但替换表
-  // p 含 '【'——键入 【 不自动补全，而删除类 builtin-autopair-delete 的
-  // 触发类含 【。按上游数据移植，不擅自放宽。
+describe('用户规则引用 autopairInput 函数（#56 清退后用户域仍可用）', () => {
+  // builtin-autopair-input 已随 #56 清退（平台符号补全兜底），但函数表
+  // 本体保留——用户规则按引用形态消费时语义不变。此处以退役快照 + 用
+  // 户 id 构造等价规则钉住。上游数据怪癖（原样保留）：触发类
+  // [（《「『“”‘’《] 不含 【，但替换表 p 含 '【'——键入 【 不自动补全。
+  function userAutopairEngine(): RuleEngine {
+    const def = RETIRED_BUILTIN_RULES.find((r) => r.id === 'builtin-autopair-input')!
+    const engine = new RuleEngine()
+    engine.addSimpleRules([{ ...def, id: 'user-autopair-input' }])
+    return engine
+  }
   it.each([
     ['a（', 2, '（）'],
     ['好《', 2, '《》'],
@@ -77,23 +84,23 @@ describe('builtin-autopair-input（输入全角括号/引号自动补全，rF/10
     ['‘', 1, '‘’'],
     ['’', 1, '‘’'],
   ])('触发：%s 光标 %i → %s（$0 解析为空占位）', (doc, cursor, expected) => {
-    const result = builtinEngine().process(inputCtx(doc, cursor))
+    const result = userAutopairEngine().process(inputCtx(doc, cursor))
     expect(result?.newText).toBe(expected)
   })
 
   it('触发断言（tabstop 形态）：$0 去标记后 tabstops 填空占位、cursor 落其上', () => {
-    const result = builtinEngine().process(inputCtx('a（', 2))
+    const result = userAutopairEngine().process(inputCtx('a（', 2))
     expect(result?.tabstops).toEqual([{ number: 0, from: 2, to: 2 }])
     expect(result?.cursor).toBe(2)
   })
 
   it('不触发：半角括号与 【 不在触发类（上游触发类原样）', () => {
-    expect(builtinEngine().process(inputCtx('a(', 2))).toBeNull()
-    expect(builtinEngine().process(inputCtx('a【', 2))).toBeNull()
+    expect(userAutopairEngine().process(inputCtx('a(', 2))).toBeNull()
+    expect(userAutopairEngine().process(inputCtx('a【', 2))).toBeNull()
   })
 
   it('边界：matchRange 只覆盖刚键入的字符', () => {
-    const result = builtinEngine().process(inputCtx('a（', 2))
+    const result = userAutopairEngine().process(inputCtx('a（', 2))
     expect(result?.matchRange).toEqual({ from: 1, to: 2 })
   })
 })
@@ -116,12 +123,11 @@ describe('builtin-autopair-jump（输入右配对符跳过，rF/5）', () => {
     expect(builtinEngine().process(inputCtx('《》x', 3))).toBeNull()
   })
 
-  it('边界：右侧符号与配对端不匹配 → jump 放弃，落穿到 autopair-input', () => {
+  it('边界：右侧符号与配对端不匹配 → jump 放弃（配对补全已随 #56 清退，真宿主平台兜底）', () => {
     // 左侧是 ‘’，刚键入 ”：右侧 ” 匹配右正则但不是 ‘’ 的配对端 → 函数
-    // 返回 undefined；随后 autopair-input 命中（leftDoc 末字符 ’ 在触发类）
+    // 返回 undefined；出厂清单内再无 autopair-input 兜住 → 全链 null
     const result = builtinEngine().process(inputCtx('‘’”', 2))
-    expect(result?.newText).toBe('‘’')
-    expect(result?.matchRange).toEqual({ from: 1, to: 2 })
+    expect(result).toBeNull()
   })
 })
 
@@ -330,17 +336,16 @@ describe('Delete 类内置规则（d/dr/30，触发管线归 #9）', () => {
 })
 
 describe('SelectKey 类内置规则（s/sF/40，触发管线归 #9）', () => {
-  it('四条规则建模为 SelectKey 类且触发键解析正确', () => {
+  it('三条规则建模为 SelectKey 类且触发键解析正确（cjk-brackets 已随 #56 清退）', () => {
     const engine = builtinEngine()
     expect(engine.getRule('builtin-sel-wrap-backtick')?.triggerKeys).toEqual(['·'])
     expect(engine.getRule('builtin-sel-wrap-symbols')?.triggerKeys).toEqual(['【', '¥', '￥'])
-    expect(engine.getRule('builtin-sel-wrap-quotes')?.triggerKeys).toEqual(['“', '”', '‘', '’'])
-    expect(engine.getRule('builtin-sel-wrap-cjk-brackets')?.triggerKeys).toEqual(['《', '（'])
+    // #56 收窄：开引号 “‘ 让位平台选区包裹，仅闭引号 ”‘ 在场
+    expect(engine.getRule('builtin-sel-wrap-quotes')?.triggerKeys).toEqual(['”', '’'])
     for (const id of [
       'builtin-sel-wrap-backtick',
       'builtin-sel-wrap-symbols',
       'builtin-sel-wrap-quotes',
-      'builtin-sel-wrap-cjk-brackets',
     ]) {
       expect(engine.getRule(id)?.type, `${id} 应为 SelectKey 类`).toBe(RuleType.SelectKey)
     }

@@ -488,11 +488,11 @@ describe('规则四分区挂入对应 panel', () => {
     expect(panel(root, 'other').contains(q(root, '[data-vet-section="storage"]'))).toBe(true)
   })
 
-  it('内置规则条目真实渲染于内置规则 panel（出厂 20 条）', async () => {
+  it('内置规则条目真实渲染于内置规则 panel（出厂 18 条，#56 清退 2 条）', async () => {
     const { request } = assemble()
     const { root } = await mountPage(request)
     const builtinPanel = panel(root, 'builtin-rules')
-    expect(builtinPanel.querySelectorAll('[data-vet-builtin-list] [data-vet-rule-id]')).toHaveLength(20)
+    expect(builtinPanel.querySelectorAll('[data-vet-builtin-list] [data-vet-rule-id]')).toHaveLength(18)
   })
 
   it('旧单页标题/简介不再渲染（五 Tab hero 形态取代）', async () => {

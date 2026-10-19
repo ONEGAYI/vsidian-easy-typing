@@ -43,7 +43,7 @@ describe('数据完整性', () => {
     const fnRules = DEFAULT_BUILTIN_RULES.filter(
       (r) => (r.options ?? '').includes('F'),
     )
-    expect(fnRules).toHaveLength(10)
+    expect(fnRules).toHaveLength(8)
     for (const rule of fnRules) {
       expect(typeof rule.replacement, `${rule.id} 应为引用形态`).toBe('object')
       const ref = rule.replacement as { kind: string; ref: string }

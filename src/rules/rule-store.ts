@@ -19,7 +19,7 @@
 //
 // IO 全注入（RuleStoreIo），零平台依赖；宿主接线见 rules-host.ts。
 import { RuleEngine, isFunctionReplacementRef, type SimpleRule } from './rule-engine'
-import { DEFAULT_BUILTIN_RULES } from './default-rules'
+import { DEFAULT_BUILTIN_RULES, stripRetiredBuiltins, upgradeSupersededBuiltins } from './default-rules'
 
 /** 内置规则文件（相对组件数据目录，正斜杠） */
 export const BUILTIN_RULES_FILE = 'builtin-rules.json'
@@ -337,15 +337,30 @@ export class RuleStore {
       await requireAbsent(BUILTIN_RULES_FILE)
       await this.saveBuiltinRules(this.defaults.map((r) => ({ ...r })))
     } else {
+      // #56 装载路径迁移（init 即外部重载同入口）：
+      // - 退役回收：旧副本与出厂定义内容一致（enabled 差异不算改写）即回
+      //   收；内容已改写的副本保留（经族解析的退役映射继续装载执行）。
+      //   退役副本经外部同步写回不复活；
+      // - 出厂定义演化升级：与被取代定义内容一致的旧条目（如 quotes 触发
+      //   收窄前的四字符形态）升级为现役定义、保留 enabled；改写过的保留。
       const current = this.parseFile(builtinContent)
-      const existingIds = new Set(current.map((r) => r.id).filter(Boolean))
+      const { rules: kept, removed: retiredRemoved } = stripRetiredBuiltins(current)
+      const { rules: upgraded, changed: supersededChanged } = upgradeSupersededBuiltins(
+        kept,
+        this.defaults,
+      )
+      const existingIds = new Set(upgraded.map((r) => r.id).filter(Boolean))
       const newRules = this.defaults.filter(
         (r) => !existingIds.has(r.id) && !this.deletedBuiltinRuleIds.includes(r.id),
       )
-      if (newRules.length > 0) {
-        await this.saveBuiltinRules([...current, ...newRules.map((r) => ({ ...r }))])
+      if (retiredRemoved || supersededChanged || newRules.length > 0) {
+        const next = [...upgraded, ...newRules.map((r) => ({ ...r }))]
+        const persisted = await this.saveBuiltinRules(next)
+        // 迁移持久化失败不吞读取面（#56）：磁盘保留旧形态，缓存填迁移后
+        // 有效集合——规则照常可用，下次 init 幂等重试迁移落盘
+        if (!persisted) this.cachedBuiltinRules = next
       } else {
-        this.cachedBuiltinRules = current
+        this.cachedBuiltinRules = upgraded
       }
     }
 

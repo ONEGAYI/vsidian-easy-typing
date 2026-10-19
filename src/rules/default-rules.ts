@@ -3,7 +3,8 @@
 //
 // 计数口径：上游实测 20 条（default_rules.ts 的 id 与六语言包
 // builtinRuleDescriptions 键集一致），票面「22 条」为计数偏差，按全量
-// 口径移植（见 docs/specs/rule-engine.md 已知边界）。
+// 口径移植（见 docs/specs/rule-engine.md 已知边界）。#56 起清退 2 条
+// 平台已覆盖的内置规则（见文件尾 RETIRED_BUILTIN_RULES），现役 18 条。
 //
 // 【#17 函数引用形态】上游 10 条函数体规则（F 旗标 + 函数体字符串）在此
 // 迁移为函数引用：replacement 为 `{kind:'function', ref:'<id>'}`，函数本体
@@ -32,14 +33,6 @@ import type { SimpleRule } from './rule-engine'
 
 export const DEFAULT_BUILTIN_RULES: (SimpleRule & { id: string })[] = [
   // ===== 自动配对 (priority 10) =====
-  {
-    id: 'builtin-autopair-input',
-    trigger: '[（《「『“”‘’《]',
-    replacement: { kind: 'function', ref: 'autopairInput' },
-    options: 'rF',
-    priority: 10,
-    description: '输入全角括号/引号时自动补全配对',
-  },
   {
     id: 'builtin-autopair-jump',
     trigger: "《》|“”|““|‘’|‘‘|（）",
@@ -153,11 +146,46 @@ export const DEFAULT_BUILTIN_RULES: (SimpleRule & { id: string })[] = [
   },
   {
     id: 'builtin-sel-wrap-quotes',
-    trigger: `“”‘’`,
+    trigger: `”’`,
     replacement: { kind: 'function', ref: 'selWrapQuotes' },
     options: 'sF',
     priority: 40,
     description: '选中文字后输入全角引号，配对引号包裹',
+  },
+
+  // ===== 引用处理 (priority 50) =====
+  { id: 'builtin-quote-convert', trigger: '((?:^|\\n)\\s*>*) ?[>》]', replacement: '[[1]]> $0', options: 'r', priority: 50, description: '输入 > 或 》 转为 Markdown 引用标记' },
+  { id: 'builtin-quote-space', trigger: '((?:^|\\n)\\s*>+)([^ >》]+)', replacement: '[[1]] [[2]]$0', options: 'r', priority: 50, description: '引用标记 > 后自动补空格' },
+]
+
+// ===== 内置规则清退（#56） =====
+//
+// 平台 vsidian 已提供同能力（符号补全/选区包裹，#123/#124/#595/#597），
+// 下列内置规则清退出厂清单；仲裁序为「行为链先、内置兜底」——清退后
+// 该能力回落平台原生实现，组件停用/命中与否不再影响。逐项对照表与
+// 裁决记录见 docs/specs/rule-engine.md「内置规则清退（#56）」节。
+//
+// 【退役回收口径】退役不只是从出厂清单删除：旧安装 builtin-rules.json
+// 已存在的副本不会被 init 自动清退（init 只补新不删旧），故装载路径
+// 统一过 stripRetiredBuiltins——与出厂定义**内容一致**（enabled 差异不
+// 算改写：开关是运行态不是内容）的副本回收；内容已被用户改写的副本
+// 保留（不静默丢弃修改，作为仍可用的规则继续装载、可编辑）。函数表
+// 本体（function-table.ts 的 autopairInput / selWrapCjkBrackets）不随
+// 规则退役——用户规则仍可按引用形态消费（票面红线：用户域不受退役
+// 政策限制）。
+//
+// 【快照形态】RETIRED_BUILTIN_RULES 是清退时点的出厂定义原样冻结——
+// 回收判定以此对照；后续不随上游演化更新（演化即内容差异 → 保留）。
+
+/** #56 清退的内置规则（清退时点出厂定义的冻结快照） */
+export const RETIRED_BUILTIN_RULES: readonly (SimpleRule & { id: string })[] = [
+  {
+    id: 'builtin-autopair-input',
+    trigger: '[（《「『“”‘’《]',
+    replacement: { kind: 'function', ref: 'autopairInput' },
+    options: 'rF',
+    priority: 10,
+    description: '输入全角括号/引号时自动补全配对',
   },
   {
     id: 'builtin-sel-wrap-cjk-brackets',
@@ -167,8 +195,112 @@ export const DEFAULT_BUILTIN_RULES: (SimpleRule & { id: string })[] = [
     priority: 40,
     description: '选中文字后输入《（，配对括号包裹',
   },
-
-  // ===== 引用处理 (priority 50) =====
-  { id: 'builtin-quote-convert', trigger: '((?:^|\\n)\\s*>*) ?[>》]', replacement: '[[1]]> $0', options: 'r', priority: 50, description: '输入 > 或 》 转为 Markdown 引用标记' },
-  { id: 'builtin-quote-space', trigger: '((?:^|\\n)\\s*>+)([^ >》]+)', replacement: '[[1]] [[2]]$0', options: 'r', priority: 50, description: '引用标记 > 后自动补空格' },
 ]
+
+/** 退役内置规则 id 集（RETIRED_BUILTIN_RULES 的 id 投影） */
+export const RETIRED_BUILTIN_RULE_IDS: readonly string[] = RETIRED_BUILTIN_RULES.map((r) => r.id)
+
+/** 递归键序归一（内容等价判定用：外部工具回写可重排键序） */
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize)
+  if (value !== null && typeof value === 'object') {
+    const rec = value as Record<string, unknown>
+    const out: Record<string, unknown> = {}
+    for (const key of Object.keys(rec).sort()) out[key] = canonicalize(rec[key])
+    return out
+  }
+  return value
+}
+
+/** 内容签名：剔除 enabled（开关是运行态）后递归键序归一的 JSON */
+function ruleContentSignature(rule: SimpleRule): string {
+  const { enabled: _enabled, ...rest } = rule
+  return JSON.stringify(canonicalize(rest))
+}
+
+export interface StripRetiredResult {
+  /** 回收后的规则列表（保留项保持原顺序） */
+  rules: SimpleRule[]
+  /** 是否发生回收（调用方据此决定是否重写磁盘） */
+  removed: boolean
+}
+
+/**
+ * 退役回收（#56 装载路径统一口径——init 与外部重载同入口）：
+ * id 命中退役快照且内容与出厂定义一致的副本回收；内容已改写或 id 不
+ * 在退役集的条目原样保留。磁盘缺字段的精简形态（外部工具写出的
+ * 最小条目）因内容签名不同而保留——回收方向保守，宁可保留不误删。
+ */
+// ===== 出厂定义演化迁移（#56：quotes 触发面收窄） =====
+//
+// sel-wrap-quotes 的 trigger 从四字符（“”‘’ 开闭引号）收窄为两闭引号
+//（”’）——开引号让位平台选区包裹。与退役回收不同，该条目仍在出厂清单，
+// 但 init 只补缺失 id，旧安装既有条目不会自动更新——旧装触发面比新装
+// 宽，行为不一致（#56 旧安装一致性口径）。装载路径（init 即外部重载
+// 同入口）对「可证明未改写」的旧条目做内容感知升级：与被取代定义内容
+// 一致（enabled 差异不算改写）→ 换成现役定义并保留 enabled；改写过的
+// 原样保留。
+
+/** #56 出厂定义演化前的被取代定义快照（升级判定对照） */
+export const SUPERSEDED_BUILTIN_RULES: readonly (SimpleRule & { id: string })[] = [
+  {
+    id: 'builtin-sel-wrap-quotes',
+    trigger: `“”‘’`,
+    replacement: { kind: 'function', ref: 'selWrapQuotes' },
+    options: 'sF',
+    priority: 40,
+    description: '选中文字后输入全角引号，配对引号包裹',
+  },
+]
+
+export interface UpgradeSupersededResult {
+  /** 升级后的规则列表（顺序保持；未命中条目原引用） */
+  rules: SimpleRule[]
+  /** 是否发生升级（调用方据此决定是否重写磁盘） */
+  changed: boolean
+}
+
+/**
+ * 出厂定义演化迁移（#56 装载路径统一口径——init 与外部重载同入口）：
+ * 与被取代定义内容一致的旧条目升级为现役出厂定义（enabled 取旧条目值
+ * 保留）；内容已改写或 id 不在被取代集的条目原样保留。方向与退役回收
+ * 一致保守——只在「证明未改写」时替换。
+ */
+export function upgradeSupersededBuiltins(
+  rules: readonly SimpleRule[],
+  defaults: readonly (SimpleRule & { id: string })[] = DEFAULT_BUILTIN_RULES,
+): UpgradeSupersededResult {
+  const supersededSignatures = new Map(
+    SUPERSEDED_BUILTIN_RULES.map((r) => [r.id, ruleContentSignature(r)]),
+  )
+  const defaultsById = new Map(defaults.map((r) => [r.id, r]))
+  const out: SimpleRule[] = []
+  let changed = false
+  for (const rule of rules) {
+    const id = rule.id
+    const baseline = id !== undefined ? supersededSignatures.get(id) : undefined
+    const current = id !== undefined ? defaultsById.get(id) : undefined
+    if (baseline !== undefined && current !== undefined && ruleContentSignature(rule) === baseline) {
+      changed = true
+      out.push({ ...current, enabled: rule.enabled })
+      continue
+    }
+    out.push(rule)
+  }
+  return { rules: out, changed }
+}
+
+export function stripRetiredBuiltins(rules: readonly SimpleRule[]): StripRetiredResult {
+  const signatures = new Map(RETIRED_BUILTIN_RULES.map((r) => [r.id, ruleContentSignature(r)]))
+  const kept: SimpleRule[] = []
+  let removed = false
+  for (const rule of rules) {
+    const baseline = rule.id !== undefined ? signatures.get(rule.id) : undefined
+    if (baseline !== undefined && ruleContentSignature(rule) === baseline) {
+      removed = true
+      continue
+    }
+    kept.push(rule)
+  }
+  return { rules: kept, removed }
+}
