@@ -929,12 +929,50 @@ describe('SelectKey 管线：触发面门控与边界', () => {
     expect(r).toBeNull()
   })
 
-  it('IME 定稿（input.type.compose）不适用 SelectKey：replaced 恒 null（平台 #399 边界）', () => {
-    // 即便组合输入在视觉上替换了选区，平台对 compose 补驱动恒报 null——
-    // 组合事务先于 compositionend，替换侧无法归因
+  it('IME 定稿纯塌缩组合（compose + replaced null）→ null：无包裹目标（Input 管线领地）', () => {
+    // 平台 #593 起 compose 定稿经组合期净变更推导携带替换侧，但纯塌缩
+    // 组合（组合起点无选区）与迟入组合（compositionupdate 兜底）仍为 null
     const r = planSelectKeyRuleModification(
       engine,
       inputCtx('·', 1, 'input.type.compose', '·', [{ anchor: 1, head: 1 }], null),
+    )
+    expect(r).toBeNull()
+  })
+
+  it('IME 定稿替换选区（compose + replaced）→ 包裹计划（#64：对齐上游双形态门）', () => {
+    // 上游 cm_extensions.ts Selection Replace 分支的门本就是
+    // input.type ∥ input.type.compose 双形态（v6.0.9 L62-67）——平台 #593
+    // 起 compose 替换侧可达，本门随之对齐
+    const r = planSelectKeyRuleModification(
+      engine,
+      inputCtx('·', 1, 'input.type.compose', '·', [{ anchor: 1, head: 1 }], { from: 0, to: 5, text: 'hello' }),
+    )
+    expect(r?.plan).toEqual({
+      changes: [{ offset: 0, length: 1, text: '`hello`' }],
+      selection: { anchor: 1, head: 1 },
+    })
+  })
+
+  it('IME 定稿替换选区：【/¥/￥ 各自产出符号转换包裹（诊断探针转正，#64）', () => {
+    // 2026-10-18 真宿主症状「选中文字按全角【/¥/￥ 不生效」的红探针场景——
+    // 红转绿条件 = 平台携带 replaced（vsidian#593）+ 组件放行 compose 门
+    for (const [key, wrap] of [
+      ['【', '[abcdef]'],
+      ['¥', '$abcdef$'],
+      ['￥', '$abcdef$'],
+    ] as const) {
+      const r = planSelectKeyRuleModification(
+        engine,
+        inputCtx(key, 1, 'input.type.compose', key, [{ anchor: 1, head: 1 }], { from: 0, to: 6, text: 'abcdef' }),
+      )
+      expect(r?.plan?.changes[0]?.text, '键 ' + key).toBe(wrap)
+    }
+  })
+
+  it('IME 定稿替换侧空区间（from === to）→ null：无包裹目标', () => {
+    const r = planSelectKeyRuleModification(
+      engine,
+      inputCtx('·', 1, 'input.type.compose', '·', [{ anchor: 1, head: 1 }], { from: 0, to: 0, text: '' }),
     )
     expect(r).toBeNull()
   })
@@ -981,8 +1019,9 @@ describe('SelectKey 管线：触发面门控与边界', () => {
 // Input.imeSetComposition + insertText）断言「定稿驱动恰好一次」。compositionend
 // 之后的普通 input.type 事务是独立键入（如定稿后按键），本应各自驱动——
 // 不属同一定稿的双发。插件侧无需显式去重（管线纯函数、无跨调用状态）；
-// 本节测试钉住两道边界：同一次驱动内三管线对 compose 互斥，与异常双发
-// 下修饰已生效的重复驱动不二次改写（真实时序：链首次 applyEdits 在其
+// 本节测试钉住两道边界：同一次驱动内三管线对 compose 按 replaced 形态
+// 分流互斥（#64 后：null → 仅 Input 可命中；非空 → SelectKey 可进、
+// Input 的 replaced 门挡住），与异常双发下修饰已生效的重复驱动不二次改写（真实时序：链首次 applyEdits 在其
 // await 求值时同步 dispatch 修饰事务，早于任何后续驱动微任务——第二次
 // 驱动到达时文档已演进）。
 
@@ -1004,15 +1043,15 @@ describe('工单 #6：compose 事件单次驱动内三管线互斥（不重复�
     ).toBeNull()
   })
 
-  it('SelectKey 管线仅认 input.type：compose 事件即便异常携带 replaced → null', () => {
-    // 平台对 compose 补驱动 replaced 恒 null（组合事务先于 compositionend，
-    // 替换侧无法归因）——本例防御性模拟「上游异常给 compose 事件携带
-    // replaced」的形态，钉住 userEvent 门独立于 replaced 形态生效
+  it('SelectKey 管线认 compose 双形态（#64 后）：compose 携带 replaced → 包裹（形态分流互斥仍成立）', () => {
+    // 互斥前提从「userEvent 门独立拦截」改为「replaced 形态分流」：
+    // null → 仅 Input 管线可命中；非空 → SelectKey 可进、Input 管线的
+    // replaced 门（replaced !== null → null）挡住纯插入路径
     const r = planSelectKeyRuleModification(
       engine,
       inputCtx('·', 1, 'input.type.compose', '·', [{ anchor: 1, head: 1 }], { from: 0, to: 1, text: 'x' }),
     )
-    expect(r).toBeNull()
+    expect(r?.plan?.changes[0]?.text).toBe('`x`')
   })
 })
 

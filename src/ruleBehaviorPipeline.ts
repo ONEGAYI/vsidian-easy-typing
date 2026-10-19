@@ -53,8 +53,9 @@
 // [replaced.from, replaced.from + inputText.length)；引擎 cursor/tabstops
 // 以 matchRange.from（= replaced.from）为基点，与计划基点一致，直接可用
 //（换算推导见规格「#9 触发接入」节）。IME 定稿（input.type.compose）
-// 补驱动 replaced 恒 null（#399 平台边界）——compose 事件天然不进
-// SelectKey 管线，边界用例钉住。
+// 替换侧自平台 #593 起经组合期净变更推导携带——compose 与 input.type
+// 双形态进 SelectKey 管线（上游 Selection Replace 分支同门）；纯塌缩与
+// 迟入组合的 replaced 仍为 null，天然不进，边界用例钉住。
 import {
   RuleEngine,
   RuleType,
@@ -536,8 +537,10 @@ export function planDeleteRuleModification(
  * + rule_engine.ts applySelectKeyRule）：键入替换选区时以 replaced.text
  * 为包裹目标（`${SEL}` 展开的选中文本）、inputText 为触发键。
  *
- * 门控：仅 input.type（IME 定稿 replaced 恒 null——compose 事件天然不进，
- * 平台 #399 边界）；replaced 空区间不进；多选区不进（重建不可信）。
+ * 门控：input.type 与 input.type.compose 双形态（上游 Selection Replace
+ * 分支同门，cm_extensions.ts L62-67；IME 定稿替换侧自平台 #593 起经组合
+ * 期净变更推导携带）；replaced 空区间不进（纯塌缩与迟入组合的 compose
+ * 定稿 replaced 为 null，天然不进）；多选区不进（重建不可信）。
  * 上游对触发键有 `fromB+1===toB` 单字符门（——/…… 例外）——本管线不设
  * 长度门：引擎 triggerKeys 逐字符解析（parseSelectKeyRuleTriggerKeys），
  * 多字符键必然不中任何规则，与上游门控结果等价（规格记录）。
@@ -554,7 +557,7 @@ export function planSelectKeyRuleModification(
   ctx: RuleInputPipelineContext,
   options: PipelineOptions = {},
 ): RulePlanWithTabstops | null {
-  if (ctx.userEvent !== 'input.type') return null // compose 定稿 replaced 恒 null，天然排除
+  if (ctx.userEvent !== 'input.type' && ctx.userEvent !== 'input.type.compose') return null // 上游双形态门（#64）：compose 定稿替换侧自平台 #593 起可达
   const replaced = ctx.replaced
   if (replaced === null || replaced.from >= replaced.to) return null // 纯插入无包裹目标
   if (ctx.inputText.length === 0) return null // 无键入内容（防御）

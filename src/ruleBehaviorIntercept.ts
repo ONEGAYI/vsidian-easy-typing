@@ -498,7 +498,8 @@ export function registerRuleInputBehaviors(deps: RegisterRuleBehaviorsDeps): Rul
 // 【独占组】与 #25 五族共用 'input-rules'：平台语义（addonBehaviors
 // runtime）按有效序首个**返回计划**者占用组、返回 null 不占用——Input
 // 族对 delete.*（userEvent 门）与选区替换形态（replaced 门）一律 null，
-// Delete/SelectKey 族对 input.type 纯插入与 compose 一律 null，三面互斥
+// Delete 族对 input.* 全 null，SelectKey 族对纯插入（replaced null，含
+// compose 纯塌缩/迟入）null——compose 定稿替换选区经 #64 双形态门放行，三面互斥
 // 下同组等价于上游「一条输入至多一条规则生效」的全局首命中语义。
 //
 // 【撤销】Delete/SelectKey 规则同为用户输入直接触发的单发修饰，无同链
@@ -569,8 +570,9 @@ export function registerRuleDeleteSelectKeyBehaviors(deps: RegisterRuleBehaviors
         // 实例一致性守卫（评审 R2-B1）：嵌入实例驱动（快照非主实例文档）
         // → 放弃该次行为修饰（null 不占独占组）
         if (deps.ownsContext !== undefined && !deps.ownsContext(ctx)) return null
-        // Delete 族只面对 delete.* 事件；SelectKey 族只面对 input.type
-        // 选区替换——两条管线对不属己方的触发面返回 null，不占用独占组
+        // Delete 族只面对 delete.* 事件；SelectKey 族只面对 input.type /
+        // input.type.compose 的选区替换（replaced 非空；#64 上游双形态门）
+        // ——两条管线对不属己方的触发面返回 null，不占用独占组
         const pipelineCtx = {
           userEvent: ctx.userEvent,
           inputText: ctx.inputText,

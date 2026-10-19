@@ -32,7 +32,7 @@
 ### 触发链与格式化口径（票面 open question 的规格化结论）
 
 - **格式化当前行**（上游 formatLineOfDoc：`doc.lineAt(fromB)`），非「光标左侧全文」；`prevCh..curCh` 是本次键入在行内的区间，边界插入默认只发生在该区间（例外：光标 token 的词典保护/过期补插，见上游算法）。
-- **fromB 推导**：快照回推 `fromB = 光标 − inputText.length`（上游的 compose_begin_pos / fromB 在平台快照后的等价物）。IME 定稿（`input.type.compose`，#399 替换侧恒 null）按纯插入同路径处理。
+- **fromB 推导**：快照回推 `fromB = 光标 − inputText.length`（上游的 compose_begin_pos / fromB 在平台快照后的等价物）。IME 定稿（`input.type.compose`）替换侧自平台 #593 起经组合期净变更推导可达：携带非空 replaced（组合起点有选区）的定稿按选区替换形态**跳过格式化**——与键入路径的选区替换同口径（上游 `changedStr.length < 1` 的定稿延伸；平台单驱动仲裁下选区替换形态归 SelectKey，无第二次驱动可补，上游 compose-end 的补跑不属于本移植复刻面）；纯塌缩与迟入组合 replaced 为 null，按纯插入同路径处理。
 - **仅纯插入 + 塌缩单光标**：上游 `notSelected && changedStr.length < 1`——选区替换形态（replaced.text 非空）不格式化；inputText 含 `\n` 走 Enter 定稿分支。
 - **多光标结论**：`selections.length > 1` → 不处理。#25 管线取首光标坍缩语义；本管线因 prevCh 推导依赖 inputText 归因（平台 inputText 是多选区拼接），收窄为单光标，多光标键入不格式化（上游 asSingle().main 语义的保守收窄）。
 - **链序**：`06-autoformat` 加入 #25 五族共用的 `input-rules` 独占组（localId 数值前缀在 01-05 之后 = 平台默认有效序），复刻上游「triggerCvtRule 命中即 return、格式化只在规则零命中后运行」。族级开关（平台行为管理）= 上游 AutoFormat 总门的平台承载；autoCapital 等细粒度经 #3 设置门面（`effective.autoFormat` 在族回调内判定，关 → 恒 null 不占组，规则五族不受影响——与上游「规则先于 AutoFormat 门」一致）。history 一律 atomic（#25 joinPrevious 全量核对结论沿用：键入是外来条目不可并组）。
