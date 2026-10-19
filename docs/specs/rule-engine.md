@@ -177,7 +177,7 @@
 ### 触发面与门控
 
 - **Delete**：`pipelineConsumesDeleteEvent` 白名单五类 `delete.backward / forward / selection / cut / line`（与平台 `liveInstance.ts` 的 `ADDON_BEHAVIOR_DELETE_USER_EVENTS` 同集；`delete.dedent` 属缩进命令族不纳入）+ `inputText === ''`（平台契约：delete 事务净插入为空串）+ `replaced` 非空区间。
-- **SelectKey**：`userEvent === 'input.type'` + `replaced` 非空（键入替换选区；`input.type.compose` 的 IME 定稿补驱动 replaced 恒 null——平台 #399 边界，compose 天然不进 SelectKey，测试钉住）。上游的 `fromB+1===toB` 单字符门（——/…… 例外）**不设**：引擎 triggerKeys 经 `parseSelectKeyRuleTriggerKeys` 逐字符解析、恒单字符，多字符键必然不中任何规则——与上游门控结果等价，少一道任意性更强的门。
+- **SelectKey**：`userEvent === 'input.type' ∥ 'input.type.compose'` 双形态 + `replaced` 非空（键入/IME 定稿替换选区；compose 替换侧自平台 #593 起经组合期净变更推导携带——#64 对齐上游 Selection Replace 分支双形态门，纯塌缩/迟入组合 replaced 仍 null 天然不进，测试钉住）。上游的 `fromB+1===toB` 单字符门（——/…… 例外）**不设**：引擎 triggerKeys 经 `parseSelectKeyRuleTriggerKeys` 逐字符解析、恒单字符，多字符键必然不中任何规则——与上游门控结果等价，少一道任意性更强的门。
 - **多选区一律不进**（两管线同门）：多区间时平台 replaced 是**最小包围 + 按区间顺序拼接**（`AddonReplacedRange` 契约），事务前重建无法精确还原；且单条计划的 changes 无法忠实表达多区间替换。以「快照选区数 = 1」为代理判定（多区间删除/替换后残留多光标），返回 null 落原生。Input 管线已演进 per-range 评估（#47 B 方向，见「多选区语义」节），两管线维持此门——按 range 重建事务前状态需平台把 replaced 按 range 分组，属新平台需求另票跟踪。
 
 ### 事务前重建与坐标换算（核心设计）
@@ -203,7 +203,7 @@ Input 管线（`planInputRuleWithTabstops`）新增 `replaced !== null → retur
 
 - **多区间近似**：快照选区数 = 1 是「单一删除/替换区间」的代理判定——理论上单光标事务也可含多变更区间（CM6 命令罕见形态），此时重建不精确。可观测面内无更可靠信号，接受该近似。
 - **`delete.selection / cut / line` 光标近似**：虚拟光标统一取区间右端（backward 口径）；上游未实现这三类，无法对照。联动删除规则面向「删空对的一端」场景，选区/整行删除下命中与否均由引擎左右正则自然裁定。
-- **IME 定稿不适用 SelectKey**：平台对 compose 补驱动 replaced 恒 null（组合事务先于 compositionend，替换侧无法归因）——组合输入选中文本的包裹不可达，属平台边界，非本插件可修。
+- **IME 定稿 SelectKey 可达性（#64 起）**：compose 定稿替换选区（组合起点有选区）时 SelectKey 包裹照常触发——平台 #593 携带替换侧、#595 保证 IME 定稿以干净形态单驱动且内置选区包裹让位（行为链先、内置兜底：组件停用/未命中时平台全角包裹兜底）。纯塌缩组合与迟入组合（compositionupdate 兜底）replaced 为 null 不触发——本就无选区可包裹。IME 定稿携带非空 replaced（选区替换形态）时，Input 规则族与自动格式化按纯插入门跳过（与键入路径同口径、形态分流互斥；上游 compose-end 双路径不复刻——处置与边界见 [auto-format.md](auto-format.md)「平台映射」与人工清单 B27）。
 - **CSP 函数体规则边界延续**：#25 的 #405 处置对 #9 同样适用——`autopair-delete` 与三条 sel-wrap 函数体规则（sF 旗标）在真实 webview 装载期编译失败降级；vitest 环境全量验证（本票矩阵即此形态）。`builtin-sel-wrap-backtick`（'s' 旗标，字符串替换体）不受影响——真实页面选中包裹仅 `·` 键可用，#17 预注册函数表落地后消除。#21 按此口径核对。
 
 ## #6 compose 去重核验与 IME 验证口径
@@ -222,7 +222,7 @@ Input 管线（`planInputRuleWithTabstops`）新增 `replaced !== null → retur
 
 **插件侧不设显式去重**（如最近定稿文本 + 时间窗比对）：管线为纯函数、无跨调用状态，「无需去重」正是该设计的前提；引入比对状态面反而制造新的失真源。防御性钉住以测试承载（`test/ruleBehaviorPipeline.test.ts`「工单 #6」节，3 例）：
 
-- **单次驱动内三管线对 compose 互斥**：Delete 管线白名单不含 compose（即便异常携带删除侧 replaced 形态）；SelectKey 管线仅认 `input.type`（即便异常携带 replaced）。compose 事件只进 Input 管线——独占组 `input-rules`「一条输入至多一族生效」的结构前提。
+- **单次驱动内三管线对 compose 按 replaced 形态分流互斥（#64 起）**：Delete 管线白名单不含 compose（即便异常携带删除侧 replaced 形态）；SelectKey 管线认双形态——compose 携带非空 replaced 时可进（Input 管线的 replaced 门同时挡住纯插入路径），replaced null 时仅 Input 管线可命中。独占组 `input-rules`「一条输入至多一族生效」的结构前提不变。
 - **异常双发下的行为安全**：第一次命中产计划后，修饰事务在链首次 `applyEdits` 的 await 求值时**同步 dispatch**（平台时序保证，早于任何后续驱动微任务）——万一同一定稿又以普通 `input.type` 到达，第二次以演进后文档进管线不再命中（测试以 fw2hw-double 钉住：`。。` 命中转 `.` 后，重复驱动返回 null），无双重转换。
 
 ### 浏览器 IME 端到端验证口径（#21 人工验证落点）
