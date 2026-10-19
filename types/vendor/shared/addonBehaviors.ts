@@ -1,4 +1,4 @@
-// vendored from ONEGAYI/vsidian@5e388ad44292794870aae88cd4286142faa3f484 — src/shared/addonBehaviors.ts
+// vendored from ONEGAYI/vsidian@29880ba926a2f3b3e65319f67bd8ff5c16434630 — src/shared/addonBehaviors.ts
 // 类型快照：由 scripts/vendorSdkTypes.mjs 自动生成——仅保留类型声明与被
 // 类型引用的常量，值级导出（校验函数、运行时数据）已剥离。不要手改；
 // re-vendor：npm run vendor:sdk（升级锚定提交改脚本 DEFAULT_COMMIT 后重跑）。
@@ -17,9 +17,10 @@ export interface AddonInputContext {
    *  为被替换的选区内容（#401——SelectKey 包裹/替换类规则的判定依据：
    *  按键插入发生在选区销毁之后，行为从本字段读回包裹目标）；delete.*
    *  事务时为被删文本（#400——联动删除配对端需要知道删了什么）。多区间
-   *  时为全部删除区间的最小包围与按序拼接文本。IME 定稿补驱动恒 null
-   *  （组合事务先于 compositionend，替换侧无法归因——#399 边界）；
-   *  纯插入无删除侧为 null */
+   *  时为全部删除区间的最小包围与按序拼接文本。IME 定稿补驱动经组合期
+   *  净变更推导（#593）：起点坐标系下被组合覆盖的文本（典型：组合开始
+   *  时的选区内容），纯塌缩光标组合与迟入组合（compositionupdate 兜底）
+   *  为 null；纯插入无删除侧为 null */
   readonly replaced: AddonReplacedRange | null
   /** 行为读取时点的当前快照——已含本次输入与**前序行为的修饰结果**
    *  （后续行为读取前序结果）；输入点从快照选区读取 */
