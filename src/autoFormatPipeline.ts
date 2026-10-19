@@ -43,7 +43,8 @@ import {
 import { formatLine, type LineFormatSettings, type ProtectedInlineRange } from './formatting/lineFormatter'
 
 /** 管线输入面：RuleInputPipelineContext 自带 replaced（#9 并入后的基接口
- *  形态：`| null` 非可选，纯插入为 null；compose 驱动恒 null）——直接继承，
+ *  形态：`| null` 非可选，纯插入为 null；compose 纯塌缩/迟入为 null、定稿
+ *  替换侧非 null 但被本链 replaced 门跳过——B27 口径）——直接继承，
  *  不再重声明 */
 export type AutoFormatPipelineContext = RuleInputPipelineContext
 

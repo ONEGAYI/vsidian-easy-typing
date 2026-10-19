@@ -147,7 +147,11 @@
 
 预期：文字被 `《》` 配对包裹（`builtin-sel-wrap-cjk-brackets`）；键入全角引号、`【`/`¥`/`￥` 同理触发各自包裹规则。
 
-边界提示：**IME 组合输入（拼音候选定稿）选中文本的包裹不可达**——平台对 compose 定稿补驱动的 replaced 恒 null（vsidian#399 边界），物理单键可用、IME 定稿不触发，不是缺陷（B3）。
+2. 选中一段正文文字，切换中文 IME（微软拼音），键入全角 `【` 并从候选定稿提交。
+
+预期：定稿后文字被 `[ ]` 半角方括号包裹（`builtin-sel-wrap-symbols` 经 #64 compose 门；需平台构建含 vsidian#593/#595）。同理 `¥`/`￥` 定稿 → `$ $` 公式包裹；组件停用时平台内置全角包裹（`【 】`）兜底（#595 让位仲裁）。
+
+边界提示：IME 定稿包裹依赖平台 #593 的替换侧净变更推导——纯塌缩组合（组合起点无选区）与迟入组合（compositionupdate 兜底）不触发，本就无包裹目标（B3）。
 
 ### A10. 多选区落原生
 
@@ -817,7 +821,7 @@
 | --- | --- | --- | --- |
 | B1 | 撤销两步口径：规则转换/配对/格式化修饰与键入分离，Ctrl+Z 先撤修饰再撤键入（平台撤销管线结构性边界；SmartPaste 续接是单笔计划，一次 Ctrl+Z 整体回退） | 规则/格式化/IME | rule-engine.md、auto-format.md、smart-paste.md |
 | B2 | 多光标（#47 B 方向后改义）：Input 规则逐光标评估（命中处各自转换、未命中光标保留，不再坍缩）；格式化多光标不处理且不改选区；Delete/SelectKey 多选区一律不进（replaced 按 range 重建需平台新能力，另票跟踪）；SmartPaste 多光标不续接 | 规则/格式化/粘贴 | rule-engine.md、auto-format.md、smart-paste.md |
-| B3 | IME 定稿不适用 SelectKey：组合输入选中文本的包裹不可达（平台 #399 补驱动 replaced 恒 null） | 规则 SelectKey | rule-engine.md |
+| B3 | IME 定稿包裹的形态边界：替换侧依赖平台 #593 净变更推导——纯塌缩组合与迟入组合（compositionupdate 兜底）replaced 为 null 不触发（本就无选区可包裹）；组件启用时定稿符号走组件转换（【→[ ]），停用时平台内置全角包裹兜底（#595 让位仲裁） | 规则 SelectKey | rule-engine.md |
 | B4 | Ctrl+/ 与 Ctrl+Shift+V 平台同弦：默认 Windows/Linux 平台内建命令先命中（htmlComment / pastePlain），本组件命令 mac 形态命中、命令面板恒可用、用户改绑后接管 | 注释切换/纯文本粘贴 | comment-toggle.md、smart-paste.md |
 | B5 | 粘贴主动格式化经行为链结构性不可达（平台对 paste/drop/undo 事务不驱动行为）；主动侧归 #28 命令承载 | 格式化 | auto-format.md、smart-paste.md |
 | B6 | Tabout 落穿层在普通正文不可达：`$`/`$$`/`<>` 只在 frontmatter 等平台不接管的区域生效（平台缩进链先消费 Tab） | Tabout | tabout.md |
@@ -841,7 +845,7 @@
 | B24 | 纯文本粘贴命令对嵌入/悬停目标结构性不可开放：合成 paste 事件须派发本页 CM6 视图 contentDOM 且整条粘贴链装配在本组件扩展上，嵌入实例不挂本组件扩展无合成载体——嵌入内触发无动作（非缺陷，A79 核验）；嵌入内粘贴走平台入口照常。其余写命令族（格式化五命令/注释切换）#34 起对嵌入目标开放（A77） | 纯文本粘贴 | smart-paste.md |
 | B25 | 按层显示降级残余：vsidian#590 前的旧宿主（含 API 1.1.x/1.2.x 发行宿主）`get()` 快照无 `userValues` 字段，scope=user 时覆盖行降级显示合并值 + 徽章 + 合并值提示（A85 步骤 2 降级形态）；vsidian#590 起新宿主用户层真值直达、提示不再出现。组件 `api ^1.1.0` 不升未发行版本，降级路径保留至平台含 #590 的发行成为最低支持面后可随票移除 | 设置页作用域 | settings-tabs.md |
 | B26 | Tab/滚动浏览记忆会话级边界：宿主侧内存通道不落盘（重启重置为设计语义，A89 步骤 3）；滚动上报 200ms 节流窗内关闭丢尾段；滚动恢复等待内容起高后回放（组件侧绕过平台时序缺陷 vsidian#596——上游仅记 Tab、重开回顶，滚动保留为超上游增强） | 设置页 | settings-tabs.md |
-
+| B27 | IME 定稿替换选区（组合起点有选区）时当次不触发自动格式化与 Input 规则转换：平台 #593/#595 起定稿以干净形态单驱动，组件按选区替换形态同口径跳过（上游 compose-end 补跑不复刻）；下一次键入自愈 | 规则/格式化 | rule-engine.md、auto-format.md |
 ## 历轮执行记录落档约定
 
 - **记录表结构**：轮次 / 日期 / 执行人 / 环境摘要（VSCode 版本 + vsidian 基线 + VSIX）/ 覆盖范围（A 编号区间）/ 结果（通过 / 未过 / 部分 / 阻塞）/ 备注（复现证据：截图、日志、操作录制说明）。
