@@ -821,7 +821,7 @@
 | --- | --- | --- | --- |
 | B1 | 撤销两步口径：规则转换/配对/格式化修饰与键入分离，Ctrl+Z 先撤修饰再撤键入（平台撤销管线结构性边界；SmartPaste 续接是单笔计划，一次 Ctrl+Z 整体回退） | 规则/格式化/IME | rule-engine.md、auto-format.md、smart-paste.md |
 | B2 | 多光标（#47 B 方向后改义）：Input 规则逐光标评估（命中处各自转换、未命中光标保留，不再坍缩）；格式化多光标不处理且不改选区；Delete/SelectKey 多选区一律不进（replaced 按 range 重建需平台新能力，另票跟踪）；SmartPaste 多光标不续接 | 规则/格式化/粘贴 | rule-engine.md、auto-format.md、smart-paste.md |
-| B3 | IME 定稿包裹的形态边界：替换侧依赖平台 #593 净变更推导——纯塌缩组合与迟入组合（compositionupdate 兜底）replaced 为 null 不触发（本就无选区可包裹）；组件启用时定稿符号走组件转换（【→[ ]），停用时平台内置全角包裹兜底（#595 让位仲裁） IME 定稿不适用 SelectKey：组合输入选中文本的包裹不可达（平台 #399 补驱动 replaced 恒 null） | 规则 SelectKey | rule-engine.md |
+| B3 | IME 定稿包裹的形态边界：替换侧依赖平台 #593 净变更推导——纯塌缩组合与迟入组合（compositionupdate 兜底）replaced 为 null 不触发（本就无选区可包裹）；组件启用时定稿符号走组件转换（【→[ ]），停用时平台内置全角包裹兜底（#595 让位仲裁） | 规则 SelectKey | rule-engine.md |
 | B4 | Ctrl+/ 与 Ctrl+Shift+V 平台同弦：默认 Windows/Linux 平台内建命令先命中（htmlComment / pastePlain），本组件命令 mac 形态命中、命令面板恒可用、用户改绑后接管 | 注释切换/纯文本粘贴 | comment-toggle.md、smart-paste.md |
 | B5 | 粘贴主动格式化经行为链结构性不可达（平台对 paste/drop/undo 事务不驱动行为）；主动侧归 #28 命令承载 | 格式化 | auto-format.md、smart-paste.md |
 | B6 | Tabout 落穿层在普通正文不可达：`$`/`$$`/`<>` 只在 frontmatter 等平台不接管的区域生效（平台缩进链先消费 Tab） | Tabout | tabout.md |

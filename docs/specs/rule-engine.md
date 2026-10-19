@@ -195,7 +195,7 @@ Input 管线（`planInputRuleWithTabstops`）新增 `replaced !== null → retur
 ### 族设计与独占组结论
 
 - **两族**：`06-delete-rules`（autopair-delete 10 + 五条 del-* 30，同管联动删除）与 `07-selectkey-rules`（四条 sel-wrap-* 40，同管选中包裹）。分族依据同 #25 三条（开关粒度 / 触发域 / 链序保真——localId 数值前缀延续上游优先级分层编码：30 < 40 排在 01-05 之后）。
-- **独占组：与 #25 五族共用 `input-rules`**。核对平台语义（vsidian `webview/addonBehaviors.ts` driveInput）：按有效序逐行为调用，**返回 null 不占用组**、首个返回计划者占用组、其后同组跳过。三类触发面互斥（Input 族对 delete.* 走 userEvent 门返回 null、对选区替换走 replaced 门返回 null；Delete/SelectKey 族对纯插入与 compose 返回 null）——同组在结构上保住「一条输入至多一条规则生效」的上游全局首命中语义，且不会出现「Delete 事务被 Input 首命中堵住」（Input 族对 delete.* 恒 null）。若拆独立组则该不变量只剩各管线自觉门控，无平台层保障——故取同组。
+- **独占组：与 #25 五族共用 `input-rules`**。核对平台语义（vsidian `webview/addonBehaviors.ts` driveInput）：按有效序逐行为调用，**返回 null 不占用组**、首个返回计划者占用组、其后同组跳过。三类触发面互斥（Input 族对 delete.* 走 userEvent 门返回 null、对选区替换形态走 replaced 门返回 null；Delete 族对 input.* 全 null；SelectKey 族对纯插入返回 null——replaced null 含 compose 纯塌缩/迟入，compose 定稿替换选区（replaced 非空，#64 双形态门）放行）——同组在结构上保住「一条输入至多一条规则生效」的上游全局首命中语义，且不会出现「Delete 事务被 Input 首命中堵住」（Input 族对 delete.* 恒 null）。若拆独立组则该不变量只剩各管线自觉门控，无平台层保障——故取同组。
 - **撤销**：Delete/SelectKey 规则同为用户输入直接触发的单发修饰，无同链前序 SDK 原子修饰可并组——延续 #25 全量核对结论，一律 `atomic`（联动删除与选中包裹各自成独立撤回步）。撤销单步还原的验收由注册声明（测试断言 `history: 'atomic'`）+ #21 真实撤销验证承载（真实撤销管线归平台）。
 - **tabstop 暂存**：SelectKey 包裹计划携带 `${0:${SEL}}` 的 `$0` 组（覆盖选中文本）。#9 注册函数返回独立暂存槽与 `consumePendingTabstops`（与 #25 槽互不干扰——独占组保证一次输入至多一族命中），page-editor 以独立 docChanged 监听消费、喂 `tabstopNav.activateTabstops`（读即消费，同 #15×#25 口径）。
 
