@@ -46,3 +46,15 @@ export function inspectVsixEntries(entries: ZipEntry[]): InspectResult
 export function inspectVsixManifest(manifestText: string, repoPkg: RepoPkgShape): InspectResult
 export function promoteUnreleased(content: string, version: string, date: string): string
 export function validateVersionArg(arg: string): string
+
+/** 合并发布说明段内软换行（发布说明的消费方是网页；结构边界保留换行） */
+export function mergeSoftWraps(body: string): string
+
+export interface ChangelogNotes {
+  version: string
+  date: string | null
+  body: string
+}
+
+/** 提取 CHANGELOG.md 最新版本段落（跳过顶部 Unreleased 段），版本与 expectedVersion 不符时抛错 */
+export function extractLatestChangelog(content: string, expectedVersion: string): ChangelogNotes

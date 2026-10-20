@@ -1,7 +1,9 @@
-// 发布脚本契约测试（工单 #24）：钉住 scripts/release.mjs 的纯函数语义——
-// VSIX 内容清单与体积红线、解包 manifest 冒烟口径、CHANGELOG Unreleased
-// 转正算法与版本号校验。主流程（spawn vsce / PowerShell 读 zip）不在此
-// 测：跨进程 IO 归 `npm run package` 端到端承载（真实产物实测）。
+// 发布脚本契约测试（工单 #24；发布链 2026-10-20 扩展）：钉住
+// scripts/release.mjs 的纯函数语义——VSIX 内容清单与体积红线、解包
+// manifest 冒烟口径、CHANGELOG Unreleased 转正算法与版本号校验、发布
+// 说明的段落提取与折行合并（publish 子命令消费）。主流程（spawn vsce /
+// gh / PowerShell 读 zip）不在此测：跨进程 IO 归 `npm run package` 端到端
+// 承载（真实产物实测）。
 // 另钉两组仓库现状契约：CHANGELOG 结构（Keep a Changelog + Unreleased）
 // 与 .vscodeignore 排除清单（黑名单输入侧；产物输出侧由禁止模式钉住）。
 import { readFileSync, existsSync } from 'node:fs'
@@ -16,6 +18,8 @@ import {
   inspectVsixManifest,
   promoteUnreleased,
   validateVersionArg,
+  mergeSoftWraps,
+  extractLatestChangelog,
 } from '../scripts/release.mjs'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -285,6 +289,113 @@ describe('validateVersionArg（语义化版本校验）', () => {
     for (const bad of ['v0.1.0', '0.1', '0.1.0.0', 'abc', '0.1.0-beta']) {
       expect(() => validateVersionArg(bad), bad).toThrow(/版本号/)
     }
+  })
+})
+
+describe('mergeSoftWraps（发布说明段内折行合并，自 vsidian 主仓移植）', () => {
+  it('中文行间直接拼接不留空格，结构换行保留', () => {
+    const body = [
+      '本版本围绕输入体验：新增规则引擎与自动格式化，',
+      '并优化设置页视效。',
+      '',
+      '### 新增',
+      '',
+      '- **规则引擎**：内置 20 条规则全量移植，',
+      '  支持正则匹配与捕获组引用；',
+      '  持久化三层结构。（#1）',
+    ].join('\n')
+    expect(mergeSoftWraps(body)).toBe([
+      '本版本围绕输入体验：新增规则引擎与自动格式化，并优化设置页视效。',
+      '',
+      '### 新增',
+      '',
+      '- **规则引擎**：内置 20 条规则全量移植，支持正则匹配与捕获组引用；持久化三层结构。（#1）',
+    ].join('\n'))
+  })
+
+  it('ASCII 词界补一个空格，HTML 注释块原样保留', () => {
+    const body = [
+      '- English text wrapping',
+      '  across word',
+      '  boundaries keeps one space.',
+      '',
+      '<!-- 变更链接',
+      '0.1.0: https://example.com/commits/v0.1.0',
+      '-->',
+    ].join('\n')
+    expect(mergeSoftWraps(body)).toBe([
+      '- English text wrapping across word boundaries keeps one space.',
+      '',
+      '<!-- 变更链接',
+      '0.1.0: https://example.com/commits/v0.1.0',
+      '-->',
+    ].join('\n'))
+  })
+
+  it('中英混排的拼接点补空格（CJK 结尾接 ASCII 开头、反向同理）', () => {
+    const body = [
+      '- **行为链**：输入、删除、粘贴等行为按链序协同生效，规则引擎',
+      '  经 CM6 扩展接入。',
+      '- 未支持上游的',
+      '  TryFixChineseIM（永不移植项）。',
+    ].join('\n')
+    expect(mergeSoftWraps(body)).toBe([
+      '- **行为链**：输入、删除、粘贴等行为按链序协同生效，规则引擎经 CM6 扩展接入。',
+      '- 未支持上游的 TryFixChineseIM（永不移植项）。',
+    ].join('\n'))
+  })
+})
+
+describe('extractLatestChangelog（CHANGELOG 最新版本段落提取）', () => {
+  const content = [
+    '# Changelog',
+    '',
+    '## Unreleased - 开发中',
+    '',
+    '### 新增',
+    '',
+    '- 开发中条目（尚未发布）',
+    '',
+    '## 0.2.0 - 2026-10-01',
+    '',
+    '### 改进',
+    '',
+    '- B 功能',
+    '',
+    '## 0.1.0 - 2026-09-25',
+    '',
+    '- 首个版本',
+  ].join('\n')
+
+  it('跳过顶部 Unreleased 段，取首个版本段（发布说明不混入开发中内容）', () => {
+    const notes = extractLatestChangelog(content, '0.2.0')
+    expect(notes.version).toBe('0.2.0')
+    expect(notes.date).toBe('2026-10-01')
+    expect(notes.body).toMatch(/### 改进/)
+    expect(notes.body).toMatch(/- B 功能/)
+    expect(notes.body).not.toMatch(/Unreleased|开发中条目/)
+  })
+
+  it('最新版本与 package.json 不一致时报错', () => {
+    expect(() => extractLatestChangelog(content, '0.1.0')).toThrow(/0\.2\.0.*0\.1\.0/)
+  })
+
+  it('没有任何版本段落时报错（仅 Unreleased 同样报错）', () => {
+    expect(() => extractLatestChangelog('# Changelog\n\n只有开头', '0.1.0')).toThrow(/未找到/)
+    expect(() => extractLatestChangelog('# Changelog\n\n## Unreleased - 开发中\n\n- 条目', '0.1.0')).toThrow(/未找到/)
+  })
+
+  it('返回的发布说明正文已合并段内折行', () => {
+    const wrapped = [
+      '# Changelog',
+      '',
+      '## 0.2.0 - 2026-10-01',
+      '',
+      '- 折行条目的前半，',
+      '  与后半。',
+    ].join('\n')
+    const notes = extractLatestChangelog(wrapped, '0.2.0')
+    expect(notes.body).toBe('- 折行条目的前半，与后半。')
   })
 })
 

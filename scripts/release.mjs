@@ -1,28 +1,34 @@
-// 发布脚本骨架（工单 #24）：打包 → 体积与内容检查 → VSIX 解包冒烟；
-// release 子命令另做版本号 bump 与 CHANGELOG 日期段切换。
+// 发布脚本（工单 #24；发布链 2026-10-20 落地）：打包 → 体积与内容检查 →
+// VSIX 解包冒烟；release 子命令另做版本号 bump 与 CHANGELOG 日期段切换；
+// publish 子命令供 CI 发布链消费——提取 CHANGELOG 版本段落、校验 HEAD
+// 命中 v<版本> 标签后创建 GitHub Release 并附带 VSIX。
 //
 //   npm run package               # compile + 打包 + 检查 + 冒烟（只产本地 VSIX）
 //   npm run release -- <x.y.z>    # bump + CHANGELOG Unreleased 转正 + 打包 + 冒烟
+//   npm run release:publish       # 打包 + 检查 + 冒烟 + 创建 GitHub Release（CI / tag 触发）
 //
 // 打包命令与 CI（#23 的 VSIX 步骤）同款形态：npx @vscode/vsce package
 // --no-dependencies（esbuild bundle 自包含，无 node_modules；vsce 经
 // package.json 的 vscode:prepublish 自动重建三产物）。
 //
-// 发行护栏（票面红线）：对外发布 VSIX 需「vsidian 附加组件 API 落账发行」
-// 与「用户明确授权」二者齐备，缺一不发布。本脚本不提供任何上传/发布路径
-// （无 marketplace / gh release 通道，恒为 dry-run 语义——只产本地 VSIX），
-// 真实发行是人工动作。vsidian API 现为 1.0.0 候选未发行，本插件前期只做
-// 本地安装验证（真实安装态冒烟归工单 #21 人工清单，本脚本的「冒烟」是
-// VSIX 解包结构校验：dist 三产物与页面样式在场、manifest 合法、
-// extensionDependencies / vsidianAddon 声明与仓库清单一致）。
+// 发行护栏沿革：票面原护栏为「对外发布 VSIX 需 vsidian API 落账发行 +
+// 用户明确授权，脚本无任何上传路径（dry-run）」。两项条件现已齐备——
+// API 已随 vsidian v1.1.0 发行（2026-10-16），用户 2026-10-20 授权建立
+// 发布链——护栏解除：publish 子命令接管 GitHub Release 创建，Marketplace
+// 发布不经本脚本（release.yml 的 marketplace job 从 Release 下载同一
+// VSIX 后经 vsce publish 上传，上市场的与 Release 附带的是同一份字节）。
+// 「冒烟」仍指 VSIX 解包结构校验：dist 三产物与页面样式在场、manifest
+// 合法、extensionDependencies / vsidianAddon 声明与仓库清单一致（真实
+// 安装态验证归工单 #21 人工清单）。
 //
 // 纯函数（parseUnzipListing / parsePszListing / inspectVsixEntries /
-// inspectVsixManifest / promoteUnreleased / validateVersionArg）由
-// test/release.test.ts 契约测试钉住，模式对齐 vsidian 主仓
-// scripts/release.mjs。
+// inspectVsixManifest / promoteUnreleased / validateVersionArg /
+// mergeSoftWraps / extractLatestChangelog）由 test/release.test.ts 契约
+// 测试钉住，模式对齐 vsidian 主仓 scripts/release.mjs。
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -232,6 +238,83 @@ export function promoteUnreleased(content, version, date) {
   return out.join('\n')
 }
 
+/**
+ * 合并段内软换行：CHANGELOG 源文件的条目折行原样进入 GitHub Release
+ * 说明后，渲染时断成锯齿短行并在中文行间并入空格——发布说明的消费方
+ * 是网页。空行、列表项、标题、引用与编号列表等结构边界保留换行；其余
+ * 行拼接到上一行，拼接双方都是 ASCII 字母/数字时补一个空格，CJK 相接
+ * 直接拼接。HTML 注释块整体原样保留。（自 vsidian 主仓同函数移植）
+ */
+export function mergeSoftWraps(body) {
+  const out = []
+  let inComment = false
+  for (const raw of body.split('\n')) {
+    const line = raw.trim()
+    if (inComment) {
+      out.push(line)
+      if (line.includes('-->')) inComment = false
+      continue
+    }
+    if (line.includes('<!--') && !line.includes('-->')) {
+      inComment = true
+      out.push(line)
+      continue
+    }
+    if (line === '' || /^([-*+]|\d+[.)])\s/.test(line) || /^#{1,6}\s/.test(line) || /^>/.test(line)) {
+      out.push(line)
+      continue
+    }
+    const prev = out[out.length - 1]
+    if (prev === undefined || prev === '') {
+      out.push(line)
+    } else {
+      // 拼接点补空格的判据：ASCII 词界与中英混排边界（两个方向）都留
+      // 一个空格；CJK 相接与任一侧标点直接拼接。
+      const ascii = /[A-Za-z0-9]/
+      const cjk = /[\u3400-\u4dbf\u4e00-\u9fff]/
+      const prevEnd = prev[prev.length - 1]
+      const firstChar = line[0]
+      const needSpace =
+        (ascii.test(prevEnd) && ascii.test(firstChar)) ||
+        (cjk.test(prevEnd) && ascii.test(firstChar)) ||
+        (ascii.test(prevEnd) && cjk.test(firstChar))
+      out[out.length - 1] = needSpace ? `${prev} ${line}` : prev + line
+    }
+  }
+  return out.join('\n')
+}
+
+/**
+ * 提取 CHANGELOG.md 最新版本段落（发布说明正文已合并段内折行）。
+ * 顶部常驻的 `## Unreleased` 开发段跳过（只认 `## x.y.z` 版本段）——
+ * 发版提交同时完成「Unreleased 转正 + 重建空 Unreleased」后，发布说明
+ * 不再混入开发中内容。
+ * @throws 最新版本段落与 expectedVersion 不符、或找不到版本段落时抛错。
+ */
+export function extractLatestChangelog(content, expectedVersion) {
+  const lines = content.split(/\r?\n/)
+  let start = -1
+  let version = null
+  let date = null
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^## (\[?[^\s\]]+\]?)\s*(?:-\s*(.*))?$/)
+    if (!m) continue
+    const token = m[1].replace(/^\[|\]$/g, '')
+    if (!/^\d+\.\d+\.\d+$/.test(token)) continue
+    start = i
+    version = token
+    date = (m[2] || '').trim() || null
+    break
+  }
+  if (start < 0) throw new Error('CHANGELOG.md 中未找到任何 `## <版本>` 段落')
+  if (version !== expectedVersion) {
+    throw new Error(`CHANGELOG 最新段落为 ${version}，与 package.json 的 ${expectedVersion} 不一致`)
+  }
+  const bodyEnd = lines.findIndex((l, i) => i > start && /^## /.test(l))
+  const body = lines.slice(start + 1, bodyEnd < 0 ? lines.length : bodyEnd).join('\n').trim()
+  return { version, date, body: mergeSoftWraps(body) }
+}
+
 /** 列出 zip 内容；优先 unzip（CI Linux / Git Bash），Windows 回退 PowerShell。 */
 function listZipEntries(vsixPath) {
   const unzip = spawnSync('unzip', ['-l', vsixPath], { encoding: 'utf8' })
@@ -329,9 +412,58 @@ function runPackage(root) {
     return
   }
   console.log('解包冒烟通过（manifest 合法、version/main/extensionDependencies/vsidianAddon 声明一致）')
-
-  console.log('发行护栏提醒：本脚本只产本地 VSIX，无上传路径；对外发布需 vsidian API 落账发行 + 用户明确授权（缺一不发布），真实安装验证见工单 #21')
   return vsixPath
+}
+
+/**
+ * CI 发布链（release.yml 的 release job）：提取 CHANGELOG 最新版本段落
+ * 作为 Release 说明 → 打包 + 三道检查 → HEAD 精确命中 v<版本> 标签校验
+ * → gh release create 附带 VSIX。Marketplace 发布不经此函数（marketplace
+ * job 从 Release 下载同一 VSIX 上传，保证字节一致）。
+ */
+function runPublish(root) {
+  if (git(['status', '--porcelain']) !== '') {
+    console.error('工作树不干净：发布须从干净检出打包（CI checkout 场景不应出现）')
+    process.exitCode = 1
+    return
+  }
+
+  const pkg = readRepoPkg(root)
+  let notes
+  try {
+    notes = extractLatestChangelog(readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8'), pkg.version)
+  } catch (err) {
+    console.error(String(err.message))
+    process.exitCode = 1
+    return
+  }
+  console.log(`CHANGELOG ${notes.version}${notes.date ? `（${notes.date}）` : ''} 段落提取成功，${notes.body.length} 字符`)
+
+  const vsixPath = runPackage(root)
+  if (!vsixPath || process.exitCode) return
+
+  const tag = `v${pkg.version}`
+  const headTag = git(['describe', '--tags', '--exact-match', 'HEAD']).split('\n')[0]
+  if (headTag !== tag) {
+    console.error(`HEAD 未打 ${tag} 标签（当前 ${headTag || '无'}）。先 git tag ${tag} 再发布`)
+    process.exitCode = 1
+    return
+  }
+  const head = git(['rev-parse', 'HEAD'])
+  const notesFile = path.join(mkdtempSync(path.join(tmpdir(), 'easy-typing-release-')), 'notes.md')
+  writeFileSync(notesFile, notes.body + '\n', 'utf8')
+
+  console.log(`创建 GitHub Release ${tag} 并上传 ${path.basename(vsixPath)}…`)
+  // Windows 上 gh 是 .cmd，必须经 shell；参数拼接为整条命令避免 DEP0190（args+shell 组合）
+  const gh = spawnSync(`gh release create ${tag} "${vsixPath}" --target ${head} --title ${tag} --notes-file "${notesFile}"`, { cwd: root, encoding: 'utf8', shell: true })
+  rmSync(path.dirname(notesFile), { recursive: true, force: true })
+  if (gh.status !== 0) {
+    console.error(gh.stdout)
+    console.error(gh.stderr)
+    process.exitCode = 1
+    return
+  }
+  console.log(`Release ${tag} 创建完成：https://github.com/${git(['config', '--get', 'remote.origin.url']).replace(/\.git$/, '').replace(/^git@github\.com:/, 'https://github.com/')}/releases/tag/${tag}`)
 }
 
 /** 发版准备：版本号 bump + CHANGELOG Unreleased 转正 + 打包。 */
@@ -382,27 +514,22 @@ function runRelease(root, versionArg) {
     return
   }
 
-  console.log('发版准备完成。后续人工步骤：')
+  console.log('发版准备完成。后续步骤：')
   console.log(`  1. 提交发版变更（package.json + CHANGELOG.md，中文提交信息）`)
-  console.log(`  2. 视需要打标签 git tag v${version}`)
-  console.log('  3. 对外发布 VSIX 前核对护栏：vsidian 附加组件 API 已落账发行 + 用户明确授权，二者缺一不发布')
+  console.log(`  2. 打标签并推送：git tag v${version} && git push origin main --tags`)
+  console.log('  3. CI（release.yml）自动创建 GitHub Release 并附 VSIX；Marketplace 发布需仓库配置 VSCE_PAT secret 与 MARKETPLACE_PUBLISH variable 双开关')
 }
 
 function main() {
   const argv = process.argv.slice(2)
-
-  // 发行护栏的代码化边界：显式拒绝任何上传意图（本脚本无上传路径）
-  if (argv.includes('--upload') || argv.includes('--publish')) {
-    console.error('本脚本不提供上传/发布路径：对外发布 VSIX 需 vsidian 附加组件 API 落账发行 + 用户明确授权（缺一不发布），发布是人工动作')
-    process.exitCode = 1
-    return
-  }
 
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
   const command = argv.find((a) => !a.startsWith('--')) ?? 'package'
 
   if (command === 'package') {
     runPackage(root)
+  } else if (command === 'publish') {
+    runPublish(root)
   } else if (command === 'release') {
     const versionArg = argv.filter((a) => !a.startsWith('--'))[1]
     if (!versionArg) {
@@ -412,7 +539,7 @@ function main() {
     }
     runRelease(root, versionArg)
   } else {
-    console.error(`未知子命令 ${command}。用法：node scripts/release.mjs [package | release <x.y.z>]`)
+    console.error(`未知子命令 ${command}。用法：node scripts/release.mjs [package | release <x.y.z> | publish]`)
     process.exitCode = 1
   }
 }

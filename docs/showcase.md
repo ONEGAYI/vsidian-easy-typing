@@ -8,7 +8,7 @@
 
 复制本仓库起步，能得到的东西分三类：
 
-- **工程设施**（#22–#24 落地）：三产物构建桥（CM6 双防线）、vendor 类型快照（脚本化 re-vendor）、CI 工作流、打包发布脚本（含体积红线与发行护栏）——全部可原样带走，只改身份字段。
+- **工程设施**（#22–#24 落地）：三产物构建桥（CM6 双防线）、vendor 类型快照（脚本化 re-vendor）、CI 工作流、打包发布脚本与 CI 发布链（体积红线 + GitHub Release / Marketplace 同步发布）——全部可原样带走，只改身份字段。
 - **流程约定**：GitHub Issues 开票与里程碑节奏、规格先行三要素、与 vsidian 主仓库的跨仓互链模式——独立插件仓可整套沿用。
 - **移植方法论**（若你的插件也移植自 Obsidian 生态）：上游锚点对照表、「永不移植清单」决策、平台差异落档（ADR）——见本文第五节。
 
@@ -119,12 +119,15 @@ npm run package    # 打包 VSIX + 三道关（只产本地 VSIX，无上传路�
 
 CI（`.github/workflows/ci.yml`，#23）单 job 串行四步：compile → vitest（失败时 json 报告上传留证）→ vendor 防漂移 → VSIX 打包上传。触发与步骤链由 `test/ci-workflow.test.ts` 钉住——改 workflow 前先看该测试，改后同步。
 
-发布（#24）两条命令：
+发布（#24；CI 发布链 2026-10-20 落地）三条命令：
 
-- `npm run package`——compile + 打包 + 三道关（体积红线 `SIZE_LIMITS`、内容清单、解包冒烟）。**恒只产本地 VSIX，无任何上传路径**；
-- `npm run release -- <x.y.z>`——干净树校验 + 版本号 bump + CHANGELOG Unreleased 段转正 + 打包。
+- `npm run package`——compile + 打包 + 三道关（体积红线 `SIZE_LIMITS`、内容清单、解包冒烟）。只产本地 VSIX；
+- `npm run release -- <x.y.z>`——干净树校验 + 版本号 bump + CHANGELOG Unreleased 段转正 + 打包（本地发版准备，产出待提交的发版变更）；
+- `npm run release:publish`——干净树校验 + CHANGELOG 最新版本段提取（与 package.json 版本强校验一致）+ 打包三道关 + HEAD 精确命中 v<版本> 标签校验 + `gh release create` 附 VSIX（CI 发布链入口，本地一般不直接跑）。
 
-**发行护栏（红线，脚本层已落实）**：对外发布 VSIX 需「vsidian API 落账发行」与「用户明确授权」二者齐备，缺一不发布。脚本无 `--upload` / `--publish` 通道（显式拒绝非零退出），真实发行是人工动作。
+**发布工作流**（`.github/workflows/release.yml`，v* 标签触发）：release job 先复验（全量单测 + vendor 防漂移，失败即中止）再 `release:publish` 产出 GitHub Release；marketplace job 从 Release 下载**同一 VSIX** 经 `vsce publish` 上传——上市场的与 Release 附带的是同一份字节，不重新打包。marketplace 受双开关 gate（仓库 secret `VSCE_PAT` + variable `MARKETPLACE_PUBLISH=true`），配置前推 tag 只产出 GitHub Release；`workflow_dispatch` 填标签名可对既有 Release 补跑 marketplace。结构契约由 `test/release-workflow.test.ts` 钉住（含主仓踩过的三处回归锚点：`if` 表达式 `${{ }}` 包裹、`!cancelled()` 豁免隐式 success() 前缀、双开关 gate）。
+
+**护栏沿革**：早期（API 未发行阶段）脚本恒为 dry-run、无任何上传路径；vsidian 附加组件 API 随 v1.1.0 发行（2026-10-16）且用户授权建立发布链后护栏解除，`publish` 子命令接管 GitHub Release 创建，Marketplace 仍不经脚本（marketplace job 消费 Release 产物）。
 
 CHANGELOG 中文、Keep a Changelog 风格，开发中条目一律记入顶部 Unreleased 段——日常提交随手记，发版时脚本转正。
 
