@@ -104,12 +104,16 @@ describe('vendor SDK 类型快照纪律', () => {
     // 脚本顶层即执行副作用（读 env / exit），无法 import 做行为断言，
     // 故钉源码文本契约；CI runner 同级仓不在场，磁盘存在性断言必假红
     const text = readFileSync(path.join(repoRoot, 'scripts/vendorSdkTypes.mjs'), 'utf8')
-    // 正向：默认值恰为一级上（两仓同级布局裸跑 vendor 系命令可达）
-    expect(text).toContain(`path.join(repoRoot, '..', 'vscode-obsidian-like-editor')`)
+    // 正向：默认值恰为一级上的 vsidian（两仓同级布局裸跑 vendor 系命令可达；
+    // 2026-10-20 前默认名是更名前旧目录名，同级 vsidian 在场也解析不到
+    // （旧名路径不存在），裸跑必挂——v0.1.0 发版轮实证）
+    expect(text).toContain(`path.join(repoRoot, '..', 'vsidian')`)
     // 负向：防回潮两级上（原缺陷形态，同级布局下不可达必挂）
-    expect(text, '默认源仓路径回潮两级上').not.toContain(`'..', '..', 'vscode-obsidian-like-editor'`)
+    expect(text, '默认源仓路径回潮两级上').not.toContain(`'..', '..', 'vsidian'`)
+    // 负向：更名前旧目录名不再出现（防回潮旧名）
+    expect(text, '默认源仓回潮更名前旧名').not.toContain('vscode-obsidian-like-editor')
     // 头注释定位序声称的默认语义与代码同源
-    expect(text).toContain(`> ../vscode-obsidian-like-editor`)
+    expect(text).toContain(`> ../vsidian`)
   })
 })
 

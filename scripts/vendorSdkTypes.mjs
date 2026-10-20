@@ -15,7 +15,7 @@
 //   文件相对导入路径原样有效，无需改写。
 // - 每个文件头标注来源 commit；升级快照 = --commit <新rev> 重跑 + 评审 diff。
 //
-// 源仓定位：--source > 环境变量 VSIDIAN_SOURCE_REPO > ../vscode-obsidian-like-editor
+// 源仓定位：--source > 环境变量 VSIDIAN_SOURCE_REPO > ../vsidian
 // （相对本仓库根）。读取经 `git show <commit>:<path>`——按提交快照取文，
 // 不受源仓工作树状态影响。
 import ts from 'typescript'
@@ -78,7 +78,7 @@ function parseArgs(argv) {
 
 const args = parseArgs(process.argv.slice(2))
 const sourceRepo = path.resolve(
-  args.source ?? process.env.VSIDIAN_SOURCE_REPO ?? path.join(repoRoot, '..', 'vscode-obsidian-like-editor'),
+  args.source ?? process.env.VSIDIAN_SOURCE_REPO ?? path.join(repoRoot, '..', 'vsidian'),
 )
 if (!statSync(path.join(sourceRepo, '.git'), { throwIfNoEntry: false })) {
   console.error(`[vendor] 源仓不是 git 仓库：${sourceRepo}（用 --source 或 VSIDIAN_SOURCE_REPO 指定 vsidian 本体仓）`)
