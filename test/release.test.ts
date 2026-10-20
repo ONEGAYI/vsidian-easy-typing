@@ -400,18 +400,18 @@ describe('extractLatestChangelog（CHANGELOG 最新版本段落提取）', () =>
 })
 
 describe('仓库现状契约（CHANGELOG 结构与 .vscodeignore 输入侧黑名单）', () => {
-  it('CHANGELOG.md 在场：Keep a Changelog 头部说明 + 非空 Unreleased 段', () => {
+  it('CHANGELOG.md 在场：Keep a Changelog 头部说明 + Unreleased 段在场', () => {
     const file = path.join(repoRoot, 'CHANGELOG.md')
     expect(existsSync(file), 'CHANGELOG.md 缺失').toBe(true)
     const text = readFileSync(file, 'utf8')
     expect(text).toMatch(/Keep a Changelog/)
     expect(text).toMatch(/^## Unreleased/m)
-    // Unreleased 段非空：标题之后、下一版本段之前存在非空行
+    // Unreleased 段允许为空：发版转正后、下个开发周期条目进入前的正常态
+    // （v0.1.0 发版实证：原「非空」断言在转正提交上必然失败，卡死发布链）
     const lines = text.split(/\r?\n/)
     const start = lines.findIndex((l) => /^## Unreleased/.test(l))
-    const end = lines.findIndex((l, i) => i > start && /^## \d/.test(l))
-    const body = lines.slice(start + 1, end < 0 ? lines.length : end).join('')
-    expect(body.trim().length, 'Unreleased 段应有条目骨架').toBeGreaterThan(0)
+    const nextVersion = lines.findIndex((l, i) => i > start && /^## \d/.test(l))
+    expect(nextVersion, 'Unreleased 段之后应有已定案版本段').toBeGreaterThan(start)
   })
 
   it('.vscodeignore 排除源码/测试/文档/工程设施（与检查器禁止模式同源）', () => {
