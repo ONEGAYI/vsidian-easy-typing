@@ -1,4 +1,4 @@
-// 行级格式化矩阵（工单 #26；#4 补格收口至 88 场景；#70 补 13 场景至 101）：formatLine 全场景
+// 行级格式化矩阵（工单 #26；#4 补格收口至 88 场景；#70 补 20 场景至 108）：formatLine 全场景
 // 回归——期望值经**上游差异化验证**固定（上游 core.ts formatLine 以伪
 // syntaxTree 注入本移植切出的 code/formula 区段，与
 // src/formatting/lineFormatter.ts 逐场景比对等价后回填；复跑方法见
@@ -322,12 +322,36 @@ const MATRIX: MatrixEntry[] = [
         expected: {"line":"中文 [[a]]","cursorCh":8,"changes":[{"text":"中文 ","begin":0,"end":2,"origin":"中文"}]} },
       { name: "marker-rule-keeps-text-tail", line: "a**", curCh: 3, prevCh: 2,
         expected: {"line":"a**","cursorCh":3,"changes":[]} },
+      // ── strict 档同样不得插空格（审查 PR73-001：抬成 soft 挡不住 strict）──
+      // 三档一律硬跳过标记符边界，四类行内元素 × 前后标记符覆盖
+      { name: "marker-strict-mdlink", line: "**[a](b)**", curCh: 10, prevCh: 9,
+        settings: {"InlineCodeSpaceMode":2,"InlineFormulaSpaceMode":2,"InlineLinkSpaceMode":2},
+        expected: {"line":"**[a](b)**","cursorCh":10,"changes":[]} },
+      { name: "marker-strict-wikilink", line: "**[[a]]**", curCh: 9, prevCh: 8,
+        settings: {"InlineCodeSpaceMode":2,"InlineFormulaSpaceMode":2,"InlineLinkSpaceMode":2},
+        expected: {"line":"**[[a]]**","cursorCh":9,"changes":[]} },
+      { name: "marker-strict-code", line: "**`x`**", curCh: 7, prevCh: 6,
+        settings: {"InlineCodeSpaceMode":2,"InlineFormulaSpaceMode":2,"InlineLinkSpaceMode":2},
+        expected: {"line":"**`x`**","cursorCh":7,"changes":[]} },
+      { name: "marker-strict-formula", line: "**$x$**", curCh: 7, prevCh: 6,
+        settings: {"InlineCodeSpaceMode":2,"InlineFormulaSpaceMode":2,"InlineLinkSpaceMode":2},
+        expected: {"line":"**$x$**","cursorCh":7,"changes":[]} },
+      { name: "marker-strict-code-tail", line: "`a`**", curCh: 5, prevCh: 4,
+        settings: {"InlineCodeSpaceMode":2},
+        expected: {"line":"`a`**","cursorCh":5,"changes":[]} },
+      { name: "marker-strict-cjk-prefixed", line: "中文**[[a]]**", curCh: 11, prevCh: 10,
+        settings: {"InlineCodeSpaceMode":2,"InlineFormulaSpaceMode":2,"InlineLinkSpaceMode":2},
+        expected: {"line":"中文**[[a]]**","cursorCh":11,"changes":[]} },
+      // 正文 strict 语义不变（对照：正文后仍补空格）
+      { name: "marker-strict-keeps-cjk", line: "中文`a`", curCh: 5, prevCh: 4,
+        settings: {"InlineCodeSpaceMode":2},
+        expected: {"line":"中文 `a`","cursorCh":6,"changes":[{"text":"中文 ","begin":0,"end":2,"origin":"中文"}]} },
 ]
 
 describe('formatLine 上游验证矩阵', () => {
-  it('矩阵规模完整（101 场景，防止表被误删）', () => {
-    expect(MATRIX.length).toBe(101)
-    expect(new Set(MATRIX.map((e) => e.name)).size).toBe(101)
+  it('矩阵规模完整（108 场景，防止表被误删）', () => {
+    expect(MATRIX.length).toBe(108)
+    expect(new Set(MATRIX.map((e) => e.name)).size).toBe(108)
   })
 
   for (const entry of MATRIX) {
