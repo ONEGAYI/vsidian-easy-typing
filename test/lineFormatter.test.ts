@@ -1,4 +1,4 @@
-// 行级格式化矩阵（工单 #26；#4 补格收口至 88 场景）：formatLine 全场景
+// 行级格式化矩阵（工单 #26；#4 补格收口至 88 场景；#70 补 13 场景至 101）：formatLine 全场景
 // 回归——期望值经**上游差异化验证**固定（上游 core.ts formatLine 以伪
 // syntaxTree 注入本移植切出的 code/formula 区段，与
 // src/formatting/lineFormatter.ts 逐场景比对等价后回填；复跑方法见
@@ -291,12 +291,43 @@ const MATRIX: MatrixEntry[] = [
         expected: {"line":"中文$\\qquad$中文","cursorCh":0,"changes":[]} },
       { name: "enter-finalize-dict", line: "中文n8n", curCh: 5, prevCh: 5,
         expected: {"line":"中文n8n","cursorCh":5,"changes":[]} },
+      // ── 纯标记符文段不参与行内元素间距（本仓有意偏差，见 #70）──
+      // 报告案例：`/` 与行内代码、`**` 与双链/Markdown 链接之间不再补
+      // 空格（补空格会破坏 Markdown 语法，如 `** [a](b) **` 粗体失效）
+      { name: "marker-slash-code", line: "/`x`", curCh: 4, prevCh: 3,
+        expected: {"line":"/`x`","cursorCh":4,"changes":[]} },
+      { name: "marker-bold-wikilink", line: "**[[a]]", curCh: 7, prevCh: 6,
+        expected: {"line":"**[[a]]","cursorCh":7,"changes":[]} },
+      { name: "marker-bold-mdlink", line: "**[a](b)", curCh: 8, prevCh: 7,
+        expected: {"line":"**[a](b)","cursorCh":8,"changes":[]} },
+      { name: "marker-bold-code", line: "**`x`", curCh: 5, prevCh: 4,
+        expected: {"line":"**`x`","cursorCh":5,"changes":[]} },
+      { name: "marker-bold-wikilink-closed", line: "**[[a]]**", curCh: 9, prevCh: 8,
+        expected: {"line":"**[[a]]**","cursorCh":9,"changes":[]} },
+      { name: "marker-bold-mdlink-closed", line: "**[a](b)**", curCh: 10, prevCh: 9,
+        expected: {"line":"**[a](b)**","cursorCh":10,"changes":[]} },
+      { name: "marker-italic-wikilink", line: "*[[a]]", curCh: 6, prevCh: 5,
+        expected: {"line":"*[[a]]","cursorCh":6,"changes":[]} },
+      { name: "marker-slash-formula", line: "/$x$", curCh: 4, prevCh: 3,
+        expected: {"line":"/$x$","cursorCh":4,"changes":[]} },
+      // 字符类元字符（\ 与 |）各自命中，不被字符类转义吞掉
+      { name: "marker-backslash-code", line: "\\`x`", curCh: 4, prevCh: 3,
+        expected: {"line":"\\`x`","cursorCh":4,"changes":[]} },
+      { name: "marker-pipe-wikilink", line: "|[[a]]", curCh: 6, prevCh: 5,
+        expected: {"line":"|[[a]]","cursorCh":6,"changes":[]} },
+      // 正文间距不受标记符规则影响（回归保护）
+      { name: "marker-rule-keeps-cjk-code", line: "中文`a`", curCh: 5, prevCh: 4,
+        expected: {"line":"中文 `a`","cursorCh":6,"changes":[{"text":"中文 ","begin":0,"end":2,"origin":"中文"}]} },
+      { name: "marker-rule-keeps-cjk-wikilink", line: "中文[[a]]", curCh: 7, prevCh: 6,
+        expected: {"line":"中文 [[a]]","cursorCh":8,"changes":[{"text":"中文 ","begin":0,"end":2,"origin":"中文"}]} },
+      { name: "marker-rule-keeps-text-tail", line: "a**", curCh: 3, prevCh: 2,
+        expected: {"line":"a**","cursorCh":3,"changes":[]} },
 ]
 
 describe('formatLine 上游验证矩阵', () => {
-  it('矩阵规模完整（88 场景，防止表被误删）', () => {
-    expect(MATRIX.length).toBe(88)
-    expect(new Set(MATRIX.map((e) => e.name)).size).toBe(88)
+  it('矩阵规模完整（101 场景，防止表被误删）', () => {
+    expect(MATRIX.length).toBe(101)
+    expect(new Set(MATRIX.map((e) => e.name)).size).toBe(101)
   })
 
   for (const entry of MATRIX) {

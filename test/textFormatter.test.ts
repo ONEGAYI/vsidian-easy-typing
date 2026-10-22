@@ -116,6 +116,38 @@ describe('detectBoundarySpaceState（边界空格状态机）', () => {
     expect(detectBoundarySpaceState('\0中文', '', '').start).toBe(SpaceState.none)
     expect(detectBoundarySpaceState(' \0中文', '', '').start).toBe(SpaceState.strict)
   })
+
+  it('纯标记符游程：两端视为软边界（本仓有意偏差）', () => {
+    // 标记符连串（** / ~ / 路径分隔符等）是语法结构而非正文文字，不参与
+    // 正文与行内元素之间的间距策略——否则 `**` 与 `[[a]]` 之间、`/` 与
+    // 行内代码之间会被补空格，破坏 Markdown 语法
+    expect(detectBoundarySpaceState('**', '', '')).toEqual({ start: SpaceState.soft, end: SpaceState.soft })
+    expect(detectBoundarySpaceState('/', '', '').end).toBe(SpaceState.soft)
+    expect(detectBoundarySpaceState('~~', '', '')).toEqual({ start: SpaceState.soft, end: SpaceState.soft })
+    // 正文之后的标记符游程同样命中（中文**[[a]]** 是常见写法）
+    expect(detectBoundarySpaceState('中文**', '', '').end).toBe(SpaceState.soft)
+  })
+
+  it('游程之外的正文内容不影响标记符规则的既有语义', () => {
+    expect(detectBoundarySpaceState('中文', '', '').end).toBe(SpaceState.none)
+    expect(detectBoundarySpaceState('a**b', '', '').end).toBe(SpaceState.none)
+    // 闭合括号与半角标点维持既有契约（不被标记符规则改写）
+    expect(detectBoundarySpaceState('中文)', '', '').end).toBe(SpaceState.none)
+    expect(detectBoundarySpaceState('中文.', '', '').end).toBe(SpaceState.none)
+  })
+
+  it('标记符判定穿透 \\0 光标标记；真实空白优先（strict 不被降级）', () => {
+    expect(detectBoundarySpaceState('**\0', '', '').end).toBe(SpaceState.soft)
+    expect(detectBoundarySpaceState('**\0中文', '', '').end).toBe(SpaceState.none)
+    expect(detectBoundarySpaceState('** ', '', '').end).toBe(SpaceState.strict)
+  })
+
+  it('含正则元字符的标记符不被字符类转义吞掉（\\\\ 与 | 各自命中）', () => {
+    // 集合内联进 [...] 时 `\\|` 会让反斜杠转义掉 `|`，两者都漏判
+    expect(detectBoundarySpaceState('\\', '', '').end).toBe(SpaceState.soft)
+    expect(detectBoundarySpaceState('|', '', '').end).toBe(SpaceState.soft)
+    expect(detectBoundarySpaceState('\\|', '', '').end).toBe(SpaceState.soft)
+  })
 })
 
 describe('applyLanguagePairSpacing（token 中心算法）', () => {
