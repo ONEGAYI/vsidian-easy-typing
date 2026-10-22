@@ -512,12 +512,62 @@ export function applyLanguagePairSpacing(
 
 // ──────────── 边界空格状态机 ────────────
 
+/** 结构性标记符：Markdown 行内标记与路径分隔符。它们出现在分区边界时
+ *  说明邻接的是语法结构而非正文（`**[[a]]`、`` /`x` ``、`` `a`** ``），
+ *  不应按「正文与行内元素」的间距策略补空格——补空格会把标记符与承载
+ *  内容的元素拆开，直接破坏粗体与行内代码语法（`** [a](b) **` 渲染
+ *  时星号原样显示）。
+ *
+ *  【登记边界】括号与全角/半角标点已由边界状态机的内置软符号集覆盖，
+ *  不在此重复；`]`/`)` 等闭合符的终点语义维持既有契约（上游口径，不加
+ *  宽）。本集合是本仓相对上游的**有意偏差**。 */
+const STRUCTURAL_MARKER_CHARS = '`*_~=$/\\|<>'
+
+/** 端点结构性标记符游程（剔除 \0 光标标记后取；无命中返回 ''）。
+ *  字符类经 escapeForCharClass 转义——集合含反斜杠与 `|`，直接内联会让
+ *  反斜杠把后继字符转义掉（`\\|` 在类中只剩 `|`），两个符号都漏判。 */
+function boundaryMarkerRun(content: string, side: 'start' | 'end'): string {
+  const escaped = escapeForCharClass(STRUCTURAL_MARKER_CHARS)
+  if (side === 'start') {
+    const body = content.startsWith('\0') ? content.slice(1) : content
+    const match = new RegExp(`^[${escaped}]+`).exec(body)
+    return match ? match[0] : ''
+  }
+  const body = content.endsWith('\0') ? content.slice(0, -1) : content
+  const match = new RegExp(`[${escaped}]+$`).exec(body)
+  return match ? match[0] : ''
+}
+
+/**
+ * 端点是否为结构性标记符边界（相邻分区间距判定的硬跳过条件）。
+ *
+ * 【为何不用边界状态表达】标记符不是「已满足的空格」，而是「不该参与
+ * 正文间距策略」——三档（none/soft/strict）语义上都不应在此补空格。
+ * 若只把端点抬成 soft，strict 档的 `strict > soft` 仍成立并补空格
+ * （审查 PR73-001 实测：`**[a](b)**` → `** [a](b)**`），故独立为谓词，
+ * 由消费方在任何档位前先短路。
+ *
+ * 真实空白优先：端点本身已是空白（`** `）时不算标记符边界，走既有
+ * strict 语义。
+ */
+export function isStructuralMarkerBoundary(
+  content: string,
+  side: 'start' | 'end',
+): boolean {
+  // 真实空白优先：端点若是空格，游程正则在首/尾自然不命中（`** `、
+  // ` **` 均返回 ''），维持既有三档语义
+  return boundaryMarkerRun(content, side) !== ''
+}
+
 /**
  * 分区两端空格状态（供相邻分区插空格判定）：
  * - strict：端点已有真实空白；
  * - soft：端点是软空格符号（自定义符号 + 内置全角标点/引号/括号集）；
  * - none：无。
  * `<br>` 视为两端均满足软空格前提。
+ *
+ * 【结构性标记符不在此表达】标记符边界由 isStructuralMarkerBoundary
+ * 单独判定并在插空格前硬跳过——三档都不补空格，故此处维持上游语义。
  */
 export function detectBoundarySpaceState(
   content: string,

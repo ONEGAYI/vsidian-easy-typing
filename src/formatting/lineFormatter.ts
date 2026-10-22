@@ -25,6 +25,7 @@ import {
   capitalizeFirstLetter,
   capitalizeMidSentence,
   detectBoundarySpaceState,
+  isStructuralMarkerBoundary,
   type LanguagePair,
   type TextFormatContext,
 } from './textFormatter'
@@ -168,7 +169,12 @@ export function formatLine(
       )
 
       // 3.6 前一分区 → 本 text 的间距
-      if (prevPartType !== InlineType.none) {
+      // 结构性标记符边界（`**`/`/` 等，本仓有意偏差）：三档一律不补空格。
+      // 判定放在档位比较之前，strict 档同样短路（审查 PR73-001）。
+      // 本 text 开头是标记符（`[[a]]**` 的 `**`）时，前置间隔由下一轮
+      // 判定处理，这里一律不补。
+      const curTextStartsWithMarker = isStructuralMarkerBoundary(content, 'start')
+      if (prevPartType !== InlineType.none && !curTextStartsWithMarker) {
         if (prevPartType === InlineType.wikilink || prevPartType === InlineType.mdlink) {
           // 链接 → text：智能空格（上游链接专属逻辑原样保留）
           if (!settings.inlineLinkSmartSpace && settings.inlineLinkSpaceMode > boundary.start) {
@@ -226,9 +232,15 @@ export function formatLine(
       }
 
       // text → 链接：智能空格双分支（上游链接专属逻辑原样保留）
+      // 结构性标记符边界三档一律跳过（见 3.6 说明）——`**[[a]]` 的 `**`
+      // 是 text 分区尾部标记符，插空格会拆开粗体
+      const textTailIsMarker =
+        prevPartType === InlineType.text &&
+        isStructuralMarkerBoundary(lineParts[i - 1]!.content, 'end')
       if (
         (lineParts[i]!.type === InlineType.wikilink || lineParts[i]!.type === InlineType.mdlink) &&
-        prevPartType === InlineType.text
+        prevPartType === InlineType.text &&
+        !textTailIsMarker
       ) {
         const prevEnd = prevTextEndSpaceState
         if (prevEnd >= settings.inlineLinkSpaceMode && !settings.inlineLinkSmartSpace) {
@@ -273,7 +285,9 @@ export function formatLine(
         }
       } else if (prevPartType === InlineType.text) {
         // text → 非链接：前 text 尾部是否补空格
+        // 结构性标记符边界三档一律跳过（见 3.6 说明）
         if (
+          !isStructuralMarkerBoundary(lineParts[i - 1]!.content, 'end') &&
           shouldInsertSpaceBetweenParts(
             InlineType.text,
             lineParts[i]!.type,
