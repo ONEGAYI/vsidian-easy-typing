@@ -512,41 +512,12 @@ export function applyLanguagePairSpacing(
 
 // ──────────── 边界空格状态机 ────────────
 
-/** 结构性标记符：Markdown 行内标记与路径分隔符。它们出现在分区边界时
- *  说明邻接的是语法结构而非正文（`**[[a]]`、`` /`x` ``、`` `a`** ``），
- *  不应按「正文与行内元素」的间距策略补空格——补空格会把 `**` 与承载
- *  内容的元素拆开，直接破坏粗体与行内代码语法（`** [a](b) **` 渲染
- *  时星号原样显示）。
- *
- *  【登记边界】括号与全角/半角标点已由下方内置软符号集覆盖，不在此重
- *  复；`]`/`)` 等闭合符的终点语义维持既有契约（上游口径，不加宽）。
- *  本集合是本仓相对上游的**有意偏差**，判定入口唯一（本函数），消费方
- *  （lineFormatter 的 text→元素与元素→text 两侧）零额外分支。 */
-const STRUCTURAL_MARKER_CHARS = '`*_~=$/\\|<>'
-
-/** 端点连续标记符游程（剔除 \0 光标标记后取；无命中返回 ''）。
- *  字符类经 escapeForCharClass 转义——集合含反斜杠与 `|`，直接内联会让
- *  反斜杠把后继字符转义掉（`\\|` 在类中只剩 `|`），两个符号都漏判。 */
-function boundaryMarkerRun(content: string, side: 'start' | 'end'): string {
-  const escaped = escapeForCharClass(STRUCTURAL_MARKER_CHARS)
-  if (side === 'start') {
-    const body = content.startsWith('\0') ? content.slice(1) : content
-    const match = new RegExp(`^[${escaped}]+`).exec(body)
-    return match ? match[0] : ''
-  }
-  const body = content.endsWith('\0') ? content.slice(0, -1) : content
-  const match = new RegExp(`[${escaped}]+$`).exec(body)
-  return match ? match[0] : ''
-}
-
 /**
  * 分区两端空格状态（供相邻分区插空格判定）：
  * - strict：端点已有真实空白；
- * - soft：端点是软空格符号（自定义符号 + 内置全角标点/引号/括号集），
- *   或端点是结构性标记符游程（本仓有意偏差，见 STRUCTURAL_MARKER_CHARS）；
+ * - soft：端点是软空格符号（自定义符号 + 内置全角标点/引号/括号集）；
  * - none：无。
- * `<br>` 视为两端均满足软空格前提。真实空白优先——标记符规则只在
- * none 上抬升，不降级 strict。
+ * `<br>` 视为两端均满足软空格前提。
  */
 export function detectBoundarySpaceState(
   content: string,
@@ -573,14 +544,6 @@ export function detectBoundarySpaceState(
 
   if (regEndWithSpace.test(content) || content.endsWith('<br>')) {
     end = regStrictSpaceEnd.test(content) ? SpaceState.strict : SpaceState.soft
-  }
-
-  // 结构性标记符游程 → 软边界（只抬升 none，strict 不被降级）
-  if (start === SpaceState.none && boundaryMarkerRun(content, 'start') !== '') {
-    start = SpaceState.soft
-  }
-  if (end === SpaceState.none && boundaryMarkerRun(content, 'end') !== '') {
-    end = SpaceState.soft
   }
 
   return { start, end }
