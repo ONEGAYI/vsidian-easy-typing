@@ -77,36 +77,49 @@ function isEscapedAt(line: string, at: number): boolean {
   return (at - start) % 2 === 1
 }
 
-/** 目标沿用不含空白的识别范围；普通目标按括号配对，尖括号目标内的括号为字面量。 */
-function markdownLinkEnd(line: string, from: number): number {
-  const angle = line[from] === '<'
-  let depth = 0
-  for (let at = angle ? from + 1 : from; at < line.length; at++) {
+/** 预配对无空白的链接目标，避免未闭合的候选反复扫描同一段行尾。 */
+function markdownLinkEnds(line: string, from: number): Map<number, number> {
+  const ends = new Map<number, number>()
+  const parens: number[] = []
+  const angles: number[] = []
+  for (let at = from; at < line.length; at++) {
     const ch = line[at]!
-    if (/\s/.test(ch)) return -1
-    if (angle) {
-      if (ch === '>' && !isEscapedAt(line, at)) return line[at + 1] === ')' ? at + 2 : -1
+    if (/\s/.test(ch)) {
+      parens.length = 0
+      angles.length = 0
     } else if (ch === '(' && !isEscapedAt(line, at)) {
-      depth++
+      parens.push(at)
     } else if (ch === ')' && !isEscapedAt(line, at)) {
-      if (depth === 0) return at + 1
-      depth--
+      const open = parens.pop()
+      if (open !== undefined) ends.set(open, at + 1)
+    } else if (ch === '<' && line[at - 1] === '(') {
+      angles.push(at)
+    } else if (ch === '>' && !isEscapedAt(line, at)) {
+      // 尖括号目标独立配对：目标中的圆括号是字面量，首个未转义 > 必须紧跟 )。
+      if (line[at + 1] === ')') {
+        for (const open of angles) ends.set(open, at + 2)
+      }
+      angles.length = 0
     }
   }
-  return -1
+  return ends
 }
 
 /** 从左到右消费完整链接；返回不重叠的行内半开区间。 */
 export function scanInlineLinks(line: string): InlineLinkSpan[] {
   const starts = /\[\[[^\[\]]*\]\]|\[[^\[\]]*\]\(/g
   const spans: InlineLinkSpan[] = []
+  let ends: Map<number, number> | undefined
   for (let match = starts.exec(line); match !== null; match = starts.exec(line)) {
     const bracket = match.index
     if (isEscapedAt(line, bracket)) continue
     const wiki = line[bracket + 1] === '['
-    if (!wiki && isEscapedAt(line, starts.lastIndex - 2)) continue
-    const end = wiki ? starts.lastIndex : markdownLinkEnd(line, starts.lastIndex)
-    if (end === -1) continue
+    const target = starts.lastIndex
+    if (!wiki && isEscapedAt(line, target - 2)) continue
+    const end = wiki
+      ? target
+      : (ends ??= markdownLinkEnds(line, target - 1)).get(line[target] === '<' ? target : target - 1)
+    if (end === undefined) continue
     let begin = bracket
     while (bracket - begin < 2 && line[begin - 1] === '!' && !isEscapedAt(line, begin - 1)) begin--
     spans.push({ begin, end, type: wiki ? InlineType.wikilink : InlineType.mdlink })

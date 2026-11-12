@@ -84,6 +84,13 @@ describe('公式扫描', () => {
 })
 
 describe('链接识别', () => {
+  it('未闭合的外层候选不影响后续完整链接', () => {
+    expect(shape(parts('[a](未闭合[b](ok)'))).toEqual([
+      ['[a](未闭合', 'text', 0, 7],
+      ['[b](ok)', 'mdlink', 7, 14],
+    ])
+  })
+
   it('Markdown 链接保留目标内的成对括号，不吞后面的正文与链接', () => {
     expect(shape(parts('[a](b(c))中文[c](d)'))).toEqual([
       ['[a](b(c))', 'mdlink', 0, 9],
