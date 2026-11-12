@@ -40,7 +40,7 @@
 // 已知平台口径差异（消费面按平台语义，vsidian developer-guide §4.8）：
 // - 嵌套优先级 code > table > heading > list > quote：引用内表格/标题行的
 //   内容位置判 table/heading（上游 v2 归 quote），v2 维度投影为 text；
-// - 平台树无 wikilink/mdlink 节点（反引号是真 InlineCode）：上游
+// - 平台语法查询不返回 wikilink/mdlink 区段（反引号可判 InlineCode）：上游
 //   !contains('link') 的链接排除由本模块 linkSpansOfLine 组件自判补齐
 //   （developer-guide §4.8「组件自判」先例）；
 // - fm 是源码态：inlineAt 在 fm 内恒 none；
@@ -51,7 +51,7 @@ import type {
   AddonSyntaxLineTypeResult,
 } from '../types/vendor/shared/addonSyntaxApi'
 import type { LineInfo, LineKind } from './blockScan'
-import { REG_MDLINK, REG_WIKILINK } from './formatting/inlineParts'
+import { scanInlineLinks } from './formatting/inlineParts'
 import { RuleScope } from './rules/rule-engine'
 
 /**
@@ -464,7 +464,7 @@ export interface ScopeInfo {
  *    含围栏行——inlineAt 在其中恒 none）→ Code（语言经
  *    codeBlockAtViaQuery 提取；行内代码无语言）；
  * 3. 其余 → Text。
- * 链接排除（上游 !contains('link') 的组件自判，平台树无 link 节点）：
+ * 链接排除（上游 !contains('link') 的组件自判，平台查询不返回链接区段）：
  * 当前行 wikilink/mdlink 区段内的 code span 判 Text。
  */
 export function detectScopeViaQuery(doc: SyntaxDoc, query: SyntaxQuery, pos: number): ScopeInfo | null {
@@ -504,19 +504,9 @@ export interface LinkSpan {
 }
 
 /**
- * 一行文本的 wikilink/mdlink 区段列表（上游 splitTextWithLinkAndUserDefined
- * 正则逐字，经 inlineParts 的 REG_WIKILINK/REG_MDLINK 单一事实源；g 旗标
- * 用前用后重置 lastIndex）。平台树无 link 节点——链接排除的组件自判统一
- * 走本函数，detectScopeViaQuery 与切片 B 的 inlineParts 不各写一份。
+ * 一行文本的链接区段列表。平台的行内查询未提供链接区段，作用域判断
+ * 复用行内分区的扫描器；此处只把行内坐标转成全文坐标。
  */
 export function linkSpansOfLine(lineText: string, lineFrom: number): LinkSpan[] {
-  const spans: LinkSpan[] = []
-  for (const reg of [REG_WIKILINK, REG_MDLINK]) {
-    reg.lastIndex = 0
-    for (let m = reg.exec(lineText); m !== null; m = reg.exec(lineText)) {
-      spans.push({ from: lineFrom + m.index, to: lineFrom + reg.lastIndex })
-    }
-    reg.lastIndex = 0
-  }
-  return spans
+  return scanInlineLinks(lineText).map(({ begin, end }) => ({ from: lineFrom + begin, to: lineFrom + end }))
 }

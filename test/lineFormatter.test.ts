@@ -2,7 +2,8 @@
 // 回归——期望值经**上游差异化验证**固定（上游 core.ts formatLine 以伪
 // syntaxTree 注入本移植切出的 code/formula 区段，与
 // src/formatting/lineFormatter.ts 逐场景比对等价后回填；复跑方法见
-// docs/specs/auto-format.md「上游对照」节）。
+// docs/specs/auto-format.md「上游对照」节）。qquad 两例的光标期望已修正，
+// 其他上游差异见规格「已知边界」。
 //
 // 矩阵维度：语言对（默认三对 + 日/韩/俄/CJK 元类/自定义类/未知类/空表）×
 // 前缀词典（字面词精确/前缀暂缓/跨脚本扩展/词典过期补插/正则条目）× 大写
@@ -198,7 +199,7 @@ const MATRIX: MatrixEntry[] = [
       { name: "formula-dd", line: "中文$$x$$", curCh: 7, prevCh: 6,
         expected: {"line":"中文 $$x$$","cursorCh":8,"changes":[{"text":"中文 ","begin":0,"end":2,"origin":"中文"}]} },
       { name: "qquad-spacer", line: "中文$\\qquad$中文", curCh: 9, prevCh: 8,
-        expected: {"line":"中文$\\qquad$中文","cursorCh":0,"changes":[]} },
+        expected: {"line":"中文$\\qquad$中文","cursorCh":9,"changes":[]} },
       { name: "wikilink-smart-cjk", line: "中文[[a]]中文", curCh: 8, prevCh: 7,
         expected: {"line":"中文 [[a]] 中文","cursorCh":10,"changes":[{"text":"中文 ","begin":0,"end":2,"origin":"中文"},{"text":" 中文","begin":7,"end":9,"origin":"中文"}]} },
       { name: "wikilink-alias", line: "中文[[a|别名]]中文", curCh: 11, prevCh: 10,
@@ -288,7 +289,7 @@ const MATRIX: MatrixEntry[] = [
       { name: "en-zh-first", line: "abc中", curCh: 4, prevCh: 3,
         expected: {"line":"abc 中","cursorCh":5,"changes":[{"text":"abc 中","begin":0,"end":4,"origin":"abc中"}]} },
       { name: "qquad-cursor-mid", line: "中文$\\qquad$中文", curCh: 6, prevCh: 5,
-        expected: {"line":"中文$\\qquad$中文","cursorCh":0,"changes":[]} },
+        expected: {"line":"中文$\\qquad$中文","cursorCh":6,"changes":[]} },
       { name: "enter-finalize-dict", line: "中文n8n", curCh: 5, prevCh: 5,
         expected: {"line":"中文n8n","cursorCh":5,"changes":[]} },
       // ── 纯标记符文段不参与行内元素间距（本仓有意偏差，见 #70）──

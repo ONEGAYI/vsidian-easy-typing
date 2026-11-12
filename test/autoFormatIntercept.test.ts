@@ -109,6 +109,42 @@ describe('注册形状契约', () => {
 })
 
 describe('onInput 全链（真实 AddonInputContext 形状）', () => {
+  it('Markdown 链接之间的中文按正文补空格，链接目标不变', () => {
+    const { registrations } = registerAll({})
+    const plan = registrations[0]!.onInput(inputCtx('[a](b)中文[c](d)', 8, '中文', 'input.type.compose'))
+    expect(plan).toEqual({
+      changes: [{ offset: 6, length: 2, text: ' 中文 ' }],
+      selection: { anchor: 9, head: 9 },
+    })
+  })
+
+  it('Markdown 链接目标中的双链形态不补空格，后续中文与光标正常前移', () => {
+    const { registrations } = registerAll({})
+    const plan = registrations[0]!.onInput(inputCtx('[a](x[[b]])中文', 13, '中文', 'input.type.compose'))
+    expect(plan).toEqual({
+      changes: [{ offset: 11, length: 2, text: ' 中文' }],
+      selection: { anchor: 14, head: 14 },
+    })
+  })
+
+  it.each(['[[标题]]', '[标题](a)'])('智能空格移除 %s 前的空格时，光标仍在链接前', (link) => {
+    const { registrations } = registerAll({})
+    const plan = registrations[0]!.onInput(inputCtx('中文 ' + link, 3, ' '))
+    expect(plan).toEqual({
+      changes: [{ offset: 0, length: 3, text: '中文' }],
+      selection: { anchor: 2, head: 2 },
+    })
+  })
+
+  it('闭合 qquad 后同行补空格时，光标仍紧跟公式', () => {
+    const { registrations } = registerAll({})
+    const plan = registrations[0]!.onInput(inputCtx('$\\qquad$中文`x`', 8, '$'))
+    expect(plan).toEqual({
+      changes: [{ offset: 8, length: 2, text: '中文 ' }],
+      selection: { anchor: 8, head: 8 },
+    })
+  })
+
   it('中文后键入半角字母 → 计划（#25 零命中基线的空位承接）', async () => {
     const { registrations } = registerAll({})
     const reg = registrations[0]!

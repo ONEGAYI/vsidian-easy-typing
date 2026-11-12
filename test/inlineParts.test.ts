@@ -1,7 +1,7 @@
 // 行内分区测试（工单 #26；#5 切片 B 起树版查询驱动）：code/formula 分区
 // 由 fake 判定链（inlineAt 位置查询）切出 + 链接区段剪除（上游
 // !contains('link') 的组件自判——链接区段优先，syntaxTreeQuery.detectScopeViaQuery
-// 同款口径）+ wikilink/mdlink 正则（上游逐字）+ #27 保护区注入缝。切分
+// 同款口径）+ 链接扫描 + #27 保护区注入缝。切分
 // 形态断言钉住；分区间的格式化等价性由 lineFormatter 上游验证矩阵承载。
 import { describe, expect, it } from 'vitest'
 import {
@@ -83,7 +83,30 @@ describe('公式扫描', () => {
   })
 })
 
-describe('链接识别（上游正则逐字）', () => {
+describe('链接识别', () => {
+  it('Markdown 链接保留目标内的成对括号，不吞后面的正文与链接', () => {
+    expect(shape(parts('[a](b(c))中文[c](d)'))).toEqual([
+      ['[a](b(c))', 'mdlink', 0, 9],
+      ['中文', 'text', 9, 11],
+      ['[c](d)', 'mdlink', 11, 17],
+    ])
+  })
+
+  it('转义的开括号不是链接，链接目标中的双链形态不另起分区', () => {
+    expect(shape(parts('\\[a](b)中文'))).toEqual([['\\[a](b)中文', 'text', 0, 9]])
+    expect(shape(parts('[a](x[[b]])中文'))).toEqual([
+      ['[a](x[[b]])', 'mdlink', 0, 11],
+      ['中文', 'text', 11, 13],
+    ])
+  })
+
+  it.each(['[a](b\\)c)', '[a](<b)c>)'])('目标内不定界的闭括号 %s 不截断链接', (link) => {
+    expect(shape(parts(link + '后文(说明)'))).toEqual([
+      [link, 'mdlink', 0, link.length],
+      ['后文(说明)', 'text', link.length, link.length + 6],
+    ])
+  })
+
   it('wikilink（含嵌入与别名形态字符类）', () => {
     expect(shape(parts('看[[笔记A]]完'))).toEqual([
       ['看', 'text', 0, 1],
@@ -104,7 +127,7 @@ describe('链接识别（上游正则逐字）', () => {
     // 期望翻转依据：链接区段剪除是「链接区段优先」的纯位置语义（上游
     // !contains('link') 的组件自判，syntaxTreeQuery.detectScopeViaQuery 同款
     // ——[[...]] 区段内的位置一律归链接）。code span [0,7) 剪除 [[a]] 区段
-    // [1,6) 后剩两侧反引号残段，[[a]] 由链接正则段捕获为 wikilink。
+    // [1,6) 后剩两侧反引号残段，[[a]] 保留为 wikilink。
     expect(shape(parts('`[[a]]`'))).toEqual([
       ['`', 'code', 0, 1],
       ['[[a]]', 'wikilink', 1, 6],

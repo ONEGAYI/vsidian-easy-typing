@@ -7,14 +7,11 @@
 //   形态）。从行首逐位置推进：命中标记后线性右扫定位区间右边界（评审
 //   R2-B2：T-F-T 形态非单调，放弃二分——间隙文本会被吞进分区），游标跳
 //   边界继续；none 逐字符推进；
-// - **链接区段剪除（上游 `!name.contains('link')` 语义）**：平台树无
-//   wikilink/mdlink 节点（反引号是真 InlineCode），code/formula span 列表
-//   与 syntaxTreeQuery.linkSpansOfLine 的链接区段求差——链接区段优先，
-//   其内的 code/formula 按上游语义归链接（由下方链接正则段捕获）；
-// - wikilink/mdlink 识别逐字沿用上游正则（本就是纯文本正则，无树依赖；
-//   REG_WIKILINK/REG_MDLINK 在本文件定义并经 syntaxTreeQuery.linkSpansOfLine
-//   复用——单一事实源），只在非 code/formula/user 区段上匹配（上游等价：
-//   树已把 code/formula 从 text part 摘出后才跑链接正则）；
+// - **链接区段剪除（上游 `!name.contains('link')` 语义）**：平台查询不暴露
+//   链接区段（反引号可判 InlineCode），code/formula span 列表
+//   与链接区段求差——链接区段优先，其内的 code/formula 按上游语义归链接；
+// - wikilink/mdlink 区段由 scanInlineLinks 单次扫描得出；分区、作用域和
+//   用户保护区共用，链接目标内的双链形态不再重复落位；
 // - **user 分区 = #27 注入缝**：保护区区间集（行内坐标）经参数传入，
 //   附左右空格要求（上游 UserDefinedRegExp 行尾 `|xy` 旗标语义）；
 //   解析与匹配的默认实现在 src/userDefinedRegex.ts（#27），接入层
@@ -22,7 +19,6 @@
 // 查询拒绝（inlineAt ok:false——非 live/已销毁视图）→ 返回 null（不
 // fallback 正则，exploration 笔记 §5.4）。
 import type { SyntaxDoc, SyntaxQuery } from '../syntaxTreeQuery'
-import { linkSpansOfLine } from '../syntaxTreeQuery'
 
 export enum SpaceState {
   none = 0,
@@ -69,11 +65,55 @@ function makePart(
   return { content, type, begin, end, leftSpaceRequire, rightSpaceRequire }
 }
 
-/** 上游 splitTextWithLinkAndUserDefined 的 wikilink 正则（逐字；#27 保护区
- *  冲突基线复用——单一事实源导出，消费方用后须重置 lastIndex） */
-export const REG_WIKILINK = /\!{0,2}\[\[[^\[\]]*?\]\]/g
-/** 上游 splitTextWithLinkAndUserDefined 的 mdlink 正则（逐字；同上导出） */
-export const REG_MDLINK = /\!{0,2}\[[^\[\]]*?\]\([^\s]*\)/g
+interface InlineLinkSpan {
+  begin: number
+  end: number
+  type: InlineType.wikilink | InlineType.mdlink
+}
+
+function isEscapedAt(line: string, at: number): boolean {
+  let start = at
+  while (line[start - 1] === '\\') start--
+  return (at - start) % 2 === 1
+}
+
+/** 目标沿用不含空白的识别范围；普通目标按括号配对，尖括号目标内的括号为字面量。 */
+function markdownLinkEnd(line: string, from: number): number {
+  const angle = line[from] === '<'
+  let depth = 0
+  for (let at = angle ? from + 1 : from; at < line.length; at++) {
+    const ch = line[at]!
+    if (/\s/.test(ch)) return -1
+    if (angle) {
+      if (ch === '>' && !isEscapedAt(line, at)) return line[at + 1] === ')' ? at + 2 : -1
+    } else if (ch === '(' && !isEscapedAt(line, at)) {
+      depth++
+    } else if (ch === ')' && !isEscapedAt(line, at)) {
+      if (depth === 0) return at + 1
+      depth--
+    }
+  }
+  return -1
+}
+
+/** 从左到右消费完整链接；返回不重叠的行内半开区间。 */
+export function scanInlineLinks(line: string): InlineLinkSpan[] {
+  const starts = /\[\[[^\[\]]*\]\]|\[[^\[\]]*\]\(/g
+  const spans: InlineLinkSpan[] = []
+  for (let match = starts.exec(line); match !== null; match = starts.exec(line)) {
+    const bracket = match.index
+    if (isEscapedAt(line, bracket)) continue
+    const wiki = line[bracket + 1] === '['
+    if (!wiki && isEscapedAt(line, starts.lastIndex - 2)) continue
+    const end = wiki ? starts.lastIndex : markdownLinkEnd(line, starts.lastIndex)
+    if (end === -1) continue
+    let begin = bracket
+    while (bracket - begin < 2 && line[begin - 1] === '!' && !isEscapedAt(line, begin - 1)) begin--
+    spans.push({ begin, end, type: wiki ? InlineType.wikilink : InlineType.mdlink })
+    starts.lastIndex = end
+  }
+  return spans
+}
 
 /** 区间减法：range 剪除 occupied 各段后的剩余段列表 */
 function subtractSpans(
@@ -146,10 +186,8 @@ function scanSpansViaQuery(
 /**
  * 一行 → InlinePart 列表（按 begin 升序，覆盖整行）。查询拒绝 → null。
  *
- * 语义对齐上游：wikilink 先匹配、mdlink 后匹配且**互不冲突检查**
- *（上游 matchWithReg 对 mdlink 不查重叠——`[[a]](b)` 类重叠形态按上游
- * 重建循环的既定怪癖处理，不擅自修复）；保护区（user）与 code/formula
- * 由调用方/扫描器保证不重叠，重叠时的行为与上游重建循环一致。
+ * 链接不相互重叠。注入的保护区与 code/formula 冲突时剪除重叠部分；
+ * 与链接冲突时不再单独格式化该链接。
  */
 export function splitLineIntoParts(
   doc: SyntaxDoc,
@@ -162,11 +200,8 @@ export function splitLineIntoParts(
   if (rawSpans === null) return null
 
   // 链接区段剪除（上游 !contains('link')）：链接区段优先，其内的
-  // code/formula span 碎片化剪除（剪空的消失——链接区段由下方正则段捕获）
-  const linkSpans = linkSpansOfLine(line.text, line.from).map((s) => ({
-    begin: s.from - line.from,
-    end: s.to - line.from,
-  }))
+  // code/formula span 碎片化剪除（剪空的消失）。
+  const linkSpans = scanInlineLinks(line.text)
   const spans = rawSpans.flatMap((s) =>
     subtractSpans({ begin: s.begin, end: s.end }, linkSpans).map((seg) => ({
       begin: seg.begin,
@@ -192,30 +227,9 @@ export function splitLineIntoParts(
     })))
     .filter((r) => r.end > r.begin)
 
-  // 非文本区段总表（code/formula/user），供链接正则跳过
-  const occupied = [...spans, ...userSpans.map((u) => ({ begin: u.begin, end: u.end }))].sort(
-    (a, b) => a.begin - b.begin,
-  )
-  const freeSegments: Array<{ begin: number; end: number }> = []
-  let cursor = 0
-  for (const span of occupied) {
-    if (span.begin > cursor) freeSegments.push({ begin: cursor, end: span.begin })
-    cursor = Math.max(cursor, span.end)
-  }
-  if (cursor < line.text.length) freeSegments.push({ begin: cursor, end: line.text.length })
-
-  // 链接区段（上游顺序：wikilink 全部先收集，mdlink 不查冲突再收集）
-  const linkParts: InlinePart[] = []
-  for (const seg of freeSegments) {
-    const segText = line.text.slice(seg.begin, seg.end)
-    for (const reg of [REG_WIKILINK, REG_MDLINK]) {
-      reg.lastIndex = 0
-      let match: RegExpExecArray | null
-      while ((match = reg.exec(segText)) !== null) {
-        linkParts.push(makePart(match[0], reg === REG_WIKILINK ? InlineType.wikilink : InlineType.mdlink, seg.begin + match.index, seg.begin + reg.lastIndex))
-      }
-    }
-  }
+  const linkParts = linkSpans
+    .filter((link) => !userSpans.some((user) => link.begin < user.end && user.begin < link.end))
+    .map(({ begin, end, type }) => makePart(line.text.slice(begin, end), type, begin, end))
 
   // 非文本 part 合总 + 上游重建循环：按 begin 排序，缝隙填 text part
   const nonText: InlinePart[] = [

@@ -338,10 +338,11 @@ describe('linkSpansOfLine：链接区段（行内坐标 → 全文偏移；切�
     expect(linkSpansOfLine('![[img.png]]', 0)).toEqual([{ from: 0, to: 12 }])
   })
 
-  it('g 旗标 lastIndex 用后重置（重复调用结果一致）', () => {
-    const once = linkSpansOfLine('[[a]] [[b]]', 0)
-    const twice = linkSpansOfLine('[[a]] [[b]]', 0)
-    expect(once).toEqual(twice)
+  it('不同链接按正文顺序返回，链接目标内部不重复圈入双链', () => {
+    expect(linkSpansOfLine('[a](x[[b]])中[[c]]', 10)).toEqual([
+      { from: 10, to: 21 },
+      { from: 22, to: 27 },
+    ])
   })
 
   it('无链接行返回空数组', () => {

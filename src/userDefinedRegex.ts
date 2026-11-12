@@ -18,7 +18,7 @@
 // - 非法正则跳过不抛出（上游 try/catch console.error → debugLog）。
 //
 // 【匹配语义】（上游 matchWithReg checkArray=true）：
-// - wikilink / mdlink 命中（上游正则逐字，inlineParts 单一事实源）先落位
+// - wikilink / mdlink 命中（复用 inlineParts 的链接区段）先落位
 //   作为冲突基线，与基线重叠的用户正则命中弃用；
 // - 多用户规则先到先得：后序规则的命中与已落位区间重叠即弃；
 // - 同一正则的多次命中由 g 标志游标推进天然不重叠，互不检查（上游同构）。
@@ -27,7 +27,7 @@
 // lastIndex 不前进）；本移植跳过零宽命中并手动推进游标——上游默认模板
 // 无零宽形态，行为只在用户自写零宽正则时分歧（记录于规格）。
 import { debugLog } from './logging'
-import { REG_MDLINK, REG_WIKILINK, SpaceState, type ProtectedInlineRange } from './formatting/inlineParts'
+import { scanInlineLinks, SpaceState, type ProtectedInlineRange } from './formatting/inlineParts'
 
 /** 解析后的一条用户自定义正则（旗标已折算为空格要求三档） */
 export interface UserDefinedRegexRule {
@@ -104,15 +104,7 @@ export function matchProtectedRanges(
   line: string,
   rules: readonly UserDefinedRegexRule[],
 ): readonly ProtectedInlineRange[] {
-  // 冲突基线：wikilink 全部先收集，mdlink 后收集（上游顺序，互不检查）
-  const occupied: Array<{ begin: number; end: number }> = []
-  for (const reg of [REG_WIKILINK, REG_MDLINK]) {
-    reg.lastIndex = 0
-    let match: RegExpExecArray | null
-    while ((match = reg.exec(line)) !== null) {
-      occupied.push({ begin: match.index, end: reg.lastIndex })
-    }
-  }
+  const occupied: Array<{ begin: number; end: number }> = scanInlineLinks(line)
 
   const result: ProtectedInlineRange[] = []
   for (const rule of rules) {
