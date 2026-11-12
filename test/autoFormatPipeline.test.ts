@@ -43,6 +43,21 @@ function options(o: Partial<AutoFormatLineOptions> = {}): AutoFormatLineOptions 
   return { settings: settings(), query: makeSyntaxFake(lastCtxDoc).query, ...o }
 }
 
+/** 已发布宿主的 code 查询会把闭反引号后的第一个坐标也算进去。 */
+function legacyCodeBoundary(text: string): AutoFormatLineOptions['query'] {
+  const { query } = makeSyntaxFake(text)
+  return {
+    ...query,
+    inlineAt(pos) {
+      if (text[pos - 1] === '`') {
+        const previous = query.inlineAt(pos - 1)
+        if (previous.ok && previous.kind === 'code') return previous
+      }
+      return query.inlineAt(pos)
+    },
+  }
+}
+
 /** 快照后形态的输入上下文（text 已含本次键入；head = 光标位） */
 function ctx(
   text: string,
@@ -99,6 +114,27 @@ describe('主路径：坐标换算与计划形状', () => {
     expect(plan).toEqual({
       changes: [{ offset: 0, length: 3, text: '中文 あ' }],
       selection: { anchor: 4, head: 4 },
+    })
+  })
+
+  it.each([
+    ['`codex` 中文', '`codex` 中文'],
+    ['`codex`中文', '`codex` 中文'],
+    ['``co`dex`` 中文', '``co`dex`` 中文'],
+    ['`a`中`b` 中文', '`a` 中 `b` 中文'],
+    ['`a`$x$ 中文', '`a` $x$ 中文'],
+  ])('兼容闭反引号坐标误归代码：%s → %s', (text, expected) => {
+    const plan = planAutoFormatLineModification(
+      ctx(text, text.length, '中文', { userEvent: 'input.type.compose' }),
+      options({ query: legacyCodeBoundary(text) }),
+    )
+    const result = (plan?.changes ?? []).reduceRight(
+      (source, { offset, length, text }) => source.slice(0, offset) + text + source.slice(offset + length),
+      text,
+    )
+    expect(result).toBe(expected)
+    expect(plan?.selection ?? { anchor: text.length, head: text.length }).toEqual({
+      anchor: expected.length, head: expected.length,
     })
   })
 

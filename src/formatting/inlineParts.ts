@@ -167,15 +167,52 @@ function scanSpansViaQuery(
   const line = doc.line(lineNumber)
   const text = line.text
   const spans: Array<{ begin: number; end: number; type: InlineType }> = []
+  let closedCodeEnd = -1
   let p = 0
   while (p < text.length) {
     const result = query.inlineAt(line.from + p)
     if (!result.ok) return null
-    if (result.kind === 'none') {
+    let kind = result.kind
+    if (p === closedCodeEnd && kind === 'code') {
+      // 已知代码在此结束。旧宿主可能仍判 code，连相邻公式的开 $ 也会盖住。
+      kind = 'none'
+      if (text[p] === '$') {
+        const next = query.inlineAt(line.from + p + 1)
+        if (!next.ok) return null
+        if (next.kind === 'formula') kind = 'formula'
+      }
+    }
+    if (kind === 'none') {
       p += 1
       continue
     }
-    const type = result.kind === 'code' ? InlineType.code : InlineType.formula
+    const type = kind === 'code' ? InlineType.code : InlineType.formula
+    if (kind === 'code') {
+      // 在相邻语法节点末端，旧宿主也可能漏报开反引号的第一位。
+      const prevEnd = spans.at(-1)?.end ?? 0
+      const begin = p > prevEnd && text[p - 1] === '`' && !isEscapedAt(text, p - 1) ? p - 1 : p
+      if (text[begin] === '`') {
+        const preceding = begin === 0 && line.from > 0 ? query.inlineAt(line.from - 1) : null
+        if (preceding?.ok === false) return null
+        if (preceding?.kind !== 'code') {
+          const marks = /`+/g
+          marks.lastIndex = begin
+          const width = marks.exec(text)![0].length
+          for (let mark = marks.exec(text); mark !== null; mark = marks.exec(text)) {
+            if (mark[0].length !== width) continue
+            const close = query.inlineAt(line.from + marks.lastIndex - 1)
+            if (!close.ok) return null
+            if (close.kind === 'code') {
+              closedCodeEnd = marks.lastIndex
+              spans.push({ begin, end: closedCodeEnd, type })
+              p = closedCodeEnd
+            }
+            break
+          }
+          if (p === closedCodeEnd) continue
+        }
+      }
+    }
     // 命中后线性右扫找区间右边界（评审 R2-B2）：end 从 p 逐位推进直到
     // inlineAt 不同 kind 或行尾。原实现二分找「最右同 kind 位置」依赖谓词
     // 前缀单调——同一行内 T-F-T 形态（两个同 kind span 短间隙，如
@@ -187,8 +224,14 @@ function scanSpansViaQuery(
     while (end < text.length) {
       const probe = query.inlineAt(line.from + end)
       if (!probe.ok) return null
-      if (probe.kind !== result.kind) break
+      if (probe.kind !== kind) break
       end += 1
+    }
+    // 跨行代码在本行没有开标记；若宿主把闭标记后一位纳入，仍可收回该位。
+    if (kind === 'code' && end - p > 1 && text[end - 2] === '`' && text[end - 1] !== '`') {
+      const next = end === text.length ? query.inlineAt(line.to) : null
+      if (next?.ok === false) return null
+      if (next?.kind !== 'code') closedCodeEnd = --end
     }
     spans.push({ begin: p, end, type })
     p = end
