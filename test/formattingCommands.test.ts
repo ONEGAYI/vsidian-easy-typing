@@ -212,6 +212,15 @@ function applyPlan(
 }
 
 describe('planFormatArticle：格式化全文（上游 formatArticle）', () => {
+  it('重建整行时，Markdown 链接目标中的双链形态只保留一份', () => {
+    const doc = '[a](x[[b]])中文'
+    const plan = planFormatArticle(doc, doc.length, doc.length, SETTINGS, q(doc))
+    const { text, selection } = applyPlan(doc, plan!)
+    expect(text).toBe('[a](x[[b]]) 中文')
+    expect(selection.head).toBe(text.length)
+    expect(planFormatArticle(text, text.length, text.length, SETTINGS, q(text))).toBeNull()
+  })
+
   it('逐行整行重排；代码块/表格行跳过；光标随插入空格平移', () => {
     const doc = '中文a\n```\ncode内x\n```\n|表a|格|\n中文b'
     const cursor = doc.length // 行尾

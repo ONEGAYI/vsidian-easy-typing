@@ -175,6 +175,13 @@ describe('匹配：与 wikilink/mdlink 的冲突检查（上游 matchWithReg che
     const rules = parseUserDefinedRegExp('\\d{3}|--\n\\d|--')
     expect(matchProtectedRanges('ab123cd', rules).map((r) => [r.begin, r.end])).toEqual([[2, 5]])
   })
+
+  it('链接之间的正文仍可命中自定义保护区', () => {
+    const rules = rulesOf('中文|--')
+    expect(matchProtectedRanges('[a](b)中文[c](d)', rules)).toEqual([
+      { begin: 6, end: 8, leftSpaceRequire: SpaceState.none, rightSpaceRequire: SpaceState.none },
+    ])
+  })
 })
 
 describe('匹配：零宽与空命中防御', () => {

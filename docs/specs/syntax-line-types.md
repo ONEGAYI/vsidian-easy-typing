@@ -47,12 +47,12 @@ interface AddonSyntaxFacet {
 
 **empty** 为行文本全空白的本地补判（`lineKindOf`）：上游 v2 归 text，本仓 LineKind 既有独立 kind 供段块邻行排除消费——不经过映射常量。
 
-### 两处「组件自判」缺口（平台树无对应节点的补齐）
+### 两处由组件补判的语义
 
-平台树（标准 @lezer/markdown + GFM）**无 wikilink/mdlink 节点、无 callout 节点、无 frontmatter 树节点**（fm 走平台独立区间缓存）。两处缺口由插件以纯正则补齐，正则与上游逐字同源：
+平台语法查询不暴露链接区段或 callout 类型，插件补判这两类语义：
 
 1. **callout 细分**：平台对 callout 标题行统一判 `quote`；`isCallout`/内容起点细分走 `blockScan.quoteInfoAt` 的 `CALLOUT_PREFIX_RE`（上游 `getQuoteInfoInPos` 本就是纯正则，syntax.ts:155-201——无需树版升级，语义一致）。
-2. **链接区段排除**：上游树判定「节点名含 `code` **且不含 `link`**」的链接排除，在平台树上反引号是真 InlineCode——由 `syntaxTreeQuery.linkSpansOfLine` 用 `REG_WIKILINK`/`REG_MDLINK`（上游逐字正则，`inlineParts.ts` 单一事实源）圈链接区段，区段内判 text。消费面两处：`detectScopeViaQuery`（作用域）与 `splitLineIntoParts`（行内分区），统一走 `linkSpansOfLine`，不各写一份。
+2. **链接区段排除**：上游树判定「节点名含 `code` **且不含 `link`**」。平台可能在链接标签的反引号内返回 `code`；组件用 `inlineParts.ts` 的 `scanInlineLinks` 圈出链接区段，区段内的 `code` 改判 `text`。作用域、行内分区与用户保护区冲突检查共用这一个扫描器。
 
 ## 四、已知口径差异
 
@@ -64,7 +64,7 @@ interface AddonSyntaxFacet {
 - **单行闭合 `$$x$$` 独占行是 formula**（升级收益：#11 降级版不识别）。
 - **未闭合 `$$` 块与未闭合 frontmatter 按普通文本处理**（平台稳定降级）。
 - **跨行公式块与围栏交叉的畸形形态**按位置局部语义。
-- **`` `[[a]]` `` 链接区段优先剪除**（切片 B 实施新增）：`linkSpansOfLine` 纯正则不感知 code span——反引号内的 `[[..]]` 被圈进链接区段，其内判链接（Text）而非 code；**上游树版判 Code**（code span 内的 `[[..]]` 不构成链接节点）。作用域与行内分区两消费面同此差异（行内分区表现为 code span 被剪除碎化）。
+- **`` `[[a]]` `` 链接区段优先剪除**（切片 B 实施新增）：链接扫描不感知 code span——反引号内的 `[[..]]` 被圈进链接区段，其内判链接（Text）而非 code；**上游树版判 Code**（code span 内的 `[[..]]` 不构成链接节点）。作用域与行内分区两消费面同此差异（行内分区表现为 code span 被剪除碎化）。
 - **commentToggle 开栏围栏行随上游收敛**（切片 B 实施记录，原降级差异消除）：树版 `lineTypeAt` 对围栏行判 `code` → 注释切换在开栏行走代码块语言分支，对齐上游树版把围栏行划入代码块区间的行为；#25 降级版「围栏行按 Text 走 `%%` 分支」的「更稳」口径随之删除（行为翻转，`test/commentToggle.test.ts` 钉住）。
 - **语言整串随上游收敛**（原降级差异消除）：语言提取为信息串整串 trim 后小写（上游 `getCodeBlocksInfos` 同款，`js copy` 查表不中 → 无操作）；#25 降级版「取首 token」口径删除。
 - **相邻代码块零分隔行 run 合并**（查询版形态学边界）：块信息按「连续 code 行 run」分组——两个代码块之间无任何非 code 行时合并为一块（开栏取首行）。上游 iterate `codeblock-begin/end` 节点为两块。消费面影响：相邻异语言块的后者经 `codeBlockAtViaQuery` 取到首块语言。罕见形态（两块间通常有空行），如需拆分另开票。`codeBlockAtViaQuery` 已改为从 pos 行向上下局部扩展（评审 S6 前半：autoformat 每键入触达，原经 `codeBlocksViaQuery` 全文档逐行查询在 10 万行文档达百毫秒级，与 ModA 懒查询红线同性质）——run 边界与全量分组一致，合并语义不变（矩阵钉住）。
@@ -80,7 +80,7 @@ interface AddonSyntaxFacet {
 - **R2-A1（已修复，#37 快照坐标换算）**：Delete/SelectKey 管线的作用域判定原以事务前坐标打在平台实时文档的查询上（删除大段时可越实时文档长度）——现统一传快照文本与换算坐标，三输入同坐标系、越界 pos 不再发出；与事务前实况仍可能分叉为既定口径，修复口径与方向选择依据见 [rule-engine.md](rule-engine.md)「事务前重建与坐标换算」节；#21 真实宿主联调核对项已增（A72）。
 - **S3**：`(doc, query, lineNumber)` 三元组在多个签名间重复传递（Data Clumps），可上提 `LineSyntaxContext` 统一——接口面刚随切片 B 稳定，形式统一属后续票。
 - **S4**：planner 统一签名的不消费参数（个别 plan 函数不用全部入参）——换取 `runViewCommand` 单态分发的可辩护权衡。
-- **S5**：`syntaxTreeQuery` ↔ `inlineParts` 循环 import——运行时安全（函数内引用无 TDZ 风险），解环收益不抵结构翻动。
+- **S5（已修复）**：`inlineParts` 直接扫描链接，不再运行时引用 `syntaxTreeQuery`；`syntaxTreeQuery` 复用扫描结果。
 
 ## 五、消费方索引与测试索引
 
@@ -92,7 +92,7 @@ interface AddonSyntaxFacet {
 | `platformLineKindAt` + `FORMAT_SKIP_BY_PLATFORM` | `formattingCommands.ts`（classifyFormatSkipLines） | 格式化命令族行分类跳过 |
 | `detectScopeViaQuery` | `ruleBehaviorPipeline.ts`（scopeQuery 注入，All 短路）、`autoFormatPipeline.ts`、`commentToggle.ts` | 规则作用域 / 格式化门控 / 注释切换语言分支 |
 | `codeBlocksViaQuery` / `codeBlockAtViaQuery` | （经 detectScopeViaQuery 语言提取消费） | Code 作用域语言提取 |
-| `splitLineIntoParts`（inlineParts 树版，内部消费 `inlineAt` + `linkSpansOfLine`） | `lineFormatter.ts`（formatLine 的 syntax 参数） | 行内分区（code/formula/链接/user） |
+| `splitLineIntoParts`（inlineParts，消费 `inlineAt` + `scanInlineLinks`） | `lineFormatter.ts`（formatLine 的 syntax 参数） | 行内分区（code/formula/链接/user） |
 | `quoteInfoAt`（纯正则，上游同款） | `modaSelection.ts` | 引用块档位（不消耗查询） |
 
 装配：`page-editor.ts` 统一构造查询（instanceId 闭包绑定）注入各消费面；查询缺席（instanceId 反查失败/语法面缺席）= 不接管。行为链三注册（#25 五族、#9 两族、autoformat）另注入**实例一致性守卫**（评审 R2-B1）：平台行为链同样驱动嵌入（embed）Live 实例，而查询恒为主实例——onInput 入口比对 `ctx.docUri`（与主实例 views 句柄 `targetDocUri` 同源，反查面缺席回退快照全文比对），不一致（嵌入驱动）即放弃该次行为修饰（返回 null，与查询拒绝同一「不接管」语义）。

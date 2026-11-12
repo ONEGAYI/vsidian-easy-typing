@@ -8,7 +8,7 @@
 
 | 上游锚点 | 移植落点 | 语义 |
 | --- | --- | --- |
-| `src/core.ts` `splitTextWithLinkAndUserDefined`（L525-624） | `src/userDefinedRegex.ts` `parseUserDefinedRegExp` + `matchProtectedRanges` | 逐行：行尾 `|xy` 旗标解析（`+` strict / `=` soft / `-` none）、空行与 `//` 注释行跳过、无旗标或长度 ≤ 3 跳过、非法正则跳过不抛出；匹配 wikilink/mdlink 先落位为冲突基线（正则逐字，自 inlineParts 导出共享），用户规则命中与基线或先序规则命中重叠即弃 |
+| `src/core.ts` `splitTextWithLinkAndUserDefined`（L525-624） | `src/userDefinedRegex.ts` `parseUserDefinedRegExp` + `matchProtectedRanges` | 逐行：行尾 `|xy` 旗标解析（`+` strict / `=` soft / `-` none）、空行与 `//` 注释行跳过、无旗标或长度 ≤ 3 跳过、非法正则跳过不抛出；匹配到的链接作为冲突基线（复用 `scanInlineLinks`），用户规则命中与基线或先序规则命中重叠即弃 |
 | `src/core.ts` `str2SpaceState`（L636-647） | `flagToSpaceState` | 逐字：`+`→strict、`=`→soft、`-`/其他→none |
 | `src/core.ts` `isCursorInUserDefinedRegexBlock`（L626-634） | `isPositionProtected` | 列 ∈ [begin, end) 半开区间判定 |
 | `src/core.ts:181-183` formatLine 消费 | `autoFormatIntercept.ts` onInput | `UserDefinedRegSwitch` 开 → 保护区参与行内分区；关 → 无 user 分区（上游同构：不传 regExps） |
@@ -36,7 +36,7 @@
 - **注释行判定的无状态化**：上游 `regNull = /^\s*$|^\/\//g` 带 `g` 标志用于 `.test()`，跨行共享 lastIndex 产生「隔行跳过」的交替怪癖（连续多空行/注释行时第二行反而被当正则解析）。本移植取意图语义的无状态实现（每行独立判定）；出厂模板两种实现行为一致（tag 注释行都跳过），差异只在用户自写连续注释/空行时出现，且无状态版更符合注释语义。
 - **零宽命中防御**：可零宽匹配的用户正则（如 `x*`）上游会死循环（exec 零宽命中 lastIndex 不前进）；本移植跳过零宽命中并手动推进游标。出厂模板无零宽形态，只在用户自写零宽正则时分歧。
 - **非法正则反馈通道**：上游 Notice（Obsidian API）/ console.error → 本仓 debugLog（logging 约定，纯逻辑模块零平台依赖）。
-- **wikilink/mdlink 精确识别**（票面边界）：上游规则侧检查经 `splitTextWithLinkAndUserDefined`（链接本来就是纯正则，语义一致）；格式化侧上游 code/formula 由语法树先行摘出。**#5 升级点已实施**：`splitLineIntoParts` 的 code/formula 扫描已换传平台语法查询（`inlineAt` 位置查询 + 链接区段剪除，见 [syntax-line-types.md](syntax-line-types.md)），保护区与天然保护区的**剪除逻辑无需改动**（区间减法语义不变，如预判）；规则侧探针不受影响。
+- **链接边界**：保护区冲突检查和格式化共用链接扫描，连续链接之间的正文仍可命中用户保护区。格式化侧 code/formula 由平台语法查询切出（`inlineAt` 位置查询 + 链接区段剪除，见 [syntax-line-types.md](syntax-line-types.md)）；用户保护区与 code/formula 重叠时仍按原规则剪除。
 
 ## 已知边界
 

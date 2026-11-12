@@ -14,7 +14,7 @@
 //   {line, cursorCh, changes}——坐标换算（doc↔行内）归管线层
 //   （autoFormatPipeline.ts，对应上游 formatLineOfDoc 的职责）；
 // - 行级重排的 \0 光标标记、$\\qquad$ 计为文本空隔、链接智能空格双分支
-//   等行为语义逐行保留。
+//   等行为保留；链接前回退空格与 qquad 分隔符的光标定位修正见规格。
 import { InlinePart, InlineType, SpaceState, splitLineIntoParts, type ProtectedInlineRange } from './inlineParts'
 import type { SyntaxDoc, SyntaxQuery } from '../syntaxTreeQuery'
 
@@ -224,6 +224,7 @@ export function formatLine(
 
       // $\qquad$ 公式计为文本空隔（上游特例原样）
       if (lineParts[i]!.type === InlineType.formula && lineParts[i]!.content === '$\\qquad$') {
+        if (i === cursorLinePartIndex) resultCursorCh = offset + cursorRelativeIndex
         prevPartType = InlineType.text
         prevTextEndSpaceState = SpaceState.strict
         resultLine += lineParts[i]!.content
@@ -263,6 +264,8 @@ export function formatLine(
                 lineParts[i - 1]!.content.length - 1,
               )
               resultLine = resultLine.substring(0, resultLine.length - 1)
+              // 光标在刚删除的尾空格后，应退到链接前；链接内的光标稍后按新 offset 定位。
+              if (cursorLinePartIndex === i - 1 && resultCursorCh === offset) resultCursorCh--
               offset -= 1
             }
           }
