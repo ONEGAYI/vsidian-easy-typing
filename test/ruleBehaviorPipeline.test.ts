@@ -257,6 +257,38 @@ describe('中文引号键兼容（02-autopair 内置可选规则）', () => {
     })).toBeNull()
     expect(counts.inlineAt).toBeLessThan(64)
   })
+
+  const proseQuery: SyntaxQuery = {
+    lineTypeAt: () => ({ ok: true, kind: 'text', nodeNames: [] }),
+    inlineAt: () => ({ ok: true, kind: 'none', nodeNames: [] }),
+  }
+
+  it('无引号的长前文也消耗反扫预算，不能确认时保留原输入', () => {
+    const engine = buildFamilyEngine(family)
+    engine.setEnabled(ruleId, true)
+    const text = '普通正文\n'.repeat(180_000) + '\n”'
+    const ctx = inputCtx(text, text.length, 'input.type.compose', '”')
+    expect(planInputRuleModification(engine, ctx, { scopeQuery: proseQuery })).toBeNull()
+  })
+
+  it('多光标共享反扫预算：第一个命中，第二个超限时只保留原输入', () => {
+    const engine = buildFamilyEngine(family)
+    engine.setEnabled(ruleId, true)
+    const prefix = '正文\n'.repeat(32_000) + '\n'
+    const text = prefix + '”\n\n”'
+    const firstCaret = prefix.length + 1
+    const ctx = inputCtx(text, firstCaret, 'input.type', '””', [
+      { anchor: firstCaret, head: firstCaret },
+      { anchor: text.length, head: text.length },
+    ])
+    expect(planInputRuleModification(engine, ctx, { scopeQuery: proseQuery })).toEqual({
+      changes: [{ offset: prefix.length, length: 1, text: '“”' }],
+      selection: [
+        { anchor: firstCaret, head: firstCaret },
+        { anchor: text.length + 1, head: text.length + 1 },
+      ],
+    })
+  })
 })
 
 // ===== 票面场景 3：中英空格基线（规则面不承载，归 #26 格式化管线） =====

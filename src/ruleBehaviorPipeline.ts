@@ -67,6 +67,7 @@ import {
 // intercept 层经本模块取 tabstop 类型（单一来源，避免多点直连引擎内部）
 export type { TabstopSpec } from './rules/rule-engine'
 import { RuleScope } from './rules/rule-engine'
+import { QUOTE_REVERSE_SCAN_LIMIT } from './rules/function-table'
 import { detectScopeViaQuery, docOfText, type ScopeInfo, type SyntaxQuery } from './syntaxTreeQuery'
 
 // ===== 作用域判定的注入（#5 切片 B：树版换传） =====
@@ -251,6 +252,7 @@ export function planInputRuleWithTabstops(
     selections.every(({ anchor, head }) => anchor === head && ctx.snapshot.text[head - 1] === first)
     ? first : inputText
   const query = options.scopeQuery
+  const reverseScanBudget = { remaining: QUOTE_REVERSE_SCAN_LIMIT }
   // 宿主的单点语法查询会重扫位置所在行。限制单次输入的累计行长度，
   // 避免密集引号反复查询同一个长行；超限等同于语法无法确认。
   let remainingProseWork = 128 * 1024
@@ -293,6 +295,7 @@ export function planInputRuleWithTabstops(
       selection: { from, to },
       inserted,
       ...(isProseAt !== undefined ? { isProseAt } : {}),
+      reverseScanBudget,
       changeType: ctx.userEvent,
       scopeHint: scope.scope,
       ...(scope.language !== undefined ? { scopeLanguage: scope.language } : {}),

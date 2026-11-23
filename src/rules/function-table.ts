@@ -32,7 +32,7 @@ import type { TxContext } from './rule-engine'
 export type TextTransformFn = (
   leftMatches: string[],
   rightMatches: string[],
-  context: Pick<TxContext, 'docText' | 'selection' | 'inserted' | 'isProseAt'>,
+  context: Pick<TxContext, 'docText' | 'selection' | 'inserted' | 'isProseAt' | 'reverseScanBudget'>,
 ) => string | void
 
 /** SelectKey 类变换函数签名（选区文本 + 触发键） */
@@ -85,8 +85,11 @@ const autopairJump: TextTransformFn = (leftMatches, rightMatches) => {
   return undefined
 }
 
+export const QUOTE_REVERSE_SCAN_LIMIT = 128 * 1024
+
 /** 中文单双引号键：已有同类闭引号先跳过；空白新起点收到右引号才补对。 */
-const cjkQuoteKey: TextTransformFn = (leftMatches, rightMatches, { docText, selection, inserted, isProseAt }) => {
+const cjkQuoteKey: TextTransformFn = (leftMatches, rightMatches, context) => {
+  const { docText, selection, inserted, isProseAt } = context
   if (inserted !== leftMatches[0] || !/^[“”‘’]$/.test(inserted)) return
   const [open, close] = inserted === '“' || inserted === '”' ? ['“', '”'] : ['‘', '’']
   const right = rightMatches[0]
@@ -116,7 +119,10 @@ const cjkQuoteKey: TextTransformFn = (leftMatches, rightMatches, { docText, sele
 
   // 同一遍反扫既找当前引号的左端，也确认上一行末端的闭引号确实结束了引文。
   let precedingPaired = precedingClose === undefined
+  const budget = context.reverseScanBudget ?? { remaining: QUOTE_REVERSE_SCAN_LIMIT }
   for (let i = scanFrom; i >= 0; i--) {
+    if (budget.remaining === 0) return
+    budget.remaining--
     const char = docText[i]
     if (char !== '“' && char !== '”' && char !== '‘' && char !== '’') continue
     const family = char === '“' || char === '”' ? '”' : '’'
