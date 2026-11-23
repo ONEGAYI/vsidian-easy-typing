@@ -120,7 +120,8 @@ const cjkQuoteKey: TextTransformFn = (leftMatches, rightMatches, { docText, sele
     const char = docText[i]
     if (char !== '“' && char !== '”' && char !== '‘' && char !== '’') continue
     const family = char === '“' || char === '”' ? '”' : '’'
-    if (precedingClose === undefined && family !== close) continue
+    // 异类引号仅用于核对上一行末端的配对，不能拦住当前引号开启新对。
+    if (family !== close && (family !== precedingClose || precedingPaired)) continue
     const prose = isProseAt(i)
     if (prose === null) return
     if (!prose) continue

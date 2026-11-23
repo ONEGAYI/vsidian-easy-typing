@@ -153,6 +153,20 @@ describe('中文引号键兼容（02-autopair 内置可选规则）', () => {
   })
 
   it.each([
+    ['‘尚未闭合\n\n“甲”\n', '”', '“”'],
+    ['“尚未闭合\n\n‘甲’\n', '’', '‘’'],
+    ['“外层‘内层’\n', '’', '‘’'],
+    ['‘尚未闭合\n\n‘甲’\n', '”', '“”'],
+  ])('完整引文后开新对：%j 不被更早的异类开引号阻挡', (prefix, key, pair) => {
+    const engine = buildFamilyEngine(family)
+    engine.setEnabled(ruleId, true)
+    expect(plan(engine, inputCtx(prefix + key, prefix.length + 1, 'input.type.compose', key))).toEqual({
+      changes: [{ offset: prefix.length, length: 1, text: pair }],
+      selection: { anchor: prefix.length + 1, head: prefix.length + 1 },
+    })
+  })
+
+  it.each([
     ['“”', '”', 1, { offset: 0, length: 3, text: '“”' }],
     ['“甲”', '”', 2, { offset: 2, length: 2, text: '”' }],
     ['“甲”', '“', 2, { offset: 2, length: 2, text: '”' }],
@@ -172,8 +186,9 @@ describe('中文引号键兼容（02-autopair 内置可选规则）', () => {
     ['“正文”', 4, 'input.type.compose'],
     ['“换行后闭合\n”', 8, 'input.type.compose'],
     ['“外层‘内层’\n”', 9, 'input.type.compose'],
-    ['“外层‘内层’\n’', 9, 'input.type.compose'],
+    ['“尚未闭合\n\n“甲”\n”', 12, 'input.type.compose'],
     ['末尾”\n”', 5, 'input.type.compose'],
+    ['末尾’\n”', 5, 'input.type.compose'],
     ['“甲\n\n”', 5, 'input.type.compose'],
     ['“甲“乙”\n\n”', 8, 'input.type.compose'],
     ['”后有正文', 1, 'input.type'],
