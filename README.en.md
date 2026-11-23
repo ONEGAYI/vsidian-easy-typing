@@ -20,9 +20,9 @@ The bulk of the first-release functionality is implemented (20+ of 28 tickets me
 
 | Feature | Description |
 | --- | --- |
-| 20 built-in rules | Double fullwidth punctuation to halfwidth (`。。` → `.`), fullwidth bracket/quote auto-pairing and skip-over, `··` to inline code, `￥￥` to formula, line-start `》` to quote marker, linked deletion of paired structures (`$|$`, `==|==`, empty code blocks, wikilinks), selection wrapping by trigger key (`·` → inline code, `【` → `[]`, etc.) |
+| Built-in rules | Double fullwidth punctuation to halfwidth (`。。` → `.`), fullwidth bracket/quote auto-pairing and skip-over, `··` to inline code, `￥￥` to formula, line-start `》` to quote marker, linked deletion of paired structures (`$|$`, `==|==`, empty code blocks, wikilinks), selection wrapping by trigger key (`·` → inline code, `【` → `[]`, etc.) |
 | Custom rules | Three types (input / delete / selection-replace), regex matching (`i`/`m`/`u` flags), capture-group references (`[[n]]` / `[[Rn]]`), tabstop placeholders (`$0`, `$1`, `${1:text}` with Tab navigation), scope restriction (text/formula/code + fence language), priority, and Tab trigger mode |
-| Function replacements | Replacement logic can be a function (10 pre-registered functions power the built-in rules); custom functions join via a component fork — no dynamic code execution (CSP-safe) |
+| Function replacements | Built-in rules can reference pre-registered functions; custom functions require a component fork. No dynamic code execution (CSP-safe). |
 | Rule management page | Visual edit form with live single-rule testing, drag-to-reorder, JSON import/export (file compatible with upstream `easy-typing-user-rules.json`), built-in rule disable/restore/reset |
 | Rule storage | `builtin-rules.json` / `user-rules.json` in the Vsidian add-on data directory; external sync tools can edit them directly and open editors reload automatically |
 

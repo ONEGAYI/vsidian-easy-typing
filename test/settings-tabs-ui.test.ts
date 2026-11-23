@@ -18,6 +18,7 @@ import {
 import { HostRulesService, registerRulesChannels } from '../src/rulesHost'
 import { SETTINGS_TOPIC } from '../src/settings/store'
 import { RULES_TOPIC } from '../src/rules/rules-protocol'
+import { DEFAULT_BUILTIN_RULES } from '../src/rules/default-rules'
 import { setDebugEnabled } from '../src/logging'
 import type { SettingsTabId } from '../src/settings/tabs-model'
 import { DEFAULT_EFFECTIVE_SETTINGS } from '../src/settings/defaults'
@@ -488,11 +489,14 @@ describe('规则四分区挂入对应 panel', () => {
     expect(panel(root, 'other').contains(q(root, '[data-vet-section="storage"]'))).toBe(true)
   })
 
-  it('内置规则条目真实渲染于内置规则 panel（出厂 18 条，#56 清退 2 条）', async () => {
+  it('全部出厂规则渲染于内置规则面板', async () => {
     const { request } = assemble()
     const { root } = await mountPage(request)
     const builtinPanel = panel(root, 'builtin-rules')
-    expect(builtinPanel.querySelectorAll('[data-vet-builtin-list] [data-vet-rule-id]')).toHaveLength(18)
+    const rows = builtinPanel.querySelectorAll('[data-vet-builtin-list] [data-vet-rule-id]')
+    expect(Array.from(rows, (row) => row.getAttribute('data-vet-rule-id'))).toEqual(
+      DEFAULT_BUILTIN_RULES.map((rule) => rule.id),
+    )
   })
 
   it('旧单页标题/简介不再渲染（五 Tab hero 形态取代）', async () => {

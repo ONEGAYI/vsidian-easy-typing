@@ -216,16 +216,13 @@ describe('parseRulesFileContent / sanitizeSimpleRule（校验管线）', () => {
     await store.init()
     const persisted = JSON.parse(files.get(BUILTIN_RULES_FILE)!)
     const fnRules = persisted.filter((r: { options?: string }) => (r.options ?? '').includes('F'))
-    expect(fnRules).toHaveLength(8)
-    for (const rule of fnRules) {
-      expect(rule.replacement).toMatchObject({ kind: 'function' })
-      expect(typeof rule.replacement.ref).toBe('string')
-    }
+    const factoryRefs = DEFAULT_BUILTIN_RULES.filter((r) => typeof r.replacement !== 'string')
+    expect(fnRules).toEqual(factoryRefs)
     // 回读等价：出厂引用规则逐条原样
     const reparsed = parseRulesFileContent(files.get(BUILTIN_RULES_FILE)!)
     if ('error' in reparsed) throw new Error('出厂规则 JSON 不应解析失败')
     const refRules = reparsed.rules.filter((r) => typeof r.replacement !== 'string')
-    expect(refRules).toHaveLength(8)
+    expect(refRules).toEqual(factoryRefs)
   })
 })
 

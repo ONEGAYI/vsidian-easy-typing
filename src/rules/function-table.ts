@@ -26,8 +26,14 @@
 // undefined 返回（等价于规则跳过）。触发正则 / 触发键均保证键在场，
 // 实际不可达——收紧只是让畸形输入的失败更可读，命中路径逐字符一致。
 
-/** Input / Delete 类变换函数签名（左右捕获组两侧匹配） */
-export type TextTransformFn = (leftMatches: string[], rightMatches: string[]) => string | void
+import type { TxContext } from './rule-engine'
+
+/** Input / Delete 类变换函数：匹配组与本次输入所在的文档快照 */
+export type TextTransformFn = (
+  leftMatches: string[],
+  rightMatches: string[],
+  context: Pick<TxContext, 'docText' | 'selection' | 'inserted' | 'isProseAt'>,
+) => string | void
 
 /** SelectKey 类变换函数签名（选区文本 + 触发键） */
 export type SelectKeyTransformFn = (selectionText: string, key: string) => string | void
@@ -77,6 +83,54 @@ const autopairJump: TextTransformFn = (leftMatches, rightMatches) => {
   if (pair === undefined) return undefined // 上游此处 TypeError（触发正则保证在场，不可达）
   if (pair[0] == rightMatches[0]) return pair[1]
   return undefined
+}
+
+/** 中文单双引号键：已有同类闭引号先跳过；空白新起点收到右引号才补对。 */
+const cjkQuoteKey: TextTransformFn = (leftMatches, rightMatches, { docText, selection, inserted, isProseAt }) => {
+  if (inserted !== leftMatches[0] || !/^[“”‘’]$/.test(inserted)) return
+  const [open, close] = inserted === '“' || inserted === '”' ? ['“', '”'] : ['‘', '’']
+  const right = rightMatches[0]
+  const skip = right === close
+  const from = selection.from - 1
+  if (!isProseAt?.(from)) return
+  const pendingClosers = { '”': 0, '’': 0 }
+  let precedingClose: '”' | '’' | undefined
+  let scanFrom = from - 1
+  if (!skip) {
+    if (inserted !== close || right !== '') return
+    const lineStart = docText.lastIndexOf('\n', from - 1) + 1
+    if (!/^[ \t]*$/.test(docText.slice(lineStart, from))) return
+    if (lineStart > 0) {
+      const precedingStart = docText.lastIndexOf('\n', lineStart - 2) + 1
+      const precedingLine = docText.slice(precedingStart, lineStart - 1).trimEnd()
+      if (precedingLine) {
+        const end = precedingStart + precedingLine.length - 1
+        const last = docText[end]
+        if ((last !== '”' && last !== '’') || !isProseAt(end)) return
+        precedingClose = last
+        pendingClosers[last] = 1
+        scanFrom = end - 1
+      }
+    }
+  }
+
+  // 同一遍反扫既找当前引号的左端，也确认上一行末端的闭引号确实结束了引文。
+  let precedingPaired = precedingClose === undefined
+  for (let i = scanFrom; i >= 0; i--) {
+    const char = docText[i]
+    if (char !== '“' && char !== '”' && char !== '‘' && char !== '’') continue
+    const family = char === '“' || char === '”' ? '”' : '’'
+    if (precedingClose === undefined && family !== close) continue
+    const prose = isProseAt(i)
+    if (prose === null) return
+    if (!prose) continue
+    if (char === family) pendingClosers[family]++
+    else {
+      if (pendingClosers[family] === 0) return skip ? close : undefined
+      if (--pendingClosers[family] === 0 && family === precedingClose) precedingPaired = true
+    }
+  }
+  return !skip && precedingPaired ? open + '$0' + close : undefined
 }
 
 /** 上游 builtin-autopair-delete：删除开符号且右侧恰为配对端 → 连带删除 */
@@ -196,6 +250,7 @@ export const FUNCTION_TABLE: readonly FunctionTableEntry[] = [
   { ref: 'autopairInput', signature: 'text', fn: autopairInput },
   { ref: 'autopairJump', signature: 'text', fn: autopairJump },
   { ref: 'autopairDelete', signature: 'text', fn: autopairDelete },
+  { ref: 'cjkQuoteKey', signature: 'text', fn: cjkQuoteKey },
   { ref: 'convFormula', signature: 'text', fn: convFormula },
   { ref: 'convHw2fw', signature: 'text', fn: convHw2fw },
   { ref: 'convLinestart', signature: 'text', fn: convLinestart },

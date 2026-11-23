@@ -243,6 +243,35 @@ export function planInputRuleWithTabstops(
   // per-range 评估（#47 B 方向）：每个塌缩 range 独立构造 TxContext 跑
   // 引擎；非塌缩 range 跳过（Input 类只处理塌缩选区，包裹归 SelectKey），
   // 其选区经 changes 映射保留。作用域/保护区逐 range 判定。
+  const inputText = ctx.inputText
+  const first = inputText[0]
+  // 普通键入聚合各 range 的输入；IME 定稿已送来单次输入，不拆候选文本。
+  const inserted = ctx.userEvent === 'input.type' && selections.length > 1 && first !== undefined &&
+    inputText === first.repeat(selections.length) &&
+    selections.every(({ anchor, head }) => anchor === head && ctx.snapshot.text[head - 1] === first)
+    ? first : inputText
+  const query = options.scopeQuery
+  // 宿主的单点语法查询会重扫位置所在行。限制单次输入的累计行长度，
+  // 避免密集引号反复查询同一个长行；超限等同于语法无法确认。
+  let remainingProseWork = 128 * 1024
+  let probeLineFrom = 0
+  let probeLineTo = -1
+  const isProseAt = query && ((pos: number) => {
+    if (pos < probeLineFrom || pos > probeLineTo) {
+      probeLineFrom = ctx.snapshot.text.lastIndexOf('\n', pos - 1) + 1
+      const nextNewline = ctx.snapshot.text.indexOf('\n', pos)
+      probeLineTo = nextNewline === -1 ? ctx.snapshot.text.length : nextNewline
+    }
+    remainingProseWork -= Math.max(64, probeLineTo - probeLineFrom)
+    if (remainingProseWork < 0) return null
+    const line = query.lineTypeAt(pos)
+    if (!line.ok) return null
+    if (line.kind === 'frontmatter' || line.kind === 'code' || line.kind === 'formula' || line.kind === 'table') {
+      return false
+    }
+    const inline = query.inlineAt(pos)
+    return inline.ok ? inline.kind === 'none' : null
+  })
   const hits: PerRangeHit[] = []
   for (let rangeIndex = 0; rangeIndex < selections.length; rangeIndex++) {
     const sel = selections[rangeIndex]!
@@ -262,7 +291,8 @@ export function planInputRuleWithTabstops(
       kind: RuleType.Input,
       docText: ctx.snapshot.text,
       selection: { from, to },
-      inserted: ctx.inputText,
+      inserted,
+      ...(isProseAt !== undefined ? { isProseAt } : {}),
       changeType: ctx.userEvent,
       scopeHint: scope.scope,
       ...(scope.language !== undefined ? { scopeLanguage: scope.language } : {}),

@@ -4,6 +4,7 @@
 // rule_edit_modal（锚点见 src/rules/rules-ui-model.ts 头注）。
 import { describe, expect, it } from 'vitest'
 import { RuleScope, RuleTriggerMode, RuleType, type SimpleRule } from '../src/rules/rule-engine'
+import { DEFAULT_BUILTIN_RULES } from '../src/rules/default-rules'
 import {
   buildSimpleRuleFromForm,
   computeDropIndex,
@@ -359,6 +360,15 @@ describe('testSingleRule（规则测试编辑器内核）', () => {
       { docText: 'abc', from: 3, to: 3 },
     )
     expect(outcome).toEqual({ kind: 'miss' })
+  })
+
+  it('试运行中文引号键规则：光标前的单个引号是模拟输入', () => {
+    const rule = DEFAULT_BUILTIN_RULES.find((r) => r.id === 'builtin-cjk-quote-key')!
+    expect(testSingleRule({ ...rule, enabled: true }, {
+      docText: '“甲”和“乙”\n”',
+      from: 9,
+      to: 9,
+    })).toMatchObject({ kind: 'hit', outputText: '“甲”和“乙”\n“”', cursor: 9 })
   })
 
   it('Delete 类：kind=Delete 驱动匹配（光标在配对括号之间）', () => {

@@ -4,7 +4,7 @@
 
 ## 验收口径
 
-- 内置规则匹配矩阵单测全绿（触发 / 不触发 / 边界三档 × 全部 18 条现役规则，含捕获组引用与 flags 独立矩阵；#56 清退 2 条另见「内置规则清退（#56）」节）。
+- 内置规则的触发、不触发和边界由匹配矩阵与管线用例覆盖，含捕获组引用与 flags 独立矩阵。
 - 函数替换体端到端（#17）：引用形态装载 → 查表注入 → `process` 命中（含捕获组消费：函数表函数消费 leftMatches/rightMatches/selectionText/key 参数矩阵）；未知 ref / 签名失配 / 遗留字符串函数体拒绝装载并上报。
 - `npm run compile`（三产物构建 + `tsc --noEmit`）通过。
 - 内核零平台依赖：`src/rules/` 下 import 语句扫描断言钉住（仅允许模块内相对 type 导入），禁止 `obsidian` / vsidian SDK / `vscode` / `@codemirror` / vendor 类型 / DOM。
@@ -41,7 +41,7 @@
 
 - **字符串字面量**（无 F 旗标）：`replacement: '文本 [[1]] $0'`——模板语义，经 expandVariables（`[[n]]`/`[[Rn]]`/`${SEL}`/`${KEY}`）与 parseTabstops（`$n`/`${n:default}`）后处理，与上游一致。
 - **函数引用**（F 旗标配对）：`replacement: {kind:'function', ref:'convFormula'}`，`options` 含 `F`——函数本体是函数表内的真函数（不随规则 JSON 存储与编辑）。上游函数体字符串形态不再是合法装载形态（装载期拒绝 + 通知）。
-- **签名配对**：Input/Delete 类规则引用 `text` 签名函数（参数 `leftMatches: string[]` / `rightMatches: string[]`）；SelectKey 类引用 `selectKey` 签名（参数 `selectionText: string` / `key: string`）。函数返回字符串或 `undefined`（跳过本次匹配）；返回串进入与字面量相同的后处理链。
+- **签名配对**：Input/Delete 类规则引用 `text` 签名函数，参数为 `leftMatches`、`rightMatches` 与文档、选区、输入上下文 `context`。SelectKey 类引用 `selectKey` 签名，参数为 `selectionText` 和 `key`。返回 `undefined` 跳过；返回字符串时走与字面量相同的后处理链。
 
 ### 内置函数表（ref ↔ 上游规则映射）
 
@@ -50,6 +50,7 @@
 | `autopairInput` | text | ~~builtin-autopair-input~~（#56 清退；函数面保留供用户规则引用） | 键入全角开符号补全配对（$0 落配对间） |
 | `autopairJump` | text | builtin-autopair-jump | 右侧恰为配对端时吃掉重复右符 |
 | `autopairDelete` | text | builtin-autopair-delete | 删除开符号且右侧为配对端 → 连带删除 |
+| `cjkQuoteKey` | text | 本组件 `builtin-cjk-quote-key` | 单次中文引号键输入：空白新起点补对、已有闭引号时跳过 |
 | `convFormula` | text | builtin-conv-formula | ￥/$ 组合转行内或块级公式 |
 | `convHw2fw` | text | builtin-conv-hw2fw | CJK 后半角标点转全角（默认关） |
 | `convLinestart` | text | builtin-conv-linestart | 行首 》 转引用、行首 、 转斜杠 |
@@ -78,7 +79,7 @@
 - **上游数据怪癖原样保留**（不擅自放宽）：`builtin-autopair-input` 触发类 `[（《「『“”‘’《]` 不含 `【`（替换表却含 `【` 的映射）；`builtin-conv-linestart` 的 `、` 分支替换体无尾随空格（`[[1]]/$0`）；`builtin-quote-convert` 连续 `>` 的归一形态为 `>> $0`（贪婪回溯后 `[[1]]` 只含首个 `>`）。
 - **正则引擎差异**：未发现——内置规则用到的 lookbehind（chrome62+ / node9+）、反向引用、`\u` 范围类在 chrome114（页面产物下界）与 node18（宿主 / vitest）均一致支持。后续 #14 用户规则引入任意正则时如有差异，在测试注释记录。
 - **函数替换体不再有动态代码路径**（#17 落地，取代 #1 时代的 `new Function` 边界）：预注册表是函数替换体的唯一装载形态，vitest 与真实 webview 行为一致（都是查表注入，无环境分支）。#25 报告的「6 条 Input 函数体规则 CSP 静默降级」场景已根治；动态代码禁令由 scaffold 扫描钉住（src 禁 `new Function`/`eval` 调用）。遗留字符串函数体（F 旗标 + 字符串，#17 前序列化数据或上游导入）装载期拒绝并通知，存储侧原样保留（数据不丢）。
-- **description 字段 i18n**（#19 已落地）：`default-rules.ts` 的中文描述保持上游数据原样；展示层本地化沿用上游模式——规则 id → 语言包 `builtinRuleDescriptions` 映射（`src/i18n/` 两字典各 18 条，#56 清退 2 条），消费点在规则管理页列表预览（`previewRuleText` 查表优先），存储数据不随语言改写。
+- **description 字段 i18n**（#19 已落地）：`default-rules.ts` 存储中文描述；规则管理页列表预览优先查 `src/i18n/` 的 `builtinRuleDescriptions`，存储数据不随语言改写。
 - **用户正则无回溯防护（审查 C-P2-1，上游同款继承）**：引擎对用户规则的正则源直接 `new RegExp` 编译执行，无超时/步数防护——灾难回溯正则（嵌套量词作用于重叠字符集，如 `(a+)+b` 对长串 `aaaa...a`）在病态输入下可长时间占住匹配（输入路径在页面主线程，表现为输入卡顿）。上游 easy-typing 同款行为；JS 正则引擎无中断机制，工程化防护（RE2 方言、worker 化匹配）超出移植范围。用户侧缓解：docs/guides/custom-rules.md「匹配条件」节的正则书写提醒。
 - **引擎内 console 直写不经统一日志门控（审查 C-P3-3，#19 已备案）**：`rule-engine.ts` 的 4 处 `console.error`（函数替换体解析失败 / F 旗标失配 / 无效正则 / 运行时异常）与 2 处 `ctx.debug` 命中日志是上游同款直写形态，未接 `src/logging.ts` 的 debugLog 统一门控——#19 备案口径：此类输出属 debug/诊断面非用户可见文字（不进 i18n 字典）；`src/rules/` 纯领域模块不引装配层依赖，保留直写形态。
 
@@ -93,7 +94,7 @@
 | localId（默认链序） | 族 | 规则（上游优先级） |
 | --- | --- | --- |
 | `01-punct-collapse` | 全角标点连击转半角 | `builtin-fw2hw-double`（3） |
-| `02-autopair` | 括号引号自动配对 | `builtin-autopair-jump`（5）——`builtin-autopair-input`（10）已随 #56 清退，引用 autopairInput 的用户规则仍归本族 |
+| `02-autopair` | 括号引号自动配对 | `builtin-autopair-jump`（5）、`builtin-cjk-quote-key`（10，默认关）；通用补全由平台承接（#56） |
 | `03-symbol-convert` | 符号组合转换 | `builtin-conv-backtick`、`builtin-conv-codeblock`、`builtin-conv-formula`、`builtin-conv-linestart`（均 10） |
 | `04-punct-expand` | CJK 后半角转全角 | `builtin-conv-hw2fw`（15，数据态默认关） |
 | `05-quote` | 引用标记转换 | `builtin-quote-convert`、`builtin-quote-space`（均 50） |
@@ -277,4 +278,12 @@ CDP 用法注意（平台 `embedLiveCloseout.mjs` 实证注释）：`imeSetCompo
 ### 已知边界
 
 - 平台关闭其符号补全/包裹能力时，组件随包内置规则不再作为相同能力的隐式补位（清退即让位）；用户自行添加同类规则不受限（用户域红线）。
-- 键入 `（` 的右邻抑制形态（平台 #151 生态口径：右邻非空白且非闭合字符不补全）与键入 `”`/`’` 不再补出配对（上游独有行为）——记 B28。
+- 平台补全在右邻非空白且非闭合字符时不补（#151），也不会用 `”`/`’` 开新对。后者可按下节局部兼容。
+
+## 中文引号键兼容
+
+[上游 #64](https://github.com/Yaozhuwa/easy-typing-obsidian/issues/64) 在编辑器内把左右引号都作为配对触发符。Vsidian 版用默认关闭的 `builtin-cjk-quote-key` 提供较窄的兼容行为，仍经 `02-autopair` 的 Input 规则管线，不重新启用已退役的通用补全规则。
+
+- 规则只处理单个引号的键入或定稿。光标左侧有待闭合的同类引号、右侧紧贴对应的闭引号时，键入同类任一端都越过右侧闭引号；引文可跨行。现有空对跳过规则优先。
+- 左侧没有待闭合的同类引号，且空白行位于文档开头、前一行为空白行或以完整引文结束时，`”`/`’` 才作为新起点。其他位置保留字面值，也不接管粘贴与选区替换。
+- 反向匹配与上一行末端的完整引文判定共用平台语法查询，跳过代码、公式、表格及属性区内的字面引号。宿主每次查询可能扫描所在行，单次输入按累计查询行长度限制成本；查询拒绝或超限时保留原输入。普通多光标键入的重复载荷按每光标一个引号处理；IME 多字定稿不拆分。

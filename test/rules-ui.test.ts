@@ -644,13 +644,14 @@ describe('内置规则逐条开关（组件层，deletedBuiltinRuleIds 载体）
     expect(q(root, '[data-vet-deleted-rules] summary').textContent).toContain('(0)')
   })
 
-  it('在场但 enabled=false 的内置条目呈关态，打开走启用通道', async () => {
-    const builtin = DEFAULT_BUILTIN_RULES.map((r) =>
-      r.id === 'builtin-fw2hw-double' ? { ...r, enabled: false } : r,
-    )
+  it('旧安装补入默认关闭的中文引号键规则，打开后重启仍启用', async () => {
+    const ruleId = 'builtin-cjk-quote-key'
+    const selector = `[data-vet-builtin-list] [data-vet-rule-id="${ruleId}"]`
+    const builtin = DEFAULT_BUILTIN_RULES.filter((r) => r.id !== ruleId)
     const { mock, request } = assemble({ 'builtin-rules.json': JSON.stringify(builtin) })
     const { root } = await mountView(request)
-    const row = q(root, '[data-vet-builtin-list] [data-vet-rule-id="builtin-fw2hw-double"]')
+    const row = q(root, selector)
+    expect(row.textContent).toContain('中文引号键兼容')
     const toggle = q<HTMLInputElement>(row, `${act('toggle-builtin')}`)
     expect(toggle.checked).toBe(false)
 
@@ -659,10 +660,11 @@ describe('内置规则逐条开关（组件层，deletedBuiltinRuleIds 载体）
     await flush()
 
     const persisted = JSON.parse(mock.files.get('builtin-rules.json')!).find(
-      (r: { id: string }) => r.id === 'builtin-fw2hw-double',
+      (r: { id: string }) => r.id === ruleId,
     )
     expect(persisted.enabled).not.toBe(false)
-    expect(q<HTMLInputElement>(root, '[data-vet-builtin-list] [data-vet-rule-id="builtin-fw2hw-double"] input[type="checkbox"]')).toBeTruthy()
+    const reopened = await mountView(assemble(Object.fromEntries(mock.files)).request)
+    expect(q<HTMLInputElement>(reopened.root, `${selector} ${act('toggle-builtin')}`).checked).toBe(true)
   })
 })
 

@@ -27,11 +27,11 @@ export const RULE_INPUT_FAMILY_SEEDS: readonly RuleFamilySeedData[] = [
     ruleIds: ['builtin-fw2hw-double'],
     userRuleType: RuleType.Input,
   },
-  // 上游优先级 5：配对跳过（配对补全 builtin-autopair-input 已随 #56 清退，
-  // 平台符号补全兜底；引用其函数表的用户规则仍归本族）
+  // 优先级 5：配对跳过；优先级 10：可选的中文引号键兼容。
+  // 通用配对补全仍交给平台（#56）。
   {
     localId: '02-autopair',
-    ruleIds: ['builtin-autopair-jump'],
+    ruleIds: ['builtin-autopair-jump', 'builtin-cjk-quote-key'],
     userRuleType: RuleType.Input,
   },
   // 上游优先级 10：·· 转行内代码 / `· 升级代码块 / ￥$ 转公式 / 行首 》、 转换

@@ -315,7 +315,7 @@ export const enMessages: Messages = {
       fnGroupText: 'Input / Delete (leftMatches / rightMatches)',
       fnGroupSelectKey: 'SelectKey (selectionText / key)',
       functionReadonlyHint: 'Transform functions live in the pre-registered function table inside the component code; they are not stored or edited in rule JSON. To use custom functions, fork this component (or build a small add-on VSIX), add your functions to the table, and reference them by ref.',
-      functionHintInputDelete: 'Args: leftMatches (string[]), rightMatches (string[]). Return string or undefined to skip.',
+      functionHintInputDelete: 'Args: leftMatches, rightMatches, and context (document and input). Return a string or undefined to skip.',
       functionHintSelectKey: 'Args: selectionText (string), key (string). Return string or undefined to skip.',
       groupOther: 'Other',
       fieldScope: 'Scope',
@@ -380,6 +380,7 @@ export const enMessages: Messages = {
   // keeps the upstream Chinese data as-is; storage is never rewritten by language)
   builtinRuleDescriptions: {
     'builtin-autopair-jump': 'Skip over closing paired symbol to avoid duplicates',
+    'builtin-cjk-quote-key': 'Chinese quote key: open a pair at a blank paragraph or skip over an existing closing quote',
     'builtin-autopair-delete': 'Delete both sides of full-width bracket/quote pairs',
     'builtin-conv-backtick': 'Double middle dot ·· converts to inline code',
     'builtin-conv-codeblock': 'Type · inside inline code to upgrade to code block',

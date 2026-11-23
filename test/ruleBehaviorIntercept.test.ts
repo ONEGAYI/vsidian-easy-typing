@@ -61,11 +61,11 @@ function familyIndexOfRule(ruleId: string): number {
 }
 
 describe('功能族契约：分族覆盖与无重叠', () => {
-  it('族表恰好覆盖全部 Input 类内置规则（9 条，#56 清退 autopair-input），无遗漏无重复', () => {
+  it('族表恰好覆盖全部 10 条 Input 类内置规则，无遗漏无重复', () => {
     const familyRuleIds = INPUT_RULE_FAMILIES.flatMap((f) => f.ruleIds)
     expect(new Set(familyRuleIds).size).toBe(familyRuleIds.length)
     expect([...familyRuleIds].sort()).toEqual(inputRulesSortedById().sort())
-    expect(familyRuleIds.length).toBe(9)
+    expect(familyRuleIds.length).toBe(10)
   })
 
   it('族表不含 Delete / SelectKey 类规则（归 #9 管线）', () => {
@@ -379,7 +379,7 @@ describe('#9 功能族契约：分族覆盖与链序', () => {
     expect([...familyRuleIds].sort()).toEqual([...expected].sort())
     expect(familyRuleIds.length).toBe(9)
     expect(DELETE_SELECTKEY_RULE_FAMILIES.map((f) => f.localId)).toEqual(['06-delete-rules', '07-selectkey-rules'])
-    // 与 #25 五族零重叠：全量 18 条恰好分进七个族（#56 清退 2 条）
+    // 与 #25 五族零重叠：所有出厂规则恰好分进七个族
     const all = [...INPUT_RULE_FAMILIES, ...DELETE_SELECTKEY_RULE_FAMILIES].flatMap((f) => f.ruleIds)
     expect(new Set(all).size).toBe(DEFAULT_BUILTIN_RULES.length)
   })

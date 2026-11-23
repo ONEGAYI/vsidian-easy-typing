@@ -43,6 +43,16 @@ export const DEFAULT_BUILTIN_RULES: (SimpleRule & { id: string })[] = [
     description: '输入右侧配对符号时自动跳过，避免重复插入'
   },
   {
+    id: 'builtin-cjk-quote-key',
+    trigger: '[“”‘’]',
+    trigger_right: '[”’]|(?=[ \\t]*(?:\\n|$))',
+    replacement: { kind: 'function', ref: 'cjkQuoteKey' },
+    options: 'rF',
+    priority: 10,
+    enabled: false,
+    description: '中文引号键兼容：空白段落开新引号，已有闭引号时跳过',
+  },
+  {
     id: 'builtin-autopair-delete',
     trigger: "[【（《「『“‘]",
     trigger_right: "[】）》」』”’]",
