@@ -37,28 +37,28 @@ function inputCtx(docText: string, cursor: number, overrides: Partial<TxContext>
   }
 }
 
-describe('数据完整性（上游 20 条全量移植）', () => {
-  it('规则数 18（#56 清退 2 条）、id 唯一、各带描述', () => {
-    expect(DEFAULT_BUILTIN_RULES).toHaveLength(18)
+describe('出厂规则数据完整性', () => {
+  it('规则数 19、id 唯一、各带描述', () => {
+    expect(DEFAULT_BUILTIN_RULES).toHaveLength(19)
     const ids = DEFAULT_BUILTIN_RULES.map((r) => r.id)
-    expect(new Set(ids).size).toBe(18)
+    expect(new Set(ids).size).toBe(19)
     for (const rule of DEFAULT_BUILTIN_RULES) {
       expect(rule.description, `${rule.id} 缺描述`).toBeTruthy()
     }
   })
 
-  it('默认启用状态：仅「CJK 后半角标点转全角」默认关', () => {
+  it('仅「CJK 后半角标点转全角」和「中文引号键兼容」默认关', () => {
     const disabled = DEFAULT_BUILTIN_RULES.filter((r) => r.enabled === false)
-    expect(disabled.map((r) => r.id)).toEqual(['builtin-conv-hw2fw'])
+    expect(disabled.map((r) => r.id)).toEqual(['builtin-cjk-quote-key', 'builtin-conv-hw2fw'])
   })
 
-  it('优先级分层与上游头注一致（3/5/10×6/15/30×5/40×4/50×2）', () => {
+  it('出厂规则优先级分层', () => {
     const byPriority = new Map<number, number>()
     for (const rule of DEFAULT_BUILTIN_RULES) {
       byPriority.set(rule.priority ?? 100, (byPriority.get(rule.priority ?? 100) ?? 0) + 1)
     }
     expect(Object.fromEntries([...byPriority].sort(([a], [b]) => a - b))).toEqual({
-      3: 1, 5: 1, 10: 5, 15: 1, 30: 5, 40: 3, 50: 2,
+      3: 1, 5: 1, 10: 6, 15: 1, 30: 5, 40: 3, 50: 2,
     })
   })
 })

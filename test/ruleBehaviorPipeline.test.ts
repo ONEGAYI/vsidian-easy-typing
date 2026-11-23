@@ -7,8 +7,9 @@
 // tryProcessInput 的规则触发段、delete.backward 分支与 Selection Replace
 // 分支。
 import { describe, expect, it } from 'vitest'
-import { RuleEngine, RuleType, type SimpleRule } from '../src/rules/rule-engine'
+import { RuleEngine, RuleScope, RuleType, type SimpleRule } from '../src/rules/rule-engine'
 import { DEFAULT_BUILTIN_RULES } from '../src/rules/default-rules'
+import { buildFamilyEngine, INPUT_RULE_FAMILIES } from '../src/ruleBehaviorIntercept'
 import {
   applyResultToPlan,
   pipelineConsumesDeleteEvent,
@@ -118,6 +119,228 @@ describe('管线集成：配对跳过与用户域补全（builtin-autopair-jump 
   })
 })
 
+describe('中文引号键兼容（02-autopair 内置可选规则）', () => {
+  const ruleId = 'builtin-cjk-quote-key'
+  const family = INPUT_RULE_FAMILIES.find((entry) => entry.localId === '02-autopair')!
+  const plan = (engine: RuleEngine, ctx: RuleInputPipelineContext) =>
+    planInputRuleModification(engine, ctx, { scopeQuery: makeSyntaxFake(ctx.snapshot.text).query })
+
+  it.each([
+    '“甲”\n',
+    '“甲”和“乙”\n',
+    '示例 `“` 他答：“甲”\n',
+    '“甲\n乙”\n',
+    '“甲” \t\n',
+  ])('默认关闭；启用后，%j 后定稿的右引号开新对', (prefix) => {
+    const engine = buildFamilyEngine(family)
+    const ctx = inputCtx(prefix + '”', prefix.length + 1, 'input.type.compose', '”')
+    expect(plan(engine, ctx)).toBeNull()
+
+    engine.setEnabled(ruleId, true)
+    expect(plan(engine, ctx)).toEqual({
+      changes: [{ offset: prefix.length, length: 1, text: '“”' }],
+      selection: { anchor: prefix.length + 1, head: prefix.length + 1 },
+    })
+  })
+
+  it('空白段起点的右单引号也可开启配对，不改行内空白', () => {
+    const engine = buildFamilyEngine(family)
+    engine.setEnabled(ruleId, true)
+    const ctx = inputCtx('上一段\n\n  ’  ', 8, 'input.type', '’')
+    expect(plan(engine, ctx)).toEqual({
+      changes: [{ offset: 7, length: 1, text: '‘’' }],
+      selection: { anchor: 8, head: 8 },
+    })
+  })
+
+  it.each([
+    ['‘尚未闭合\n\n“甲”\n', '”', '“”'],
+    ['“尚未闭合\n\n‘甲’\n', '’', '‘’'],
+    ['“外层‘内层’\n', '’', '‘’'],
+    ['‘尚未闭合\n\n‘甲’\n', '”', '“”'],
+  ])('完整引文后开新对：%j 不被更早的异类开引号阻挡', (prefix, key, pair) => {
+    const engine = buildFamilyEngine(family)
+    engine.setEnabled(ruleId, true)
+    expect(plan(engine, inputCtx(prefix + key, prefix.length + 1, 'input.type.compose', key))).toEqual({
+      changes: [{ offset: prefix.length, length: 1, text: pair }],
+      selection: { anchor: prefix.length + 1, head: prefix.length + 1 },
+    })
+  })
+
+  it.each([
+    ['“”', '”', 1, { offset: 0, length: 3, text: '“”' }],
+    ['“甲”', '”', 2, { offset: 2, length: 2, text: '”' }],
+    ['“甲”', '“', 2, { offset: 2, length: 2, text: '”' }],
+    ['‘甲’', '’', 2, { offset: 2, length: 2, text: '’' }],
+    ['“甲\n乙”', '”', 4, { offset: 4, length: 2, text: '”' }],
+  ])('右侧已有闭引号：%s 收到 %s 时只保留原配对并跳出', (text, key, pos, change) => {
+    const engine = buildFamilyEngine(family)
+    engine.setEnabled(ruleId, true)
+    const ctx = inputCtx(text.slice(0, pos) + key + text.slice(pos), pos + 1, 'input.type.compose', key)
+    expect(plan(engine, ctx)).toEqual({
+      changes: [change],
+      selection: { anchor: text.length, head: text.length },
+    })
+  })
+
+  it.each([
+    ['“正文”', 4, 'input.type.compose'],
+    ['“换行后闭合\n”', 8, 'input.type.compose'],
+    ['“外层‘内层’\n”', 9, 'input.type.compose'],
+    ['“尚未闭合\n\n“甲”\n”', 12, 'input.type.compose'],
+    ['末尾”\n”', 5, 'input.type.compose'],
+    ['末尾’\n”', 5, 'input.type.compose'],
+    ['“甲\n\n”', 5, 'input.type.compose'],
+    ['“甲“乙”\n\n”', 8, 'input.type.compose'],
+    ['”后有正文', 1, 'input.type'],
+    ['””', 1, 'input.type'],
+    ['“甲”’', 3, 'input.type'],
+    ['”', 1, 'input.paste'],
+  ])('保留字面输入或粘贴：%s', (text, pos, event) => {
+    const engine = buildFamilyEngine(family)
+    engine.setEnabled(ruleId, true)
+    expect(plan(engine, inputCtx(text, pos, event, text[pos - 1]!))).toBeNull()
+  })
+
+  it('多字定稿以引号结尾，但不是单次引号键输入', () => {
+    const engine = buildFamilyEngine(family)
+    engine.setEnabled(ruleId, true)
+    const ctx = inputCtx('“甲乙“”', 4, 'input.type.compose', '乙“')
+    expect(plan(engine, ctx)).toBeNull()
+  })
+
+  it.each(['```\n“\n```\n\n', '前文 `“`\n\n'])('代码中的引号不参与正文配对：%j', (prefix) => {
+    const engine = buildFamilyEngine(family)
+    engine.setEnabled(ruleId, true)
+    expect(plan(engine, inputCtx(prefix + '”', prefix.length + 1, 'input.type', '”'))).toEqual({
+      changes: [{ offset: prefix.length, length: 1, text: '“”' }],
+      selection: { anchor: prefix.length + 1, head: prefix.length + 1 },
+    })
+    expect(plan(engine, inputCtx(prefix + '甲””', prefix.length + 2, 'input.type', '”'))).toBeNull()
+  })
+
+  it('候选引号的语法查询被拒绝时，保留输入', () => {
+    const engine = buildFamilyEngine(family)
+    engine.setEnabled(ruleId, true)
+    expect(planInputRuleModification(engine, inputCtx('“甲””', 3, 'input.type', '”'), {
+      scopeQuery: makeRejectingQuery(),
+    })).toBeNull()
+  })
+
+  it.each([
+    ['input.type', '””'],
+    ['input.type.compose', '”'],
+  ])('多光标的单次引号键 %s 在每个光标处生效', (event, inputText) => {
+    const engine = buildFamilyEngine(family)
+    engine.setEnabled(ruleId, true)
+    const ctx = inputCtx('”\n\n”', 1, event, inputText, [{ anchor: 1, head: 1 }, { anchor: 4, head: 4 }])
+    expect(plan(engine, ctx)).toEqual({
+      changes: [{ offset: 0, length: 1, text: '“”' }, { offset: 3, length: 1, text: '“”' }],
+      selection: [{ anchor: 1, head: 1 }, { anchor: 5, head: 5 }],
+    })
+  })
+
+  it('自定义规则引用兼容函数时，非中文引号不触发', () => {
+    const engine = new RuleEngine()
+    engine.addSimpleRule({
+      trigger: 'x', trigger_right: '’', options: 'F', replacement: { kind: 'function', ref: 'cjkQuoteKey' },
+    })
+    expect(plan(engine, inputCtx('‘甲x’', 3, 'input.type', 'x'))).toBeNull()
+  })
+
+  it('引号与公式密集的长行：限制重复宿主语法查询，保留原输入', () => {
+    const engine = buildFamilyEngine(family)
+    engine.setEnabled(ruleId, true)
+    const text = '“甲”$x$ '.repeat(2000) + '“结束”\n”'
+    const { query, counts } = makeSyntaxFake(text)
+    expect(planInputRuleModification(engine, inputCtx(text, text.length, 'input.type', '”'), {
+      scopeQuery: query,
+    })).toBeNull()
+    expect(counts.inlineAt).toBeLessThan(64)
+  })
+
+  const proseQuery: SyntaxQuery = {
+    lineTypeAt: () => ({ ok: true, kind: 'text', nodeNames: [] }),
+    inlineAt: () => ({ ok: true, kind: 'none', nodeNames: [] }),
+  }
+
+  it('无引号的长前文也消耗反扫预算，不能确认时保留原输入', () => {
+    const engine = buildFamilyEngine(family)
+    engine.setEnabled(ruleId, true)
+    const text = '普通正文\n'.repeat(180_000) + '\n”'
+    const ctx = inputCtx(text, text.length, 'input.type.compose', '”')
+    expect(planInputRuleModification(engine, ctx, { scopeQuery: proseQuery })).toBeNull()
+  })
+
+  it('多光标共享反扫预算：第一个命中，第二个超限时只保留原输入', () => {
+    const engine = buildFamilyEngine(family)
+    engine.setEnabled(ruleId, true)
+    const prefix = '正文\n'.repeat(32_000) + '\n'
+    const text = prefix + '”\n\n”'
+    const firstCaret = prefix.length + 1
+    const ctx = inputCtx(text, firstCaret, 'input.type', '””', [
+      { anchor: firstCaret, head: firstCaret },
+      { anchor: text.length, head: text.length },
+    ])
+    expect(planInputRuleModification(engine, ctx, { scopeQuery: proseQuery })).toEqual({
+      changes: [{ offset: prefix.length, length: 1, text: '“”' }],
+      selection: [
+        { anchor: firstCaret, head: firstCaret },
+        { anchor: text.length + 1, head: text.length + 1 },
+      ],
+    })
+  })
+
+  it('上一行超长但末尾不是闭引号：只查分隔换行和前一字符', () => {
+    const engine = buildFamilyEngine(family)
+    engine.setEnabled(ruleId, true)
+    const docText = 'x'.repeat(900_000) + '\n”'
+    const budget = { remaining: 16 }
+    expect(engine.process({
+      kind: RuleType.Input,
+      docText,
+      selection: { from: docText.length, to: docText.length },
+      inserted: '”',
+      changeType: 'input.type.compose',
+      scopeHint: RuleScope.All,
+      isProseAt: () => true,
+      reverseScanBudget: budget,
+    })).toBeNull()
+    expect(budget.remaining).toBe(14)
+  })
+
+  it('本行光标右侧的尾空白也必须在额度内确认', () => {
+    const engine = buildFamilyEngine(family)
+    engine.setEnabled(ruleId, true)
+    const budget = { remaining: 16 }
+    expect(engine.process({
+      kind: RuleType.Input,
+      docText: '”' + ' '.repeat(900_000),
+      selection: { from: 1, to: 1 },
+      inserted: '”',
+      changeType: 'input.type.compose',
+      scopeHint: RuleScope.All,
+      isProseAt: () => true,
+      reverseScanBudget: budget,
+    })).toBeNull()
+    expect(budget.remaining).toBe(0)
+  })
+
+  it('上一行的超长尾空白也消耗共享额度，后续光标不再越过闭引号', () => {
+    const engine = buildFamilyEngine(family)
+    engine.setEnabled(ruleId, true)
+    const prefix = 'x'.repeat(900_000) + ' '.repeat(900_000) + '\n'
+    const text = prefix + '”\n\n“甲””'
+    const firstCaret = prefix.length + 1
+    const secondCaret = text.length - 1
+    const ctx = inputCtx(text, firstCaret, 'input.type', '””', [
+      { anchor: firstCaret, head: firstCaret },
+      { anchor: secondCaret, head: secondCaret },
+    ])
+    expect(planInputRuleModification(engine, ctx, { scopeQuery: proseQuery })).toBeNull()
+  })
+})
+
 // ===== 票面场景 3：中英空格基线（规则面不承载，归 #26 格式化管线） =====
 
 describe('管线集成：中英空格基线', () => {
@@ -127,7 +350,7 @@ describe('管线集成：中英空格基线', () => {
     expect(planInputRuleModification(engine, inputCtx('中文a', 3, 'input.type', 'a'))).toBeNull()
   })
 
-  it('全量 18 条内置规则装载下普通英文输入不产生任何修饰（#56 清退 2 条）', () => {
+  it('装载全部内置规则时普通英文输入不产生任何修饰', () => {
     expect(planInputRuleModification(engine, inputCtx('plain text', 10, 'input.type', 't'))).toBeNull()
   })
 })

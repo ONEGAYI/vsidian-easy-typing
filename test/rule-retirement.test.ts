@@ -113,10 +113,10 @@ describe('RuleStore 装载回收（#56：新装 / 旧安装 / 重载一致口径
     })
     const store = new RuleStore(io)
     await store.init()
-    // 存活顺序保留在前，缺失出厂项按 init 补种在后；全集 = 现役 18 条
+    // 存活顺序保留在前，缺失出厂项按 init 补种在后；全集为当前出厂项
     const ids = store.getSnapshot().builtin.map((r) => r.id)
     expect(ids.slice(0, 2)).toEqual(['builtin-sel-wrap-symbols', 'builtin-autopair-jump'])
-    expect(new Set(ids).size).toBe(18)
+    expect(new Set(ids).size).toBe(DEFAULT_BUILTIN_RULES.length)
     for (const id of RETIRED_BUILTIN_RULE_IDS) expect(ids).not.toContain(id)
     // 磁盘被重写为回收后形态（外部工具直读看到的即新面）
     const onDisk = JSON.parse(files.get('builtin-rules.json')!) as { id: string }[]

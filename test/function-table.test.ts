@@ -1,4 +1,4 @@
-// 预注册函数表矩阵（工单 #17）：src/rules/function-table.ts 的 10 条真函数
+// 预注册函数表矩阵（工单 #17）：src/rules/function-table.ts 的上游函数
 // 与上游 easy-typing-obsidian v6.0.9 src/default_rules.ts 内置函数体规则
 // 逐条对照——直接调用钉住参数面（leftMatches/rightMatches 或
 // selectionText/key）与返回串（$n / [[n]] / ${SEL} 标记原样，展开与
@@ -15,11 +15,16 @@ import {
 import { RuleEngine, RuleScope, RuleType } from '../src/rules/rule-engine'
 import { DEFAULT_BUILTIN_RULES } from '../src/rules/default-rules'
 
-function textFn(ref: string): TextTransformFn {
+function textFn(ref: string) {
   const entry = FUNCTION_TABLE_BY_REF.get(ref)
   expect(entry, `ref ${ref} 应在场`).toBeDefined()
   expect(entry!.signature).toBe('text')
-  return entry!.fn as TextTransformFn
+  const fn = entry!.fn as TextTransformFn
+  return (left: string[], right: string[]) => fn(left, right, {
+    docText: '',
+    selection: { from: 0, to: 0 },
+    inserted: '',
+  })
 }
 
 function selectKeyFn(ref: string): SelectKeyTransformFn {
@@ -30,20 +35,20 @@ function selectKeyFn(ref: string): SelectKeyTransformFn {
 }
 
 describe('数据完整性', () => {
-  it('10 条条目、ref 唯一、签名分布 7 text + 3 selectKey', () => {
-    expect(FUNCTION_TABLE).toHaveLength(10)
-    expect(new Set(FUNCTION_TABLE.map((e) => e.ref)).size).toBe(10)
+  it('ref 唯一且签名分布与注册表一致', () => {
+    expect(FUNCTION_TABLE).toHaveLength(11)
+    expect(new Set(FUNCTION_TABLE.map((e) => e.ref)).size).toBe(11)
     const bySig = { text: 0, selectKey: 0 } as Record<string, number>
     for (const entry of FUNCTION_TABLE) bySig[entry.signature]!++
-    expect(bySig).toEqual({ text: 7, selectKey: 3 })
-    expect(FUNCTION_TABLE_BY_REF.size).toBe(10)
+    expect(bySig).toEqual({ text: 8, selectKey: 3 })
+    expect(FUNCTION_TABLE_BY_REF.size).toBe(11)
   })
 
   it('内置 F 旗标规则全部为引用形态且 ref 在表、签名与规则类型配对', () => {
     const fnRules = DEFAULT_BUILTIN_RULES.filter(
       (r) => (r.options ?? '').includes('F'),
     )
-    expect(fnRules).toHaveLength(8)
+    expect(fnRules).toHaveLength(9)
     for (const rule of fnRules) {
       expect(typeof rule.replacement, `${rule.id} 应为引用形态`).toBe('object')
       const ref = rule.replacement as { kind: string; ref: string }

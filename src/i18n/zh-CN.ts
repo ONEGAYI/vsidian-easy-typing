@@ -311,7 +311,7 @@ const zhMessages = {
       fnGroupText: '输入 / 删除类（leftMatches / rightMatches）',
       fnGroupSelectKey: '选中替换类（selectionText / key）',
       functionReadonlyHint: '替换函数本体存于组件代码的预注册函数表，不随规则 JSON 存储与编辑；需要自定义变换函数时，请 fork 本组件（或做成小组件 VSIX），把函数加入函数表后按 ref 引用。',
-      functionHintInputDelete: '参数：leftMatches (string[])、rightMatches (string[])。返回字符串或 undefined 跳过。',
+      functionHintInputDelete: '参数：leftMatches（左侧匹配）、rightMatches（右侧匹配）、context（文档与输入上下文）。返回字符串或 undefined 跳过。',
       functionHintSelectKey: '参数：selectionText (string)、key (string)。返回字符串或 undefined 跳过。',
       groupOther: '其他',
       fieldScope: '作用域',
@@ -375,6 +375,7 @@ const zhMessages = {
   // description（default-rules.ts 保持上游中文数据原样，不随语言改写存储）
   builtinRuleDescriptions: {
     'builtin-autopair-jump': '输入右侧配对符号时自动跳过，避免重复插入',
+    'builtin-cjk-quote-key': '中文引号键兼容：空白段落开新引号，已有闭引号时跳过',
     'builtin-autopair-delete': '删除全角括号/引号时同时删除配对',
     'builtin-conv-backtick': '连续中文间隔号 ·· 转行内代码',
     'builtin-conv-codeblock': '行内代码中继续输入 · 升级为代码块',

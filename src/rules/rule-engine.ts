@@ -132,6 +132,10 @@ export interface TxContext {
   docText: string;
   selection: { from: number; to: number };
   inserted: string;
+  /** 查询快照中任一位置是否为正文；null 表示平台无法判定。 */
+  isProseAt?: (pos: number) => boolean | null;
+  /** 同一次输入的多个光标共用引号上下文读取额度（UTF-16 码元，含查找行界）。 */
+  reverseScanBudget?: { remaining: number };
   changeType: string;
   /** 光标处作用域判定（注入面——内核不做语法树判定，见模块头注） */
   scopeHint: RuleScope;
@@ -792,7 +796,7 @@ export class RuleEngine {
   private applyReplacement(
     rule: ConvertRule,
     match: MatchInfo,
-    _ctx: TxContext,
+    ctx: TxContext,
   ): ApplyResult | null {
     let text: string;
 
@@ -804,8 +808,8 @@ export class RuleEngine {
           if (result === undefined) return null;
           text = result as string;
         } else {
-          const fn = rule.replacement as (l: string[], r: string[]) => string | void;
-          const result = fn(match.leftMatches, match.rightMatches);
+          const fn = rule.replacement as TextTransformFn;
+          const result = fn(match.leftMatches, match.rightMatches, ctx);
           if (result === undefined) return null;
           text = result as string;
         }

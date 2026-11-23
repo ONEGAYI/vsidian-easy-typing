@@ -26,8 +26,14 @@
 // undefined 返回（等价于规则跳过）。触发正则 / 触发键均保证键在场，
 // 实际不可达——收紧只是让畸形输入的失败更可读，命中路径逐字符一致。
 
-/** Input / Delete 类变换函数签名（左右捕获组两侧匹配） */
-export type TextTransformFn = (leftMatches: string[], rightMatches: string[]) => string | void
+import type { TxContext } from './rule-engine'
+
+/** Input / Delete 类变换函数：匹配组与本次输入所在的文档快照 */
+export type TextTransformFn = (
+  leftMatches: string[],
+  rightMatches: string[],
+  context: Pick<TxContext, 'docText' | 'selection' | 'inserted' | 'isProseAt' | 'reverseScanBudget'>,
+) => string | void
 
 /** SelectKey 类变换函数签名（选区文本 + 触发键） */
 export type SelectKeyTransformFn = (selectionText: string, key: string) => string | void
@@ -77,6 +83,76 @@ const autopairJump: TextTransformFn = (leftMatches, rightMatches) => {
   if (pair === undefined) return undefined // 上游此处 TypeError（触发正则保证在场，不可达）
   if (pair[0] == rightMatches[0]) return pair[1]
   return undefined
+}
+
+export const QUOTE_REVERSE_SCAN_LIMIT = 128 * 1024
+
+export function readQuoteContextChar(
+  text: string, pos: number, budget: NonNullable<TxContext['reverseScanBudget']>,
+): string | undefined {
+  if (budget.remaining === 0) return
+  budget.remaining--
+  return text[pos]!
+}
+
+/** 中文单双引号键：已有同类闭引号先跳过；空白新起点收到右引号才补对。 */
+const cjkQuoteKey: TextTransformFn = (leftMatches, rightMatches, context) => {
+  const { docText, selection, inserted, isProseAt } = context
+  if (inserted !== leftMatches[0] || !/^[“”‘’]$/.test(inserted)) return
+  const [open, close] = inserted === '“' || inserted === '”' ? ['“', '”'] : ['‘', '’']
+  const right = rightMatches[0]
+  const skip = right === close
+  const from = selection.from - 1
+  const budget = context.reverseScanBudget ?? { remaining: QUOTE_REVERSE_SCAN_LIMIT }
+  if (!skip) {
+    if (inserted !== close || right !== '') return
+    // 右侧是否只有空白也由同一预算确认，不在触发正则中无界查找。
+    for (let i = selection.to; i < docText.length; i++) {
+      const char = readQuoteContextChar(docText, i, budget)
+      if (char === '\n') break
+      if (char !== ' ' && char !== '\t') return
+    }
+  }
+  if (!isProseAt?.(from)) return
+  const pendingClosers = { '”': 0, '’': 0 }
+  let precedingClose: '”' | '’' | undefined
+  let scanFrom = from - 1
+  const readPrevious = () => scanFrom < 0 ? '\n' : readQuoteContextChar(docText, scanFrom--, budget)
+  if (!skip) {
+    let last = readPrevious()
+    while (last === ' ' || last === '\t') last = readPrevious()
+    if (last !== '\n') return
+
+    // 上一行只需核对末尾。略过尾部空白，但不越过换行，也不回读已经检查的字符。
+    last = readPrevious()
+    while (last !== undefined && last !== '\n' && /\s/.test(last)) last = readPrevious()
+    if (last !== '\n') {
+      if ((last !== '”' && last !== '’') || !isProseAt(scanFrom + 1)) return
+      precedingClose = last
+      pendingClosers[last] = 1
+    }
+  }
+
+  // 同一遍反扫既找当前引号的左端，也确认上一行末端的闭引号确实结束了引文。
+  let precedingPaired = precedingClose === undefined
+  while (scanFrom >= 0) {
+    const i = scanFrom
+    const char = readPrevious()
+    if (char === undefined) return
+    if (char !== '“' && char !== '”' && char !== '‘' && char !== '’') continue
+    const family = char === '“' || char === '”' ? '”' : '’'
+    // 异类引号仅用于核对上一行末端的配对，不能拦住当前引号开启新对。
+    if (family !== close && (family !== precedingClose || precedingPaired)) continue
+    const prose = isProseAt(i)
+    if (prose === null) return
+    if (!prose) continue
+    if (char === family) pendingClosers[family]++
+    else {
+      if (pendingClosers[family] === 0) return skip ? close : undefined
+      if (--pendingClosers[family] === 0 && family === precedingClose) precedingPaired = true
+    }
+  }
+  return !skip && precedingPaired ? open + '$0' + close : undefined
 }
 
 /** 上游 builtin-autopair-delete：删除开符号且右侧恰为配对端 → 连带删除 */
@@ -196,6 +272,7 @@ export const FUNCTION_TABLE: readonly FunctionTableEntry[] = [
   { ref: 'autopairInput', signature: 'text', fn: autopairInput },
   { ref: 'autopairJump', signature: 'text', fn: autopairJump },
   { ref: 'autopairDelete', signature: 'text', fn: autopairDelete },
+  { ref: 'cjkQuoteKey', signature: 'text', fn: cjkQuoteKey },
   { ref: 'convFormula', signature: 'text', fn: convFormula },
   { ref: 'convHw2fw', signature: 'text', fn: convHw2fw },
   { ref: 'convLinestart', signature: 'text', fn: convLinestart },

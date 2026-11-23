@@ -270,7 +270,8 @@ export function testSingleRule(rule: SimpleRule, input: RuleTestInput): RuleTest
     kind: ctxKind,
     docText: input.docText,
     selection: { from, to },
-    inserted: '',
+    inserted: ctxKind === RuleType.Input && from === to && from > 0 ? input.docText[from - 1]! : '',
+    isProseAt: () => true, // 试运行编辑器按纯文本模拟，没有实时语法树。
     changeType: '',
     scopeHint: RuleScope.All,
     key,
