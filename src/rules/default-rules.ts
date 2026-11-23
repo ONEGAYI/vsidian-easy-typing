@@ -45,7 +45,7 @@ export const DEFAULT_BUILTIN_RULES: (SimpleRule & { id: string })[] = [
   {
     id: 'builtin-cjk-quote-key',
     trigger: '[“”‘’]',
-    trigger_right: '[”’]|(?=[ \\t]*(?:\\n|$))',
+    trigger_right: '[”’]?',
     replacement: { kind: 'function', ref: 'cjkQuoteKey' },
     options: 'rF',
     priority: 10,

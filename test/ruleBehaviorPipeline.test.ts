@@ -7,7 +7,7 @@
 // tryProcessInput 的规则触发段、delete.backward 分支与 Selection Replace
 // 分支。
 import { describe, expect, it } from 'vitest'
-import { RuleEngine, RuleType, type SimpleRule } from '../src/rules/rule-engine'
+import { RuleEngine, RuleScope, RuleType, type SimpleRule } from '../src/rules/rule-engine'
 import { DEFAULT_BUILTIN_RULES } from '../src/rules/default-rules'
 import { buildFamilyEngine, INPUT_RULE_FAMILIES } from '../src/ruleBehaviorIntercept'
 import {
@@ -130,6 +130,7 @@ describe('中文引号键兼容（02-autopair 内置可选规则）', () => {
     '“甲”和“乙”\n',
     '示例 `“` 他答：“甲”\n',
     '“甲\n乙”\n',
+    '“甲” \t\n',
   ])('默认关闭；启用后，%j 后定稿的右引号开新对', (prefix) => {
     const engine = buildFamilyEngine(family)
     const ctx = inputCtx(prefix + '”', prefix.length + 1, 'input.type.compose', '”')
@@ -288,6 +289,55 @@ describe('中文引号键兼容（02-autopair 内置可选规则）', () => {
         { anchor: text.length + 1, head: text.length + 1 },
       ],
     })
+  })
+
+  it('上一行超长但末尾不是闭引号：只查分隔换行和前一字符', () => {
+    const engine = buildFamilyEngine(family)
+    engine.setEnabled(ruleId, true)
+    const docText = 'x'.repeat(900_000) + '\n”'
+    const budget = { remaining: 16 }
+    expect(engine.process({
+      kind: RuleType.Input,
+      docText,
+      selection: { from: docText.length, to: docText.length },
+      inserted: '”',
+      changeType: 'input.type.compose',
+      scopeHint: RuleScope.All,
+      isProseAt: () => true,
+      reverseScanBudget: budget,
+    })).toBeNull()
+    expect(budget.remaining).toBe(14)
+  })
+
+  it('本行光标右侧的尾空白也必须在额度内确认', () => {
+    const engine = buildFamilyEngine(family)
+    engine.setEnabled(ruleId, true)
+    const budget = { remaining: 16 }
+    expect(engine.process({
+      kind: RuleType.Input,
+      docText: '”' + ' '.repeat(900_000),
+      selection: { from: 1, to: 1 },
+      inserted: '”',
+      changeType: 'input.type.compose',
+      scopeHint: RuleScope.All,
+      isProseAt: () => true,
+      reverseScanBudget: budget,
+    })).toBeNull()
+    expect(budget.remaining).toBe(0)
+  })
+
+  it('上一行的超长尾空白也消耗共享额度，后续光标不再越过闭引号', () => {
+    const engine = buildFamilyEngine(family)
+    engine.setEnabled(ruleId, true)
+    const prefix = 'x'.repeat(900_000) + ' '.repeat(900_000) + '\n'
+    const text = prefix + '”\n\n“甲””'
+    const firstCaret = prefix.length + 1
+    const secondCaret = text.length - 1
+    const ctx = inputCtx(text, firstCaret, 'input.type', '””', [
+      { anchor: firstCaret, head: firstCaret },
+      { anchor: secondCaret, head: secondCaret },
+    ])
+    expect(planInputRuleModification(engine, ctx, { scopeQuery: proseQuery })).toBeNull()
   })
 })
 

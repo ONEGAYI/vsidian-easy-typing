@@ -134,7 +134,7 @@ export interface TxContext {
   inserted: string;
   /** 查询快照中任一位置是否为正文；null 表示平台无法判定。 */
   isProseAt?: (pos: number) => boolean | null;
-  /** 同一次输入的多个光标共用反扫额度（UTF-16 码元）。 */
+  /** 同一次输入的多个光标共用引号上下文读取额度（UTF-16 码元，含查找行界）。 */
   reverseScanBudget?: { remaining: number };
   changeType: string;
   /** 光标处作用域判定（注入面——内核不做语法树判定，见模块头注） */

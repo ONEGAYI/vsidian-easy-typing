@@ -67,7 +67,7 @@ import {
 // intercept 层经本模块取 tabstop 类型（单一来源，避免多点直连引擎内部）
 export type { TabstopSpec } from './rules/rule-engine'
 import { RuleScope } from './rules/rule-engine'
-import { QUOTE_REVERSE_SCAN_LIMIT } from './rules/function-table'
+import { QUOTE_REVERSE_SCAN_LIMIT, readQuoteContextChar } from './rules/function-table'
 import { detectScopeViaQuery, docOfText, type ScopeInfo, type SyntaxQuery } from './syntaxTreeQuery'
 
 // ===== 作用域判定的注入（#5 切片 B：树版换传） =====
@@ -260,9 +260,23 @@ export function planInputRuleWithTabstops(
   let probeLineTo = -1
   const isProseAt = query && ((pos: number) => {
     if (pos < probeLineFrom || pos > probeLineTo) {
-      probeLineFrom = ctx.snapshot.text.lastIndexOf('\n', pos - 1) + 1
-      const nextNewline = ctx.snapshot.text.indexOf('\n', pos)
-      probeLineTo = nextNewline === -1 ? ctx.snapshot.text.length : nextNewline
+      const text = ctx.snapshot.text
+      let lineFrom = pos
+      while (lineFrom > 0) {
+        const char = readQuoteContextChar(text, lineFrom - 1, reverseScanBudget)
+        if (char === undefined) return null
+        if (char === '\n') break
+        lineFrom--
+      }
+      let lineTo = pos
+      while (lineTo < text.length) {
+        const char = readQuoteContextChar(text, lineTo, reverseScanBudget)
+        if (char === undefined) return null
+        if (char === '\n') break
+        lineTo++
+      }
+      probeLineFrom = lineFrom
+      probeLineTo = lineTo
     }
     remainingProseWork -= Math.max(64, probeLineTo - probeLineFrom)
     if (remainingProseWork < 0) return null

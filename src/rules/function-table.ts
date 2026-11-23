@@ -87,6 +87,14 @@ const autopairJump: TextTransformFn = (leftMatches, rightMatches) => {
 
 export const QUOTE_REVERSE_SCAN_LIMIT = 128 * 1024
 
+export function readQuoteContextChar(
+  text: string, pos: number, budget: NonNullable<TxContext['reverseScanBudget']>,
+): string | undefined {
+  if (budget.remaining === 0) return
+  budget.remaining--
+  return text[pos]!
+}
+
 /** 中文单双引号键：已有同类闭引号先跳过；空白新起点收到右引号才补对。 */
 const cjkQuoteKey: TextTransformFn = (leftMatches, rightMatches, context) => {
   const { docText, selection, inserted, isProseAt } = context
@@ -95,35 +103,42 @@ const cjkQuoteKey: TextTransformFn = (leftMatches, rightMatches, context) => {
   const right = rightMatches[0]
   const skip = right === close
   const from = selection.from - 1
+  const budget = context.reverseScanBudget ?? { remaining: QUOTE_REVERSE_SCAN_LIMIT }
+  if (!skip) {
+    if (inserted !== close || right !== '') return
+    // 右侧是否只有空白也由同一预算确认，不在触发正则中无界查找。
+    for (let i = selection.to; i < docText.length; i++) {
+      const char = readQuoteContextChar(docText, i, budget)
+      if (char === '\n') break
+      if (char !== ' ' && char !== '\t') return
+    }
+  }
   if (!isProseAt?.(from)) return
   const pendingClosers = { '”': 0, '’': 0 }
   let precedingClose: '”' | '’' | undefined
   let scanFrom = from - 1
+  const readPrevious = () => scanFrom < 0 ? '\n' : readQuoteContextChar(docText, scanFrom--, budget)
   if (!skip) {
-    if (inserted !== close || right !== '') return
-    const lineStart = docText.lastIndexOf('\n', from - 1) + 1
-    if (!/^[ \t]*$/.test(docText.slice(lineStart, from))) return
-    if (lineStart > 0) {
-      const precedingStart = docText.lastIndexOf('\n', lineStart - 2) + 1
-      const precedingLine = docText.slice(precedingStart, lineStart - 1).trimEnd()
-      if (precedingLine) {
-        const end = precedingStart + precedingLine.length - 1
-        const last = docText[end]
-        if ((last !== '”' && last !== '’') || !isProseAt(end)) return
-        precedingClose = last
-        pendingClosers[last] = 1
-        scanFrom = end - 1
-      }
+    let last = readPrevious()
+    while (last === ' ' || last === '\t') last = readPrevious()
+    if (last !== '\n') return
+
+    // 上一行只需核对末尾。略过尾部空白，但不越过换行，也不回读已经检查的字符。
+    last = readPrevious()
+    while (last !== undefined && last !== '\n' && /\s/.test(last)) last = readPrevious()
+    if (last !== '\n') {
+      if ((last !== '”' && last !== '’') || !isProseAt(scanFrom + 1)) return
+      precedingClose = last
+      pendingClosers[last] = 1
     }
   }
 
   // 同一遍反扫既找当前引号的左端，也确认上一行末端的闭引号确实结束了引文。
   let precedingPaired = precedingClose === undefined
-  const budget = context.reverseScanBudget ?? { remaining: QUOTE_REVERSE_SCAN_LIMIT }
-  for (let i = scanFrom; i >= 0; i--) {
-    if (budget.remaining === 0) return
-    budget.remaining--
-    const char = docText[i]
+  while (scanFrom >= 0) {
+    const i = scanFrom
+    const char = readPrevious()
+    if (char === undefined) return
     if (char !== '“' && char !== '”' && char !== '‘' && char !== '’') continue
     const family = char === '“' || char === '”' ? '”' : '’'
     // 异类引号仅用于核对上一行末端的配对，不能拦住当前引号开启新对。
